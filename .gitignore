@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node
+node_modules/
+*.log
+.env
+.env.local
+
+# Build artifacts
+dist/
+build/
+out/
+
+# Local tooling / agent state — not part of the project
+.agents/
+.claude/
+skills-lock.json
+
+# Wrangler (Cloudflare) — when we start using it
+.wrangler/

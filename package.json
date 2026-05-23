@@ -1,0 +1,15 @@
+{
+  "name": "airlock-deploy",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Deployment companion to airlock — scaffold + deploy Airlock-contract-aware agents on the publisher's own cloud account. Not yet started; see docs/PLAN.md.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Okohedeki/airlock-deploy.git"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
