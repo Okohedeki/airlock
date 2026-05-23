@@ -17,6 +17,8 @@ node_modules/
 dist/
 build/
 out/
+coverage/
+*.tsbuildinfo
 
 # Local tooling / agent state — not part of the project
 .agents/

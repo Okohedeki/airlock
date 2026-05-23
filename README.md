@@ -1,8 +1,8 @@
 # airlock-deploy
 
-> **Status:** placeholder. Not yet started. The first design pass lives in [`docs/PLAN.md`](./docs/PLAN.md). Code arrives soon.
+> **Status:** early development. Design locked in [`CONTEXT.md`](./CONTEXT.md) and [`docs/adr/`](./docs/adr/); first packages (`payment-core`, `payment-workers`) shipped under [`packages/`](./packages/). CLI and Recipes still to come. `docs/PLAN.md` is the original placeholder and is superseded.
 
-The deployment companion to [airlock](https://github.com/Okohedeki/airlock).
+"ngrok for AI agents" — expose any HTTP-speaking Agent in dev via a public Tunnel, deploy it to the Publisher's own cloud in prod. Airlock contracts are one supported Shape; MCP, A2A, and OpenAI tools are first-class too.
 
 ## Mission
 
