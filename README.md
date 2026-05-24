@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/logo.svg" width="72" height="72" alt="airlock logo">
-</p>
-
 <h1 align="center">airlock</h1>
 
 <p align="center">
@@ -20,10 +16,6 @@
 </p>
 
 <p align="center"><strong>ngrok for AI agents.</strong> Wrap a local LLM or self-hosted model with an x402 USDC paywall and a dashboard — without giving up custody, KYC, or a revenue cut.</p>
-
-<p align="center">
-  <img src="assets/hero.png" alt="airlock dashboard" width="100%">
-</p>
 
 ---
 
