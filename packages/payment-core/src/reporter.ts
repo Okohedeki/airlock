@@ -27,6 +27,19 @@ export interface ReportableCall {
   /** USDC amount settled on-chain for this call; null for unpaid / session draws. */
   amount_usdc: string | null;
   payment_settled: boolean;
+  /** Detected Agent Shape (e.g. 'openai', 'mcp', 'a2a', 'rest'). Optional. */
+  shape?: string;
+  /** What `tokens_used` counts, when not tokens (e.g. 'steps', 'items'). Optional. */
+  unit_label?: string;
+  /** Correlation id for tracing a single call across systems. Optional. */
+  request_id?: string;
+  /** On-chain settlement tx hash; null when settlement is deferred/pending. Optional. */
+  settlement_tx?: string | null;
+  /**
+   * Schema version of this event. Lets a future tamper-evident / signed
+   * audit-log reporter evolve the shape without breaking older consumers.
+   */
+  event_version?: number;
 }
 
 /**
@@ -50,6 +63,11 @@ export function report(reporter: CallReporter, call: ReportableCall): Promise<vo
       tokens_used: call.tokens_used,
       amount_usdc: call.amount_usdc,
       payment_settled: call.payment_settled,
+      shape: call.shape,
+      unit_label: call.unit_label,
+      request_id: call.request_id,
+      settlement_tx: call.settlement_tx,
+      event_version: call.event_version,
     }),
   })
     .then(() => undefined)

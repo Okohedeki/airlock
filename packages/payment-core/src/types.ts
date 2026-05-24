@@ -27,3 +27,11 @@ export const TOKENS_USED_HEADER = 'X-Tokens-Used' as const;
  * down their Credit Balance without re-paying.
  */
 export const SESSION_HEADER = 'X-Airlock-Session' as const;
+
+/**
+ * Harness-agnostic usage header. An Agent reports how many billable *units* the
+ * current request consumed — tokens, steps, tool-calls, rows, whatever it
+ * meters. Supersedes the OpenAI-specific {@link TOKENS_USED_HEADER}; the
+ * default extractor reads this first, then falls back to `X-Tokens-Used`.
+ */
+export const USAGE_UNITS_HEADER = 'X-Airlock-Units' as const;
