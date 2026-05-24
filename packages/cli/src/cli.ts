@@ -7,6 +7,7 @@ import { clearAuth } from './auth-store.js';
 import { runDoctor } from './commands/doctor.js';
 import { runInit } from './commands/init.js';
 import { runLogin } from './commands/login.js';
+import { startServe } from './commands/serve.js';
 import { runStatus } from './commands/status.js';
 import { runSync } from './commands/sync.js';
 import { NotLoggedInError, runWhoami } from './commands/whoami.js';
@@ -233,6 +234,56 @@ async function main() {
         process.exit(1);
       }
     });
+
+  program
+    .command('serve')
+    .description('Wrap a locally-running LLM HTTP endpoint with x402 payment + dashboard reporting')
+    .option(
+      '-u, --upstream <url>',
+      'local LLM URL (OpenAI-compatible /v1/chat/completions)',
+      'http://localhost:8080',
+    )
+    .option('-p, --port <port>', 'port for the wrapper to listen on', '3000')
+    .option('--wallet <addr>', 'override payment.wallet (skip config.toml)')
+    .option('--price <usdc>', 'override per-call price in USDC (flat mode)')
+    .option('--no-payment', 'disable payment enforcement (for upstream debugging)')
+    .option('--backend <url>', 'dashboard backend URL for the reporter')
+    .option('--project <name>', 'project name for the reporter (defaults to config.project.name)')
+    .action(
+      async (opts: {
+        upstream: string;
+        port: string;
+        wallet?: string;
+        price?: string;
+        payment: boolean;
+        backend?: string;
+        project?: string;
+      }) => {
+        const port = Number.parseInt(opts.port, 10);
+        if (!Number.isFinite(port) || port <= 0) {
+          console.error(`error: invalid --port "${opts.port}"`);
+          process.exit(2);
+        }
+        try {
+          const handle = await startServe({
+            upstream: opts.upstream,
+            port,
+            wallet: opts.wallet,
+            priceUsdc: opts.price,
+            noPayment: !opts.payment,
+            backendUrl: opts.backend,
+            projectName: opts.project,
+          });
+          process.on('SIGINT', async () => {
+            await handle.close();
+            process.exit(0);
+          });
+        } catch (err) {
+          console.error(`error: ${(err as Error).message}`);
+          process.exit(1);
+        }
+      },
+    );
 
   program
     .command('dev')
