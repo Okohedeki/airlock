@@ -52,10 +52,11 @@ const config = PaymentConfigSchema.parse({
 { mode: 'flat', priceUsdc: '0.001' }  // $0.001 per call
 ```
 
-**`per_token`** — Caller pre-funds a Credit Balance; per-call cost is `(tokens_used × pricePerTokenUsdc)`, deducted from the balance using the Agent's `X-Tokens-Used` response header. **v1 ships the config + ledger interface; the runtime middleware path lands in v1.1.** Calls in `per_token` mode currently return HTTP 501.
+**`per_token`** — Caller pre-funds a Credit Balance, then draws down per call. **First call** requires `X-PAYMENT` to top up by `minCreditBalanceUsdc`; the middleware credits the Caller's balance, runs the handler, debits `(tokens_used × pricePerTokenUsdc)`, and returns `X-Airlock-Session: <token>` in the response. **Subsequent calls** send that session header instead of paying again — the middleware verifies the session, runs the handler, debits the call cost. When the balance hits zero, the next call returns 402 to top up again.
 ```ts
 { mode: 'per_token', pricePerTokenUsdc: '0.000001', minCreditBalanceUsdc: '0.10' }
 ```
+The publisher's middleware accepts an optional `ledger` option (defaults to in-memory). For production, wire a persistent `CreditLedger` impl backed by KV / Postgres / Redis — losing balance + sessions on process restart is rarely acceptable.
 
 ## Wire it into a Worker
 

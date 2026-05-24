@@ -1,8 +1,8 @@
-"""Credit Balance store for per-token mode. Interface ships in v1; runtime in v1.1."""
+"""Credit Balance + session store for per-token mode."""
 
 from __future__ import annotations
 
-from decimal import Decimal
+import secrets
 from typing import Protocol
 
 
@@ -15,11 +15,14 @@ class InsufficientBalanceError(Exception):
 
 
 class CreditLedger(Protocol):
-    """Per-Caller USDC balance store. Implementations back this with KV / Postgres / etc."""
+    """Per-Caller USDC balance + session store. Implementations back this with
+    KV / Postgres / Redis / etc. for production."""
 
     async def get_balance(self, caller: str) -> str: ...
     async def credit(self, caller: str, amount_usdc: str) -> str: ...
     async def debit(self, caller: str, amount_usdc: str) -> str: ...
+    async def issue_session(self, caller: str) -> str: ...
+    async def verify_session(self, token: str) -> str | None: ...
 
 
 def _to_atomic(usdc: str) -> int:
@@ -35,12 +38,13 @@ def _from_atomic(atomic: int) -> str:
 
 
 class InMemoryCreditLedger:
-    """Per-process in-memory ledger. Loses balance on restart — use a persistent
-    backing store in production. Uses int arithmetic on atomic units (6 decimals)
-    to avoid Decimal/float drift."""
+    """Per-process in-memory ledger. Loses balance + sessions on restart —
+    use a persistent backing store in production. Uses int arithmetic on
+    atomic units (6 decimals) to avoid Decimal/float drift."""
 
     def __init__(self) -> None:
         self._balances: dict[str, int] = {}
+        self._sessions: dict[str, str] = {}
 
     async def get_balance(self, caller: str) -> str:
         return _from_atomic(self._balances.get(caller, 0))
@@ -54,12 +58,18 @@ class InMemoryCreditLedger:
         current = self._balances.get(caller, 0)
         charge = _to_atomic(amount_usdc)
         if charge > current:
-            raise InsufficientBalanceError(
-                caller, amount_usdc, _from_atomic(current)
-            )
+            raise InsufficientBalanceError(caller, amount_usdc, _from_atomic(current))
         next_atomic = current - charge
         self._balances[caller] = next_atomic
         return _from_atomic(next_atomic)
+
+    async def issue_session(self, caller: str) -> str:
+        token = f"als_{caller}_{secrets.token_hex(8)}"
+        self._sessions[token] = caller
+        return token
+
+    async def verify_session(self, token: str) -> str | None:
+        return self._sessions.get(token)
 
 
 __all__ = [
@@ -70,7 +80,3 @@ __all__ = [
     "_to_atomic",
     "_from_atomic",
 ]
-
-
-# unused import sanity (the Protocol path doesn't need Decimal anymore)
-_ = Decimal

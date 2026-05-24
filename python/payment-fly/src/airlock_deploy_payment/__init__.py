@@ -41,7 +41,7 @@ from .envelope import PaymentRequired, PaymentRequirements, build_payment_requir
 from .facilitator import Facilitator, HTTPFacilitator, SettleResponse, VerifyResponse
 from .ledger import CreditLedger, InMemoryCreditLedger, InsufficientBalanceError
 from .middleware import PaymentMiddleware
-from .types import CallerId, PaymentMode, TOKENS_USED_HEADER
+from .types import CallerId, PaymentMode, SESSION_HEADER, TOKENS_USED_HEADER
 
 __all__ = [
     "CallerId",
@@ -58,6 +58,7 @@ __all__ = [
     "PaymentRequirements",
     "PerTokenPaymentConfig",
     "SettleResponse",
+    "SESSION_HEADER",
     "TOKENS_USED_HEADER",
     "USDC_ADDRESSES",
     "VerifyResponse",

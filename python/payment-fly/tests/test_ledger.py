@@ -56,3 +56,20 @@ async def test_many_tiny_per_token_debits():
     for _ in range(1000):
         await ledger.debit(ALICE, "0.000001")
     assert await ledger.get_balance(ALICE) == "0"
+
+
+async def test_sessions_round_trip_unique_per_call():
+    ledger = InMemoryCreditLedger()
+    a1 = await ledger.issue_session(ALICE)
+    a2 = await ledger.issue_session(ALICE)
+    b1 = await ledger.issue_session(BOB)
+    assert a1 != a2
+    assert a1 != b1
+    assert await ledger.verify_session(a1) == ALICE
+    assert await ledger.verify_session(a2) == ALICE
+    assert await ledger.verify_session(b1) == BOB
+
+
+async def test_verify_session_returns_none_for_unknown():
+    ledger = InMemoryCreditLedger()
+    assert await ledger.verify_session("als_bogus") is None

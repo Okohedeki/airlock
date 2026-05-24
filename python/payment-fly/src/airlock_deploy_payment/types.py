@@ -16,3 +16,6 @@ CallerId = str
 
 TOKENS_USED_HEADER = "X-Tokens-Used"
 """Response header an Agent sets to report token usage; consumed by per_token mode."""
+
+SESSION_HEADER = "X-Airlock-Session"
+"""Header carrying the opaque per-Caller session token issued after x402 topup."""

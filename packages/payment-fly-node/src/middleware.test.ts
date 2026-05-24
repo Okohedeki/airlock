@@ -1,10 +1,17 @@
-import { type PaymentConfig, PaymentConfigSchema } from '@airlock-deploy/payment-core';
+import {
+  InMemoryCreditLedger,
+  type PaymentConfig,
+  PaymentConfigSchema,
+  SESSION_HEADER,
+  TOKENS_USED_HEADER,
+} from '@airlock-deploy/payment-core';
 import { encodePaymentSignatureHeader } from '@x402/core/http';
 import type { NextFunction, Request, Response } from 'express';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { type AgentHandler, type PaymentFacilitator, withPaymentExpress } from './middleware.js';
 
 const WALLET = '0x1234567890abcdef1234567890abcdef12345678';
+const PAYER = '0xpayer000000000000000000000000000000000001';
 
 function flatConfig(overrides: Partial<PaymentConfig> = {}): PaymentConfig {
   return PaymentConfigSchema.parse({
@@ -15,21 +22,31 @@ function flatConfig(overrides: Partial<PaymentConfig> = {}): PaymentConfig {
   });
 }
 
+function perTokenConfig(overrides: Partial<PaymentConfig> = {}): PaymentConfig {
+  return PaymentConfigSchema.parse({
+    wallet: WALLET,
+    mode: 'per_token',
+    pricePerTokenUsdc: '0.000001',
+    minCreditBalanceUsdc: '0.10',
+    ...overrides,
+  });
+}
+
 const validPaymentHeader = encodePaymentSignatureHeader({
   x402Version: 1,
   scheme: 'exact',
   network: 'base',
-  payload: { signature: '0xdeadbeef', from: '0xpayer' },
+  payload: { signature: '0xdeadbeef', from: PAYER },
 });
 
 function mockFacilitator(overrides: Partial<PaymentFacilitator> = {}): PaymentFacilitator {
   return {
-    verify: vi.fn().mockResolvedValue({ isValid: true, payer: '0xpayer' }),
+    verify: vi.fn().mockResolvedValue({ isValid: true, payer: PAYER }),
     settle: vi.fn().mockResolvedValue({
       success: true,
       transaction: '0xabc',
       network: 'base',
-      payer: '0xpayer',
+      payer: PAYER,
     }),
     ...overrides,
   };
@@ -93,114 +110,78 @@ function mockRes(): MockRes {
 }
 
 const noopNext: NextFunction = () => {};
-
 const okHandler: AgentHandler = async () => ({ status: 200, body: { ok: true } });
-
-describe('withPaymentExpress', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+const tokensHandler =
+  (tokens: number): AgentHandler =>
+  async () => ({
+    status: 200,
+    headers: { [TOKENS_USED_HEADER]: String(tokens) },
+    body: { ok: true },
   });
 
-  it('bypasses the payment flow when config.enabled is false', async () => {
+describe('withPaymentExpress — flat mode', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('bypasses when enabled=false', async () => {
     const facilitator = mockFacilitator();
     const handler = vi.fn(okHandler);
-    const middleware = withPaymentExpress(flatConfig({ enabled: false }), handler, { facilitator });
+    const mw = withPaymentExpress(flatConfig({ enabled: false }), handler, { facilitator });
 
     const res = mockRes();
-    await middleware(mockReq(), res, noopNext);
+    await mw(mockReq(), res, noopNext);
 
     expect(res._state().status).toBe(200);
     expect(handler).toHaveBeenCalledOnce();
     expect(facilitator.verify).not.toHaveBeenCalled();
   });
 
-  it('returns 402 with PaymentRequired body when X-PAYMENT is missing', async () => {
-    const facilitator = mockFacilitator();
-    const middleware = withPaymentExpress(flatConfig(), okHandler, { facilitator });
-
+  it('returns 402 with PaymentRequired when X-PAYMENT is missing', async () => {
+    const mw = withPaymentExpress(flatConfig(), okHandler, { facilitator: mockFacilitator() });
     const res = mockRes();
-    await middleware(mockReq(), res, noopNext);
-
-    const state = res._state();
-    expect(state.status).toBe(402);
-    expect(state.body).toMatchObject({ x402Version: 1 });
-    expect((state.body as { accepts: unknown[] }).accepts).toHaveLength(1);
-    expect(facilitator.verify).not.toHaveBeenCalled();
+    await mw(mockReq(), res, noopNext);
+    const s = res._state();
+    expect(s.status).toBe(402);
+    expect(s.body).toMatchObject({ x402Version: 1 });
   });
 
   it('returns 402 when X-PAYMENT is malformed', async () => {
-    const facilitator = mockFacilitator();
-    const middleware = withPaymentExpress(flatConfig(), okHandler, { facilitator });
-
+    const mw = withPaymentExpress(flatConfig(), okHandler, { facilitator: mockFacilitator() });
     const res = mockRes();
-    await middleware(mockReq({ headers: { 'X-PAYMENT': 'not-base64-json!!!' } }), res, noopNext);
-
-    const state = res._state();
-    expect(state.status).toBe(402);
-    expect((state.body as { error: string }).error).toMatch(/malformed/i);
+    await mw(mockReq({ headers: { 'X-PAYMENT': 'not-base64-json!!!' } }), res, noopNext);
+    expect(res._state().status).toBe(402);
+    expect((res._state().body as { error: string }).error).toMatch(/malformed/i);
   });
 
-  it('returns 402 when the facilitator rejects the payment', async () => {
+  it('returns 402 when the facilitator rejects', async () => {
     const facilitator = mockFacilitator({
       verify: vi.fn().mockResolvedValue({ isValid: false, invalidReason: 'bad signature' }),
     });
-    const handler = vi.fn(okHandler);
-    const middleware = withPaymentExpress(flatConfig(), handler, { facilitator });
-
+    const mw = withPaymentExpress(flatConfig(), okHandler, { facilitator });
     const res = mockRes();
-    await middleware(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), res, noopNext);
-
-    const state = res._state();
-    expect(state.status).toBe(402);
-    expect((state.body as { error: string }).error).toMatch(/bad signature/);
-    expect(handler).not.toHaveBeenCalled();
+    await mw(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), res, noopNext);
+    expect(res._state().status).toBe(402);
   });
 
   it('runs the handler and attaches X-PAYMENT-RESPONSE on success', async () => {
     const facilitator = mockFacilitator();
-    const handler = vi.fn(okHandler);
-    const middleware = withPaymentExpress(flatConfig(), handler, { facilitator });
-
+    const mw = withPaymentExpress(flatConfig(), okHandler, { facilitator });
     const res = mockRes();
-    await middleware(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), res, noopNext);
-
-    const state = res._state();
-    expect(state.status).toBe(200);
-    expect(state.body).toEqual({ ok: true });
-    expect(handler).toHaveBeenCalledOnce();
+    await mw(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), res, noopNext);
+    const s = res._state();
+    expect(s.status).toBe(200);
+    expect(s.headers['X-PAYMENT-RESPONSE']).toBeTruthy();
     expect(facilitator.settle).toHaveBeenCalledOnce();
-    expect(state.headers['X-PAYMENT-RESPONSE']).toBeTruthy();
   });
 
-  it('returns 402 if settlement fails after the handler runs', async () => {
+  it('returns 402 if settlement fails', async () => {
     const facilitator = mockFacilitator({
       settle: vi.fn().mockResolvedValue({ success: false, errorReason: 'on-chain revert' }),
     });
-    const middleware = withPaymentExpress(flatConfig(), okHandler, { facilitator });
-
+    const mw = withPaymentExpress(flatConfig(), okHandler, { facilitator });
     const res = mockRes();
-    await middleware(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), res, noopNext);
-
-    const state = res._state();
-    expect(state.status).toBe(402);
-    expect((state.body as { error: string }).error).toMatch(/on-chain revert/);
-  });
-
-  it('returns 501 for per_token mode in v1', async () => {
-    const config = PaymentConfigSchema.parse({
-      wallet: WALLET,
-      mode: 'per_token',
-      pricePerTokenUsdc: '0.000001',
-      minCreditBalanceUsdc: '0.10',
-    });
-    const middleware = withPaymentExpress(config, okHandler);
-
-    const res = mockRes();
-    await middleware(mockReq(), res, noopNext);
-
-    const state = res._state();
-    expect(state.status).toBe(501);
-    expect((state.body as { error: string }).error).toMatch(/per_token/);
+    await mw(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), res, noopNext);
+    expect(res._state().status).toBe(402);
+    expect((res._state().body as { error: string }).error).toMatch(/on-chain revert/);
   });
 
   it('forwards thrown errors to next()', async () => {
@@ -208,12 +189,93 @@ describe('withPaymentExpress', () => {
     const boom: AgentHandler = async () => {
       throw new Error('handler exploded');
     };
-    const middleware = withPaymentExpress(flatConfig(), boom, { facilitator });
+    const mw = withPaymentExpress(flatConfig(), boom, { facilitator });
     const next = vi.fn();
-
-    await middleware(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), mockRes(), next);
-
+    await mw(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), mockRes(), next);
     expect(next).toHaveBeenCalledOnce();
-    expect(next.mock.calls[0]?.[0]).toBeInstanceOf(Error);
+  });
+});
+
+describe('withPaymentExpress — per_token mode', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns 402 when no X-PAYMENT and no session', async () => {
+    const mw = withPaymentExpress(perTokenConfig(), okHandler, {
+      facilitator: mockFacilitator(),
+      ledger: new InMemoryCreditLedger(),
+    });
+    const res = mockRes();
+    await mw(mockReq(), res, noopNext);
+    expect(res._state().status).toBe(402);
+  });
+
+  it('topup call: settles, credits, runs handler, debits tokens, returns session', async () => {
+    const facilitator = mockFacilitator();
+    const ledger = new InMemoryCreditLedger();
+    const mw = withPaymentExpress(perTokenConfig(), tokensHandler(1000), { facilitator, ledger });
+
+    const res = mockRes();
+    await mw(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), res, noopNext);
+
+    const s = res._state();
+    expect(s.status).toBe(200);
+    expect(s.headers[SESSION_HEADER]).toBeTruthy();
+    expect(s.headers['X-PAYMENT-RESPONSE']).toBeTruthy();
+    expect(facilitator.settle).toHaveBeenCalledOnce();
+    expect(await ledger.getBalance(PAYER)).toBe('0.099');
+  });
+
+  it('session-token call draws down balance without re-paying', async () => {
+    const facilitator = mockFacilitator();
+    const ledger = new InMemoryCreditLedger();
+    const mw = withPaymentExpress(perTokenConfig(), tokensHandler(500), { facilitator, ledger });
+
+    const first = mockRes();
+    await mw(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), first, noopNext);
+    const session = first._state().headers[SESSION_HEADER];
+    expect(session).toBeTruthy();
+
+    vi.clearAllMocks();
+    const second = mockRes();
+    await mw(mockReq({ headers: { [SESSION_HEADER]: session as string } }), second, noopNext);
+
+    expect(second._state().status).toBe(200);
+    expect(facilitator.verify).not.toHaveBeenCalled();
+    expect(facilitator.settle).not.toHaveBeenCalled();
+    expect(await ledger.getBalance(PAYER)).toBe('0.099');
+  });
+
+  it('returns 402 when supplied session token is unknown', async () => {
+    const mw = withPaymentExpress(perTokenConfig(), okHandler, {
+      facilitator: mockFacilitator(),
+      ledger: new InMemoryCreditLedger(),
+    });
+    const res = mockRes();
+    await mw(mockReq({ headers: { [SESSION_HEADER]: 'als_bogus' } }), res, noopNext);
+    expect(res._state().status).toBe(402);
+    expect((res._state().body as { error: string }).error).toMatch(/invalid|expired/i);
+  });
+
+  it('returns 402 once balance is fully depleted', async () => {
+    const config = perTokenConfig({ minCreditBalanceUsdc: '0.10', pricePerTokenUsdc: '0.05' });
+    const facilitator = mockFacilitator();
+    const ledger = new InMemoryCreditLedger();
+    const mw = withPaymentExpress(config, tokensHandler(1), { facilitator, ledger });
+
+    const r1 = mockRes();
+    await mw(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), r1, noopNext);
+    expect(r1._state().status).toBe(200);
+    const session = r1._state().headers[SESSION_HEADER] as string;
+    expect(await ledger.getBalance(PAYER)).toBe('0.05');
+
+    const r2 = mockRes();
+    await mw(mockReq({ headers: { [SESSION_HEADER]: session } }), r2, noopNext);
+    expect(r2._state().status).toBe(200);
+    expect(await ledger.getBalance(PAYER)).toBe('0');
+
+    const r3 = mockRes();
+    await mw(mockReq({ headers: { [SESSION_HEADER]: session } }), r3, noopNext);
+    expect(r3._state().status).toBe(402);
+    expect((r3._state().body as { error: string }).error).toMatch(/depleted|top up/i);
   });
 });

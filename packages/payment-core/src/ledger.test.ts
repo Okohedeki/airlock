@@ -57,4 +57,21 @@ describe('InMemoryCreditLedger', () => {
     }
     expect(await ledger.getBalance(ALICE)).toBe('0');
   });
+
+  it('issues unique session tokens that round-trip to the same Caller', async () => {
+    const ledger = new InMemoryCreditLedger();
+    const a1 = await ledger.issueSession(ALICE);
+    const a2 = await ledger.issueSession(ALICE);
+    const b1 = await ledger.issueSession(BOB);
+    expect(a1).not.toBe(a2);
+    expect(a1).not.toBe(b1);
+    expect(await ledger.verifySession(a1)).toBe(ALICE);
+    expect(await ledger.verifySession(a2)).toBe(ALICE);
+    expect(await ledger.verifySession(b1)).toBe(BOB);
+  });
+
+  it('returns null for unknown session tokens', async () => {
+    const ledger = new InMemoryCreditLedger();
+    expect(await ledger.verifySession('als_unknown_garbage')).toBeNull();
+  });
 });

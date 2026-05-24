@@ -1,13 +1,13 @@
 import type { CallerId } from './types.js';
 
 /**
- * Per-token mode Credit Balance store. Tracks the USDC balance each Caller
- * holds against a Publisher's Agent.
+ * Per-token mode store. Tracks per-Caller USDC balances *and* the session
+ * tokens we issue after a Caller's first paid call so subsequent calls can
+ * draw down the balance without sending a fresh X-PAYMENT every time.
  *
- * Reference implementation is in-memory and per-process. Production deployments
- * back this with the Publisher's own store (Workers KV, Postgres, Redis, …).
- * v1 ships the interface only; per-token middleware lands in v1.1 — see
- * `docs/adr/0005-x402-for-monetization.md`.
+ * Reference implementation is in-memory and per-process. Production
+ * deployments back this with the Publisher's own store (Workers KV, Postgres,
+ * Redis, …). The middleware accepts any object that satisfies this interface.
  */
 export interface CreditLedger {
   /** Current USDC balance for a Caller. Returns "0" if unknown. */
@@ -16,6 +16,10 @@ export interface CreditLedger {
   credit(caller: CallerId, amountUsdc: string): Promise<string>;
   /** Subtract USDC from a Caller's balance. Throws InsufficientBalance if it would go negative. */
   debit(caller: CallerId, amountUsdc: string): Promise<string>;
+  /** Mint an opaque session token for a Caller; returned in `X-Airlock-Session`. */
+  issueSession(caller: CallerId): Promise<string>;
+  /** Look up the Caller that owns a session token. Returns null for unknown / expired. */
+  verifySession(token: string): Promise<CallerId | null>;
 }
 
 export class InsufficientBalanceError extends Error {
@@ -47,11 +51,12 @@ function fromAtomic(atomic: bigint): string {
 
 /**
  * In-memory CreditLedger. Useful for tests and single-process deployments where
- * losing balance on restart is acceptable (it usually isn't — wire a persistent
- * impl in prod).
+ * losing balance + sessions on restart is acceptable. Production setups should
+ * wire a persistent impl backed by KV / SQL / Redis.
  */
 export class InMemoryCreditLedger implements CreditLedger {
   private balances = new Map<CallerId, bigint>();
+  private sessions = new Map<string, CallerId>();
 
   async getBalance(caller: CallerId): Promise<string> {
     return fromAtomic(this.balances.get(caller) ?? 0n);
@@ -73,6 +78,23 @@ export class InMemoryCreditLedger implements CreditLedger {
     this.balances.set(caller, next);
     return fromAtomic(next);
   }
+
+  async issueSession(caller: CallerId): Promise<string> {
+    const token = `als_${caller}_${randomToken()}`;
+    this.sessions.set(token, caller);
+    return token;
+  }
+
+  async verifySession(token: string): Promise<CallerId | null> {
+    return this.sessions.get(token) ?? null;
+  }
+}
+
+function randomToken(): string {
+  // 16 hex chars = 64 bits of entropy. Plenty for opaque session tokens.
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /** Test-visible exports for atomic conversions. */

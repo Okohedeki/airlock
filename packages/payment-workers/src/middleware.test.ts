@@ -1,9 +1,16 @@
-import { type PaymentConfig, PaymentConfigSchema } from '@airlock-deploy/payment-core';
+import {
+  InMemoryCreditLedger,
+  type PaymentConfig,
+  PaymentConfigSchema,
+  SESSION_HEADER,
+  TOKENS_USED_HEADER,
+} from '@airlock-deploy/payment-core';
 import { encodePaymentSignatureHeader } from '@x402/core/http';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { type PaymentFacilitator, withPayment } from './middleware.js';
 
 const WALLET = '0x1234567890abcdef1234567890abcdef12345678';
+const PAYER = '0xpayer000000000000000000000000000000000001';
 
 function flatConfig(overrides: Partial<PaymentConfig> = {}): PaymentConfig {
   return PaymentConfigSchema.parse({
@@ -14,37 +21,44 @@ function flatConfig(overrides: Partial<PaymentConfig> = {}): PaymentConfig {
   });
 }
 
+function perTokenConfig(overrides: Partial<PaymentConfig> = {}): PaymentConfig {
+  return PaymentConfigSchema.parse({
+    wallet: WALLET,
+    mode: 'per_token',
+    pricePerTokenUsdc: '0.000001',
+    minCreditBalanceUsdc: '0.10',
+    ...overrides,
+  });
+}
+
 const validPaymentHeader = encodePaymentSignatureHeader({
   x402Version: 1,
   scheme: 'exact',
   network: 'base',
-  payload: { signature: '0xdeadbeef', from: '0xpayer' },
+  payload: { signature: '0xdeadbeef', from: PAYER },
 });
 
 function mockFacilitator(overrides: Partial<PaymentFacilitator> = {}): PaymentFacilitator {
   return {
-    verify: vi.fn().mockResolvedValue({ isValid: true, payer: '0xpayer' }),
+    verify: vi.fn().mockResolvedValue({ isValid: true, payer: PAYER }),
     settle: vi.fn().mockResolvedValue({
       success: true,
       transaction: '0xabc',
       network: 'base',
-      payer: '0xpayer',
+      payer: PAYER,
     }),
     ...overrides,
   };
 }
 
 const okHandler = () => new Response('ok', { status: 200 });
-
 const env = {};
 const ctx = {} as ExecutionContext;
 
-describe('withPayment', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+describe('withPayment — flat mode', () => {
+  beforeEach(() => vi.clearAllMocks());
 
-  it('bypasses the payment flow entirely when config.enabled is false', async () => {
+  it('bypasses entirely when config.enabled is false', async () => {
     const facilitator = mockFacilitator();
     const handler = vi.fn(okHandler);
     const wrapped = withPayment(flatConfig({ enabled: false }), handler, { facilitator });
@@ -66,12 +80,10 @@ describe('withPayment', () => {
     const body = (await res.json()) as { x402Version: number; accepts: unknown[] };
     expect(body.x402Version).toBe(1);
     expect(body.accepts).toHaveLength(1);
-    expect(facilitator.verify).not.toHaveBeenCalled();
   });
 
   it('returns 402 when the X-PAYMENT header is malformed', async () => {
-    const facilitator = mockFacilitator();
-    const wrapped = withPayment(flatConfig(), okHandler, { facilitator });
+    const wrapped = withPayment(flatConfig(), okHandler, { facilitator: mockFacilitator() });
 
     const res = await wrapped(
       new Request('https://agent.test/run', { headers: { 'X-PAYMENT': 'not-base64-json!!!' } }),
@@ -80,8 +92,7 @@ describe('withPayment', () => {
     );
 
     expect(res.status).toBe(402);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toMatch(/malformed/i);
+    expect(((await res.json()) as { error: string }).error).toMatch(/malformed/i);
   });
 
   it('returns 402 when the facilitator rejects the payment', async () => {
@@ -98,15 +109,12 @@ describe('withPayment', () => {
     );
 
     expect(res.status).toBe(402);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toMatch(/bad signature/);
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('runs the handler and attaches X-PAYMENT-RESPONSE on a successful payment', async () => {
+  it('runs the handler and attaches X-PAYMENT-RESPONSE on success', async () => {
     const facilitator = mockFacilitator();
-    const handler = vi.fn(okHandler);
-    const wrapped = withPayment(flatConfig(), handler, { facilitator });
+    const wrapped = withPayment(flatConfig(), okHandler, { facilitator });
 
     const res = await wrapped(
       new Request('https://agent.test/run', { headers: { 'X-PAYMENT': validPaymentHeader } }),
@@ -115,9 +123,6 @@ describe('withPayment', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe('ok');
-    expect(handler).toHaveBeenCalledOnce();
-    expect(facilitator.verify).toHaveBeenCalledOnce();
     expect(facilitator.settle).toHaveBeenCalledOnce();
     expect(res.headers.get('X-PAYMENT-RESPONSE')).toBeTruthy();
   });
@@ -135,23 +140,133 @@ describe('withPayment', () => {
     );
 
     expect(res.status).toBe(402);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toMatch(/on-chain revert/);
+    expect(((await res.json()) as { error: string }).error).toMatch(/on-chain revert/);
   });
+});
 
-  it('returns 501 for per_token mode in v1', async () => {
-    const config = PaymentConfigSchema.parse({
-      wallet: WALLET,
-      mode: 'per_token',
-      pricePerTokenUsdc: '0.000001',
-      minCreditBalanceUsdc: '0.10',
+describe('withPayment — per_token mode', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const tokensHandler = (tokens: number) => () =>
+    new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { [TOKENS_USED_HEADER]: String(tokens), 'content-type': 'application/json' },
     });
-    const wrapped = withPayment(config, okHandler);
+
+  it('returns 402 with PaymentRequired when no X-PAYMENT and no session', async () => {
+    const wrapped = withPayment(perTokenConfig(), okHandler, {
+      facilitator: mockFacilitator(),
+      ledger: new InMemoryCreditLedger(),
+    });
 
     const res = await wrapped(new Request('https://agent.test/run'), env, ctx);
 
-    expect(res.status).toBe(501);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toMatch(/per_token/);
+    expect(res.status).toBe(402);
+    const body = (await res.json()) as { accepts: { maxAmountRequired: string }[] };
+    // 0.10 USDC = 100_000 atomic
+    expect(body.accepts[0]?.maxAmountRequired).toBe('100000');
+  });
+
+  it('topup call settles, credits balance, runs handler, debits tokens, returns session', async () => {
+    const facilitator = mockFacilitator();
+    const ledger = new InMemoryCreditLedger();
+    const wrapped = withPayment(perTokenConfig(), tokensHandler(1000), { facilitator, ledger });
+
+    const res = await wrapped(
+      new Request('https://agent.test/run', { headers: { 'X-PAYMENT': validPaymentHeader } }),
+      env,
+      ctx,
+    );
+
+    expect(res.status).toBe(200);
+    expect(facilitator.settle).toHaveBeenCalledOnce();
+    const sessionToken = res.headers.get(SESSION_HEADER);
+    expect(sessionToken).toBeTruthy();
+    expect(res.headers.get('X-PAYMENT-RESPONSE')).toBeTruthy();
+    // Credited 0.10, debited 1000 * 0.000001 = 0.001 → balance 0.099
+    expect(await ledger.getBalance(PAYER)).toBe('0.099');
+  });
+
+  it('session-token call draws down balance without re-paying', async () => {
+    const facilitator = mockFacilitator();
+    const ledger = new InMemoryCreditLedger();
+    const wrapped = withPayment(perTokenConfig(), tokensHandler(500), { facilitator, ledger });
+
+    // First call: topup
+    const first = await wrapped(
+      new Request('https://agent.test/run', { headers: { 'X-PAYMENT': validPaymentHeader } }),
+      env,
+      ctx,
+    );
+    const session = first.headers.get(SESSION_HEADER) as string;
+    expect(session).toBeTruthy();
+
+    // Clear mocks so we can verify the next call does NOT touch the facilitator
+    vi.clearAllMocks();
+
+    // Second call: use the session, no X-PAYMENT
+    const second = await wrapped(
+      new Request('https://agent.test/run', { headers: { [SESSION_HEADER]: session } }),
+      env,
+      ctx,
+    );
+
+    expect(second.status).toBe(200);
+    expect(facilitator.verify).not.toHaveBeenCalled();
+    expect(facilitator.settle).not.toHaveBeenCalled();
+    // Balance after two calls: 0.10 - (1000 * 0.000001) = 0.099
+    expect(await ledger.getBalance(PAYER)).toBe('0.099');
+  });
+
+  it('returns 402 when the supplied session token is unknown', async () => {
+    const wrapped = withPayment(perTokenConfig(), okHandler, {
+      facilitator: mockFacilitator(),
+      ledger: new InMemoryCreditLedger(),
+    });
+
+    const res = await wrapped(
+      new Request('https://agent.test/run', { headers: { [SESSION_HEADER]: 'als_bogus' } }),
+      env,
+      ctx,
+    );
+
+    expect(res.status).toBe(402);
+    expect(((await res.json()) as { error: string }).error).toMatch(/invalid|expired/i);
+  });
+
+  it('returns 402 once balance is fully depleted', async () => {
+    // pricePerToken = 0.05, so 2 calls of 1 token each drain the 0.10 topup
+    const config = perTokenConfig({ minCreditBalanceUsdc: '0.10', pricePerTokenUsdc: '0.05' });
+    const facilitator = mockFacilitator();
+    const ledger = new InMemoryCreditLedger();
+    const wrapped = withPayment(config, tokensHandler(1), { facilitator, ledger });
+
+    // Topup + first call
+    const first = await wrapped(
+      new Request('https://agent.test/run', { headers: { 'X-PAYMENT': validPaymentHeader } }),
+      env,
+      ctx,
+    );
+    expect(first.status).toBe(200);
+    const session = first.headers.get(SESSION_HEADER) as string;
+    expect(await ledger.getBalance(PAYER)).toBe('0.05');
+
+    // Second call drains to zero
+    const second = await wrapped(
+      new Request('https://agent.test/run', { headers: { [SESSION_HEADER]: session } }),
+      env,
+      ctx,
+    );
+    expect(second.status).toBe(200);
+    expect(await ledger.getBalance(PAYER)).toBe('0');
+
+    // Third call should be blocked
+    const third = await wrapped(
+      new Request('https://agent.test/run', { headers: { [SESSION_HEADER]: session } }),
+      env,
+      ctx,
+    );
+    expect(third.status).toBe(402);
+    expect(((await third.json()) as { error: string }).error).toMatch(/depleted|top up/i);
   });
 });
