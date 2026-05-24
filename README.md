@@ -1,13 +1,13 @@
 <h1 align="center">airlock</h1>
 
 <p align="center">
-  <a href="https://github.com/Okohedeki/airlock-deploy/stargazers">
-    <img src="https://img.shields.io/github/stars/Okohedeki/airlock-deploy?style=flat&logo=github" alt="GitHub stars">
+  <a href="https://github.com/Okohedeki/airlock/stargazers">
+    <img src="https://img.shields.io/github/stars/Okohedeki/airlock?style=flat&logo=github" alt="GitHub stars">
   </a>
-  <a href="https://github.com/Okohedeki/airlock-deploy/releases">
-    <img src="https://img.shields.io/github/v/release/Okohedeki/airlock-deploy?style=flat&logo=github&include_prereleases" alt="GitHub release">
+  <a href="https://github.com/Okohedeki/airlock/releases">
+    <img src="https://img.shields.io/github/v/release/Okohedeki/airlock?style=flat&logo=github&include_prereleases" alt="GitHub release">
   </a>
-  <a href="https://github.com/Okohedeki/airlock-deploy/blob/main/LICENSE">
+  <a href="https://github.com/Okohedeki/airlock/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License">
   </a>
   <a href="https://www.npmjs.com/package/@airlockhq/cli">
@@ -155,11 +155,11 @@ cd python/payment-fly && pip install -e '.[dev]' && pytest
 ---
 
 <p align="center">
-  <a href="https://star-history.com/#Okohedeki/airlock-deploy&Date">
+  <a href="https://star-history.com/#Okohedeki/airlock&Date">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Okohedeki/airlock-deploy&type=Date&theme=dark">
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Okohedeki/airlock-deploy&type=Date">
-      <img src="https://api.star-history.com/svg?repos=Okohedeki/airlock-deploy&type=Date" alt="Star history chart for Okohedeki/airlock-deploy" width="600" style="max-width: 100%;">
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Okohedeki/airlock&type=Date&theme=dark">
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Okohedeki/airlock&type=Date">
+      <img src="https://api.star-history.com/svg?repos=Okohedeki/airlock&type=Date" alt="Star history chart for Okohedeki/airlock" width="600" style="max-width: 100%;">
     </picture>
   </a>
 </p>
