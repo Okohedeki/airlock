@@ -1,6 +1,8 @@
 # local-llm-agent
 
-End-to-end demo: an Express server that forwards `POST /chat` to a locally-running [Ollama](https://ollama.com/) instance, optionally enforcing per-call x402 payment via `@airlock-deploy/payment-fly-node`.
+End-to-end demo: an Express server that forwards `POST /chat` to a locally-running [Ollama](https://ollama.com/) instance, optionally enforcing per-call x402 payment via `@airlockhq/payment-fly-node`.
+
+> **For production** (llama.cpp on a Fly GPU machine with a real paywall), see [`docs/llama-cpp-on-fly.md`](../../docs/llama-cpp-on-fly.md). This example is the local-only dev loop.
 
 ## Prereqs
 
@@ -14,7 +16,7 @@ From the repo root:
 
 ```bash
 pnpm install
-pnpm --filter @airlock-deploy/example-local-llm-agent dev
+pnpm --filter @airlockhq/example-local-llm-agent dev
 ```
 
 Server starts on `http://localhost:3000`. Then in another terminal:
@@ -41,7 +43,7 @@ PAYMENT_ENABLED=1 \
   PUBLISHER_WALLET=0x1234567890abcdef1234567890abcdef12345678 \
   PAYMENT_NETWORK=base-sepolia \
   PRICE_USDC=0.001 \
-  pnpm --filter @airlock-deploy/example-local-llm-agent dev
+  pnpm --filter @airlockhq/example-local-llm-agent dev
 ```
 
 Now the same curl call returns **HTTP 402** with the x402 PaymentRequired body — that's the unpaid path, and the handler never runs (Ollama isn't called, no tokens spent).
@@ -52,11 +54,11 @@ Use the bundled client script. It wraps `fetch` with `@x402/fetch` and signs the
 
 ```bash
 # Unpaid mode — shows the 402 response and the requirements
-pnpm --filter @airlock-deploy/example-local-llm-agent client "hello"
+pnpm --filter @airlockhq/example-local-llm-agent client "hello"
 
 # Paid mode — needs a wallet funded with Base Sepolia USDC
 PRIVATE_KEY=0x<your-test-private-key> \
-  pnpm --filter @airlock-deploy/example-local-llm-agent client "Tell me a joke"
+  pnpm --filter @airlockhq/example-local-llm-agent client "Tell me a joke"
 ```
 
 ### Getting Base Sepolia test USDC
@@ -101,4 +103,4 @@ Verify the on-chain transfer on [sepolia.basescan.org](https://sepolia.basescan.
 
 - [`docs/payment.md`](../../docs/payment.md) — full publisher quickstart, both Recipes
 - [`docs/adr/0005-x402-for-monetization.md`](../../docs/adr/0005-x402-for-monetization.md) — why x402 over Stripe
-- For a public URL (so other agents can reach this from the internet), point [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) or [`ngrok`](https://ngrok.com/) at `localhost:3000`. The first-party `airlock-deploy dev` tunnel server is on the roadmap but not in v1.
+- For a public URL (so other agents can reach this from the internet), point [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) or [`ngrok`](https://ngrok.com/) at `localhost:3000`. The first-party `airlock dev` tunnel server is on the roadmap but not in v1.

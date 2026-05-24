@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from airlock_deploy_payment import InMemoryCreditLedger, InsufficientBalanceError
-from airlock_deploy_payment.ledger import _from_atomic, _to_atomic
+from airlock_payment import InMemoryCreditLedger, InsufficientBalanceError
+from airlock_payment.ledger import _from_atomic, _to_atomic
 
 ALICE = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 BOB = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

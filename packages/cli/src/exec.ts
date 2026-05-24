@@ -46,21 +46,21 @@ export interface CommandBuild {
   args: string[];
 }
 
-/** `airlock-deploy deploy` — pushes the project to its Target. */
+/** `airlock deploy` — pushes the project to its Target. */
 export function buildDeploy(config: AirlockConfig): CommandBuild {
   const target = config.project.target;
   if (target === 'workers') return { binary: 'wrangler', args: ['deploy'] };
   return { binary: 'fly', args: ['deploy', '--app', config.project.name] };
 }
 
-/** `airlock-deploy delete` — tears down the deployment. */
+/** `airlock delete` — tears down the deployment. */
 export function buildDelete(config: AirlockConfig): CommandBuild {
   const target = config.project.target;
   if (target === 'workers') return { binary: 'wrangler', args: ['delete'] };
   return { binary: 'fly', args: ['apps', 'destroy', config.project.name, '--yes'] };
 }
 
-/** `airlock-deploy logs` — stream live logs from the deployment. */
+/** `airlock logs` — stream live logs from the deployment. */
 export function buildLogs(config: AirlockConfig): CommandBuild {
   const target = config.project.target;
   if (target === 'workers') return { binary: 'wrangler', args: ['tail'] };
@@ -69,7 +69,7 @@ export function buildLogs(config: AirlockConfig): CommandBuild {
 
 export type SecretAction = 'set' | 'list' | 'rm';
 
-/** `airlock-deploy secret set NAME=value | list | rm NAME` */
+/** `airlock secret set NAME=value | list | rm NAME` */
 export function buildSecret(
   config: AirlockConfig,
   action: SecretAction,
@@ -102,7 +102,7 @@ export function buildSecret(
 
 export type DomainAction = 'add' | 'rm';
 
-/** `airlock-deploy domain add HOSTNAME | rm HOSTNAME` */
+/** `airlock domain add HOSTNAME | rm HOSTNAME` */
 export function buildDomain(
   config: AirlockConfig,
   action: DomainAction,
@@ -126,7 +126,7 @@ export function buildDomain(
 }
 
 /**
- * `airlock-deploy dev` — open a public Tunnel to localhost:PORT via cloudflared.
+ * `airlock dev` — open a public Tunnel to localhost:PORT via cloudflared.
  * The Publisher's local agent must already be listening on PORT.
  */
 export function buildDev(port: number): CommandBuild {

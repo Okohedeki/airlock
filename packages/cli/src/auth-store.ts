@@ -9,7 +9,7 @@ export interface StoredAuth {
 }
 
 export function authPath(): string {
-  return resolve(homedir(), '.airlock-deploy', 'auth.json');
+  return resolve(homedir(), '.airlock', 'auth.json');
 }
 
 export async function readAuth(): Promise<StoredAuth | null> {

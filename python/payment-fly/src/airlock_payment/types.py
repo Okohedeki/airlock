@@ -1,6 +1,6 @@
-"""Shared type aliases and constants for airlock-deploy-payment.
+"""Shared type aliases and constants for airlock-payment.
 
-Mirrors the TypeScript `@airlock-deploy/payment-core` types so a Publisher's
+Mirrors the TypeScript `@airlockhq/payment-core` types so a Publisher's
 config translates 1:1 across the Node and Python middlewares.
 """
 

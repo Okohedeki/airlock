@@ -9,7 +9,7 @@ import { NotLoggedInError, runWhoami } from './whoami.js';
 let oldHome: string | undefined;
 
 beforeEach(async () => {
-  // Redirect HOME to a temp dir so we don't touch the user's real ~/.airlock-deploy
+  // Redirect HOME to a temp dir so we don't touch the user's real ~/.airlock
   oldHome = process.env.HOME;
   process.env.HOME = await mkdtemp(join(tmpdir(), 'airlock-cli-auth-'));
 });
@@ -58,7 +58,7 @@ describe('runLogin', () => {
     expect(stored?.backend).toBe('http://test');
 
     // Permissions: 0600 on the auth file
-    const path = `${process.env.HOME}/.airlock-deploy/auth.json`;
+    const path = `${process.env.HOME}/.airlock/auth.json`;
     const raw = await readFile(path, 'utf8');
     expect(JSON.parse(raw).token).toBe('real-token');
   });

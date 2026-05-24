@@ -22,6 +22,16 @@ export interface Project {
   name: string;
   target: 'workers' | 'fly';
   created_at: number;
+  archived_at: number | null;
+}
+
+export interface CliTokenSummary {
+  id: number; // sqlite rowid; opaque handle, never the secret token
+  token_prefix: string; // first 8 chars, for identification only
+  label: string | null;
+  created_at: number;
+  last_used_at: number | null;
+  revoked_at: number | null;
 }
 
 export interface InspectCall {
@@ -79,7 +89,10 @@ export function openDb(path: string): Database.Database {
     CREATE TABLE IF NOT EXISTS cli_tokens (
       token TEXT PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      label TEXT,
+      last_used_at INTEGER,
+      revoked_at INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS projects (
@@ -88,6 +101,7 @@ export function openDb(path: string): Database.Database {
       name TEXT NOT NULL,
       target TEXT NOT NULL CHECK(target IN ('workers','fly')),
       created_at INTEGER NOT NULL,
+      archived_at INTEGER,
       UNIQUE(user_id, name)
     );
 
@@ -110,6 +124,10 @@ export function openDb(path: string): Database.Database {
   `);
   // Forward-compatibility: add columns missing from older DBs.
   ensureColumn(db, 'inspect_calls', 'amount_usdc', 'TEXT');
+  ensureColumn(db, 'projects', 'archived_at', 'INTEGER');
+  ensureColumn(db, 'cli_tokens', 'revoked_at', 'INTEGER');
+  ensureColumn(db, 'cli_tokens', 'label', 'TEXT');
+  ensureColumn(db, 'cli_tokens', 'last_used_at', 'INTEGER');
   return db;
 }
 
@@ -133,9 +151,15 @@ export interface DbHandle {
   listProjects(userId: number): Project[];
   upsertProject(userId: number, name: string, target: 'workers' | 'fly'): Project;
   getProject(userId: number, id: number): Project | null;
+  /** Soft-delete: sets archived_at to now. Returns true if a row was touched. */
+  archiveProject(userId: number, id: number): boolean;
   recordInspectCall(project_id: number, call: Omit<InspectCall, 'id' | 'project_id'>): void;
   listInspectCalls(projectId: number, limit?: number): InspectCall[];
+  getInspectCall(projectId: number, callId: number): InspectCall | null;
   getProjectStats(projectId: number): ProjectStats;
+  listCliTokens(userId: number): CliTokenSummary[];
+  /** Soft-revokes by sqlite rowid. Returns true if a row was touched. */
+  revokeCliToken(userId: number, tokenRowId: number): boolean;
 }
 
 export function makeDbHandle(db: Database.Database): DbHandle {
@@ -244,14 +268,20 @@ export function makeDbHandle(db: Database.Database): DbHandle {
 
     getUserByCliToken(token) {
       const row = db
-        .prepare('SELECT u.* FROM users u JOIN cli_tokens t ON t.user_id = u.id WHERE t.token = ?')
+        .prepare(
+          'SELECT u.* FROM users u JOIN cli_tokens t ON t.user_id = u.id WHERE t.token = ? AND t.revoked_at IS NULL',
+        )
         .get(token) as User | undefined;
-      return row ?? null;
+      if (!row) return null;
+      db.prepare('UPDATE cli_tokens SET last_used_at = ? WHERE token = ?').run(Date.now(), token);
+      return row;
     },
 
     listProjects(userId) {
       return db
-        .prepare('SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC')
+        .prepare(
+          'SELECT * FROM projects WHERE user_id = ? AND archived_at IS NULL ORDER BY created_at DESC',
+        )
         .all(userId) as Project[];
     },
 
@@ -260,10 +290,14 @@ export function makeDbHandle(db: Database.Database): DbHandle {
         .prepare('SELECT * FROM projects WHERE user_id = ? AND name = ?')
         .get(userId, name) as Project | undefined;
       if (existing) {
-        if (existing.target !== target) {
-          db.prepare('UPDATE projects SET target = ? WHERE id = ?').run(target, existing.id);
+        // Sync after archive un-archives. Update target if it diverged.
+        if (existing.target !== target || existing.archived_at !== null) {
+          db.prepare('UPDATE projects SET target = ?, archived_at = NULL WHERE id = ?').run(
+            target,
+            existing.id,
+          );
         }
-        return { ...existing, target };
+        return { ...existing, target, archived_at: null };
       }
       const now = Date.now();
       const result = db
@@ -275,6 +309,7 @@ export function makeDbHandle(db: Database.Database): DbHandle {
         name,
         target,
         created_at: now,
+        archived_at: null,
       };
     },
 
@@ -283,6 +318,15 @@ export function makeDbHandle(db: Database.Database): DbHandle {
         .prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?')
         .get(id, userId) as Project | undefined;
       return row ?? null;
+    },
+
+    archiveProject(userId, id) {
+      const result = db
+        .prepare(
+          'UPDATE projects SET archived_at = ? WHERE id = ? AND user_id = ? AND archived_at IS NULL',
+        )
+        .run(Date.now(), id, userId);
+      return result.changes > 0;
     },
 
     recordInspectCall(project_id, call) {
@@ -308,6 +352,45 @@ export function makeDbHandle(db: Database.Database): DbHandle {
       return db
         .prepare('SELECT * FROM inspect_calls WHERE project_id = ? ORDER BY timestamp DESC LIMIT ?')
         .all(projectId, limit) as InspectCall[];
+    },
+
+    getInspectCall(projectId, callId) {
+      const row = db
+        .prepare('SELECT * FROM inspect_calls WHERE id = ? AND project_id = ?')
+        .get(callId, projectId) as InspectCall | undefined;
+      return row ?? null;
+    },
+
+    listCliTokens(userId) {
+      const rows = db
+        .prepare(
+          'SELECT rowid AS id, token, label, created_at, last_used_at, revoked_at FROM cli_tokens WHERE user_id = ? ORDER BY created_at DESC',
+        )
+        .all(userId) as {
+        id: number;
+        token: string;
+        label: string | null;
+        created_at: number;
+        last_used_at: number | null;
+        revoked_at: number | null;
+      }[];
+      return rows.map((r) => ({
+        id: r.id,
+        token_prefix: r.token.slice(0, 8),
+        label: r.label,
+        created_at: r.created_at,
+        last_used_at: r.last_used_at,
+        revoked_at: r.revoked_at,
+      }));
+    },
+
+    revokeCliToken(userId, tokenRowId) {
+      const result = db
+        .prepare(
+          'UPDATE cli_tokens SET revoked_at = ? WHERE rowid = ? AND user_id = ? AND revoked_at IS NULL',
+        )
+        .run(Date.now(), tokenRowId, userId);
+      return result.changes > 0;
     },
 
     getProjectStats(projectId) {

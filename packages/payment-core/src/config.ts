@@ -40,8 +40,8 @@ const PerTokenConfigSchema = z.object({
 });
 
 /**
- * `[payment]` section of `.airlock-deploy/config.toml`. Validated via Zod so
- * misconfigurations fail at `airlock-deploy doctor`, not at first paid call.
+ * `[payment]` section of `.airlock/config.toml`. Validated via Zod so
+ * misconfigurations fail at `airlock doctor`, not at first paid call.
  */
 export const PaymentConfigSchema = z
   .object({

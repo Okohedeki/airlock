@@ -10,7 +10,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from airlock_deploy_payment import (
+from airlock_payment import (
     CallReporter,
     PaymentMiddleware,
     SettleResponse,
@@ -18,7 +18,7 @@ from airlock_deploy_payment import (
     VerifyResponse,
     parse_payment_config,
 )
-from airlock_deploy_payment.middleware import _encode_payment_response_header
+from airlock_payment.middleware import _encode_payment_response_header
 
 WALLET = "0x1234567890abcdef1234567890abcdef12345678"
 PAYER = "0xpayer000000000000000000000000000000000001"

@@ -1,4 +1,4 @@
-"""Fire-and-forget reporter — POST every call's outcome to the airlock-deploy
+"""Fire-and-forget reporter — POST every call's outcome to the airlock
 backend's /api/inspect endpoint. Failures are swallowed."""
 
 from __future__ import annotations

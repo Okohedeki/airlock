@@ -1,5 +1,5 @@
 {
-  "name": "@airlock-deploy/payment-fly-node",
+  "name": "@airlockhq/payment-fly-node",
   "version": "0.0.0",
   "private": true,
   "description": "x402 Payment Middleware for Node.js / Express on the Fly Recipe — wraps an async handler, enforces payment per call.",
@@ -23,7 +23,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@airlock-deploy/payment-core": "workspace:*",
+    "@airlockhq/payment-core": "workspace:*",
     "@x402/core": "^2.13.0"
   },
   "peerDependencies": {

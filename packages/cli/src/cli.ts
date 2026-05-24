@@ -74,13 +74,13 @@ async function main() {
   const program = new Command();
 
   program
-    .name('airlock-deploy')
+    .name('airlock')
     .description('ngrok for AI agents — set up, validate, deploy, and inspect Agent projects')
     .version(version, '-v, --version');
 
   program
     .command('init')
-    .description('Wrap the current project with an airlock-deploy config and a starter Recipe')
+    .description('Wrap the current project with an airlock config and a starter Recipe')
     .argument('<name>', 'project name (used in recipe configs)')
     .option('-t, --target <target>', 'deploy Target: workers | fly', 'fly')
     .option('--no-recipe', 'skip writing the Recipe config (wrangler.toml / fly.toml)')
@@ -98,14 +98,14 @@ async function main() {
       console.log(`✓ wrote ${result.configPath}`);
       if (result.recipePath) console.log(`✓ wrote ${result.recipePath}`);
       console.log('\nnext steps:');
-      console.log('  1. Edit .airlock-deploy/config.toml — set payment.wallet to your address');
-      console.log('  2. Run `airlock-deploy doctor` to validate');
-      console.log('  3. Deploy with `airlock-deploy deploy`');
+      console.log('  1. Edit .airlock/config.toml — set payment.wallet to your address');
+      console.log('  2. Run `airlock doctor` to validate');
+      console.log('  3. Deploy with `airlock deploy`');
     });
 
   program
     .command('doctor')
-    .description('Validate the local airlock-deploy config and report issues')
+    .description('Validate the local airlock config and report issues')
     .action(async () => {
       const report = await runDoctor(process.cwd());
       for (const f of report.findings) {
@@ -180,12 +180,12 @@ async function main() {
 
   program
     .command('login')
-    .description('Authenticate this CLI to an airlock-deploy backend via GitHub device flow')
+    .description('Authenticate this CLI to an airlock backend via GitHub device flow')
     .option('--backend <url>', 'backend base URL', defaultBackend)
     .action(async (opts: { backend: string }) => {
       try {
         const result = await runLogin({ backend: opts.backend });
-        console.log(`\n✓ logged in. token saved to ~/.airlock-deploy/auth.json`);
+        console.log(`\n✓ logged in. token saved to ~/.airlock/auth.json`);
         console.log(`  backend: ${result.backend}`);
       } catch (err) {
         console.error(`error: ${(err as Error).message}`);
@@ -195,14 +195,14 @@ async function main() {
 
   program
     .command('sync')
-    .description('Register this project with the airlock-deploy backend so the dashboard shows it')
+    .description('Register this project with the airlock backend so the dashboard shows it')
     .action(async () => {
       try {
         const result = await runSync({ cwd: process.cwd() });
         console.log(`✓ project synced: ${result.name} (id=${result.id}, target=${result.target})`);
       } catch (err) {
         if (err instanceof NotLoggedInError) {
-          console.error('not logged in — run `airlock-deploy login`');
+          console.error('not logged in — run `airlock login`');
           process.exit(1);
         }
         console.error(`error: ${(err as Error).message}`);
@@ -227,7 +227,7 @@ async function main() {
         console.log(`${me.github_login} (id=${me.github_id})`);
       } catch (err) {
         if (err instanceof NotLoggedInError) {
-          console.error('not logged in — run `airlock-deploy login`');
+          console.error('not logged in — run `airlock login`');
           process.exit(1);
         }
         console.error(`error: ${(err as Error).message}`);

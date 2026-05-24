@@ -19,12 +19,12 @@ export async function runDoctor(cwd: string): Promise<DoctorReport> {
     config = await readConfig(cwd);
     findings.push({
       level: 'ok',
-      message: `read .airlock-deploy/config.toml (project=${config.project?.name ?? '<unknown>'})`,
+      message: `read .airlock/config.toml (project=${config.project?.name ?? '<unknown>'})`,
     });
   } catch (err) {
     findings.push({
       level: 'error',
-      message: `no .airlock-deploy/config.toml — run \`airlock-deploy init <name> --target=workers|fly\`. (${(err as Error).message})`,
+      message: `no .airlock/config.toml — run \`airlock init <name> --target=workers|fly\`. (${(err as Error).message})`,
     });
     return { ok: false, findings };
   }

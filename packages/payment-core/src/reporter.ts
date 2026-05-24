@@ -1,7 +1,7 @@
 /**
- * Reporter — fire-and-forget POST of every call's outcome to the airlock-deploy
+ * Reporter — fire-and-forget POST of every call's outcome to the airlock
  * backend's /api/inspect endpoint. The Publisher gets a token by running
- * `airlock-deploy login`, then `airlock-deploy sync` to register the project.
+ * `airlock login`, then `airlock sync` to register the project.
  *
  * Failures are swallowed — the reporter never blocks or breaks a paid call.
  */
@@ -11,9 +11,9 @@ import type { CallerId } from './types.js';
 export interface CallReporter {
   /** Backend base URL, e.g. `http://localhost:8787`. */
   url: string;
-  /** Bearer token issued via `airlock-deploy login`. */
+  /** Bearer token issued via `airlock login`. */
   token: string;
-  /** Project name registered with the backend (matches `airlock-deploy init`). */
+  /** Project name registered with the backend (matches `airlock init`). */
   projectName: string;
   /** Override fetch for tests. Defaults to `globalThis.fetch`. */
   fetchImpl?: typeof fetch;

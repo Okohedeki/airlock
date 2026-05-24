@@ -1,12 +1,12 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { PaymentConfigSchema } from '@airlock-deploy/payment-core';
+import { PaymentConfigSchema } from '@airlockhq/payment-core';
 import { parse, stringify } from 'smol-toml';
 
 export type Target = 'workers' | 'fly';
 
 /**
- * On-disk shape of `.airlock-deploy/config.toml`. The `[payment]` section is
+ * On-disk shape of `.airlock/config.toml`. The `[payment]` section is
  * parsed via the shared PaymentConfigSchema from payment-core.
  */
 export interface AirlockConfig {
@@ -19,7 +19,7 @@ export interface AirlockConfig {
   payment?: Record<string, unknown>;
 }
 
-export const CONFIG_PATH = '.airlock-deploy/config.toml';
+export const CONFIG_PATH = '.airlock/config.toml';
 
 export async function readConfig(cwd: string): Promise<AirlockConfig> {
   const path = resolve(cwd, CONFIG_PATH);

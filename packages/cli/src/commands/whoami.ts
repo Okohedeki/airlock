@@ -9,7 +9,7 @@ export interface WhoamiResult {
 
 export class NotLoggedInError extends Error {
   constructor() {
-    super('not logged in — run `airlock-deploy login`');
+    super('not logged in — run `airlock login`');
     this.name = 'NotLoggedInError';
   }
 }

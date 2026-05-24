@@ -5,7 +5,7 @@ import {
   PaymentConfigSchema,
   SESSION_HEADER,
   TOKENS_USED_HEADER,
-} from '@airlock-deploy/payment-core';
+} from '@airlockhq/payment-core';
 import { encodePaymentSignatureHeader } from '@x402/core/http';
 import type { NextFunction, Request, Response } from 'express';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

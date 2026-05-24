@@ -1,8 +1,8 @@
-"""airlock-deploy-payment — x402 Payment Middleware for Python ASGI apps.
+"""airlock-payment — x402 Payment Middleware for Python ASGI apps.
 
 Public surface:
 
-  from airlock_deploy_payment import (
+  from airlock_payment import (
       PaymentConfig,         # union of FlatPaymentConfig | PerTokenPaymentConfig
       FlatPaymentConfig,
       PerTokenPaymentConfig,

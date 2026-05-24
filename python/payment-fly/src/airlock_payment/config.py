@@ -1,8 +1,8 @@
-"""PaymentConfig — the Python mirror of the TS Zod schema in @airlock-deploy/payment-core.
+"""PaymentConfig — the Python mirror of the TS Zod schema in @airlockhq/payment-core.
 
 Validated via Pydantic v2. Stays in sync with `packages/payment-core/src/config.ts` —
 network keys, default facilitator, USDC contract addresses, and the flat / per_token
-mode union must match exactly so a `.airlock-deploy/config.toml` works under either
+mode union must match exactly so a `.airlock/config.toml` works under either
 Recipe.
 """
 

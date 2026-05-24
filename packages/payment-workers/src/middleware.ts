@@ -9,7 +9,7 @@ import {
   report,
   SESSION_HEADER,
   TOKENS_USED_HEADER,
-} from '@airlock-deploy/payment-core';
+} from '@airlockhq/payment-core';
 import { decodePaymentSignatureHeader, encodePaymentResponseHeader } from '@x402/core/http';
 import { HTTPFacilitatorClient } from '@x402/core/server';
 

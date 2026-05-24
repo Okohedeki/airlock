@@ -11,7 +11,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from airlock_deploy_payment import (
+from airlock_payment import (
     InMemoryCreditLedger,
     PaymentMiddleware,
     SESSION_HEADER,

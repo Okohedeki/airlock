@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from airlock_deploy_payment import (
+from airlock_payment import (
     FlatPaymentConfig,
     PerTokenPaymentConfig,
     USDC_ADDRESSES,

@@ -63,7 +63,7 @@ class PaymentMiddleware(BaseHTTPMiddleware):
     Wire it like any other Starlette middleware:
 
         from starlette.applications import Starlette
-        from airlock_deploy_payment import PaymentMiddleware, parse_payment_config
+        from airlock_payment import PaymentMiddleware, parse_payment_config
 
         config = parse_payment_config({"mode": "flat", "wallet": "0x...", "priceUsdc": "0.001"})
         app = Starlette(routes=[...])

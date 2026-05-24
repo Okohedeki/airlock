@@ -1,5 +1,5 @@
-import type { PaymentConfig } from '@airlock-deploy/payment-core';
-import { PaymentConfigSchema } from '@airlock-deploy/payment-core';
+import type { PaymentConfig } from '@airlockhq/payment-core';
+import { PaymentConfigSchema } from '@airlockhq/payment-core';
 
 const env = process.env;
 

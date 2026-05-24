@@ -22,7 +22,7 @@ describe('runDoctor', () => {
     const report = await runDoctor(cwd);
     expect(report.ok).toBe(false);
     expect(report.findings[0]?.level).toBe('error');
-    expect(report.findings[0]?.message).toMatch(/no .airlock-deploy\/config.toml/);
+    expect(report.findings[0]?.message).toMatch(/no .airlock\/config.toml/);
   });
 
   it('passes on a valid config with a real wallet and payment disabled', async () => {

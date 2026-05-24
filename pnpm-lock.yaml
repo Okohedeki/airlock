@@ -23,10 +23,10 @@ importers:
 
   examples/local-llm-agent:
     dependencies:
-      '@airlock-deploy/payment-core':
+      '@airlockhq/payment-core':
         specifier: workspace:*
         version: link:../../packages/payment-core
-      '@airlock-deploy/payment-fly-node':
+      '@airlockhq/payment-fly-node':
         specifier: workspace:*
         version: link:../../packages/payment-fly-node
       '@x402/core':
@@ -60,10 +60,10 @@ importers:
 
   packages/cli:
     dependencies:
-      '@airlock-deploy/payment-core':
+      '@airlockhq/payment-core':
         specifier: workspace:*
         version: link:../payment-core
-      '@airlock-deploy/payment-fly-node':
+      '@airlockhq/payment-fly-node':
         specifier: workspace:*
         version: link:../payment-fly-node
       commander:
@@ -113,7 +113,7 @@ importers:
 
   packages/payment-fly-node:
     dependencies:
-      '@airlock-deploy/payment-core':
+      '@airlockhq/payment-core':
         specifier: workspace:*
         version: link:../payment-core
       '@x402/core':
@@ -135,7 +135,7 @@ importers:
 
   packages/payment-workers:
     dependencies:
-      '@airlock-deploy/payment-core':
+      '@airlockhq/payment-core':
         specifier: workspace:*
         version: link:../payment-core
       '@x402/core':

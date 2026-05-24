@@ -1,5 +1,5 @@
 /**
- * `airlock-deploy serve` — wrap a locally-running LLM HTTP endpoint with
+ * `airlock serve` — wrap a locally-running LLM HTTP endpoint with
  * x402 payment enforcement and (optionally) dashboard reporting.
  *
  * The Publisher already has their model running somewhere — llama.cpp's
@@ -13,8 +13,8 @@ import {
   type CallReporter,
   type PaymentConfig,
   PaymentConfigSchema,
-} from '@airlock-deploy/payment-core';
-import { withPaymentExpress } from '@airlock-deploy/payment-fly-node';
+} from '@airlockhq/payment-core';
+import { withPaymentExpress } from '@airlockhq/payment-fly-node';
 import express, { type Express, type Request } from 'express';
 import { readAuth } from '../auth-store.js';
 import { readConfig } from '../config-file.js';
@@ -48,8 +48,8 @@ export interface ServeResolved {
 }
 
 /**
- * Build the wrapper Express app from CLI options + .airlock-deploy/config.toml
- * + ~/.airlock-deploy/auth.json. Returns the app so tests can drive it without
+ * Build the wrapper Express app from CLI options + .airlock/config.toml
+ * + ~/.airlock/auth.json. Returns the app so tests can drive it without
  * binding a port.
  */
 export async function buildServeApp(opts: ServeOptions): Promise<ServeResolved> {
@@ -63,7 +63,7 @@ export async function buildServeApp(opts: ServeOptions): Promise<ServeResolved> 
 
   app.get('/', (_req, res) => {
     res.json({
-      service: 'airlock-deploy serve',
+      service: 'airlock serve',
       upstream: opts.upstream,
       payment: { enabled: paymentConfig.enabled, mode: paymentConfig.mode },
       endpoints: ['POST /v1/chat/completions', 'POST /chat'],
@@ -90,7 +90,7 @@ export async function startServe(opts: ServeOptions): Promise<{ close: () => Pro
   return new Promise((resolve) => {
     const server = app.listen(opts.port, () => {
       const addr = server.address() as AddressInfo;
-      console.log(`airlock-deploy serve  →  listening on http://localhost:${addr.port}`);
+      console.log(`airlock serve  →  listening on http://localhost:${addr.port}`);
       console.log(`  upstream:    ${upstream}`);
       console.log(
         `  payment:     ${paymentConfig.enabled ? `${paymentConfig.mode} (wallet=${paymentConfig.wallet})` : 'OFF'}`,
@@ -167,11 +167,11 @@ async function resolvePaymentConfig(opts: ServeOptions, cwd: string): Promise<Pa
       priceUsdc: opts.priceUsdc ?? '0.001',
     });
   }
-  // Otherwise read .airlock-deploy/config.toml
+  // Otherwise read .airlock/config.toml
   const cfg = await readConfig(cwd);
   if (!cfg.payment) {
     throw new Error(
-      'no [payment] section in .airlock-deploy/config.toml — run `airlock-deploy init` or pass --wallet / --price',
+      'no [payment] section in .airlock/config.toml — run `airlock init` or pass --wallet / --price',
     );
   }
   return PaymentConfigSchema.parse(cfg.payment);

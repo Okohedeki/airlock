@@ -5,8 +5,8 @@
  * With PRIVATE_KEY:    wraps fetch with @x402/fetch, signs the payment, prints the LLM response.
  *
  * Usage:
- *   pnpm --filter @airlock-deploy/example-local-llm-agent client "hello"
- *   PRIVATE_KEY=0x... pnpm --filter @airlock-deploy/example-local-llm-agent client "hello"
+ *   pnpm --filter @airlockhq/example-local-llm-agent client "hello"
+ *   PRIVATE_KEY=0x... pnpm --filter @airlockhq/example-local-llm-agent client "hello"
  *
  * Get test USDC for PRIVATE_KEY on Base Sepolia: https://faucet.circle.com/
  */

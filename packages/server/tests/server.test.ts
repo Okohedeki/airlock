@@ -377,10 +377,232 @@ describe('dashboard pages', () => {
   });
 });
 
-function mintCliToken(handle: DbHandle, userId: number): string {
-  const token = 'test-cli-token';
+describe('project lifecycle (archive)', () => {
+  it('DELETE /api/projects/:id archives the project and hides it from listProjects', async () => {
+    const { app, handle } = fixture();
+    const user = handle.upsertUser({ id: 7, login: 'tester' });
+    const token = mintCliToken(handle, user.id);
+    const project = handle.upsertProject(user.id, 'my-agent', 'fly');
+
+    const del = await request(app)
+      .delete(`/api/projects/${project.id}`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(del.status).toBe(200);
+    expect(del.body).toMatchObject({ ok: true, archived: true });
+
+    // Hidden from list…
+    const list = await request(app).get('/api/projects').set('Authorization', `Bearer ${token}`);
+    expect(list.body).toEqual([]);
+
+    // …but historical stats still resolvable by direct id.
+    const stats = await request(app)
+      .get(`/api/projects/${project.id}/stats`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(stats.status).toBe(200);
+  });
+
+  it('DELETE /api/projects/:id returns 404 if already archived', async () => {
+    const { app, handle } = fixture();
+    const user = handle.upsertUser({ id: 7, login: 'tester' });
+    const token = mintCliToken(handle, user.id);
+    const project = handle.upsertProject(user.id, 'my-agent', 'fly');
+    handle.archiveProject(user.id, project.id);
+
+    const res = await request(app)
+      .delete(`/api/projects/${project.id}`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(404);
+  });
+
+  it('upsertProject revives an archived project (sync after archive un-archives)', async () => {
+    const { handle } = fixture();
+    const user = handle.upsertUser({ id: 7, login: 'tester' });
+    const project = handle.upsertProject(user.id, 'my-agent', 'fly');
+    handle.archiveProject(user.id, project.id);
+
+    const revived = handle.upsertProject(user.id, 'my-agent', 'fly');
+    expect(revived.archived_at).toBeNull();
+    expect(handle.listProjects(user.id)).toHaveLength(1);
+  });
+
+  it('POST /projects/:id/delete (dashboard form) requires CSRF, then archives + redirects', async () => {
+    const { app, handle } = fixture();
+    const user = handle.upsertUser({ id: 42, login: 'tester' });
+    const sid = handle.createSession(user.id, 3600);
+    const project = handle.upsertProject(user.id, 'my-agent', 'fly');
+
+    // No CSRF → 403
+    const noCsrf = await request(app)
+      .post(`/projects/${project.id}/delete`)
+      .set('Cookie', `airlock_sid=${sid}`);
+    expect(noCsrf.status).toBe(403);
+
+    // GET the project page to receive a CSRF cookie
+    const formRes = await request(app)
+      .get(`/projects/${project.id}`)
+      .set('Cookie', `airlock_sid=${sid}`);
+    const csrfCookie = (formRes.headers['set-cookie'] as string[]).find((c) =>
+      c.startsWith('airlock_csrf='),
+    );
+    const csrf = csrfCookie?.split(';')[0].split('=')[1];
+
+    const res = await request(app)
+      .post(`/projects/${project.id}/delete`)
+      .set('Cookie', `airlock_sid=${sid}; airlock_csrf=${csrf}`)
+      .type('form')
+      .send({ _csrf: csrf });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/projects');
+    expect(handle.listProjects(user.id)).toEqual([]);
+  });
+});
+
+describe('CLI token management', () => {
+  it('GET /api/cli-tokens lists the user\'s tokens (prefix only, never the secret)', async () => {
+    const { app, handle } = fixture();
+    const user = handle.upsertUser({ id: 7, login: 'tester' });
+    const token = mintCliToken(handle, user.id);
+
+    const res = await request(app).get('/api/cli-tokens').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0]).toMatchObject({
+      token_prefix: token.slice(0, 8),
+      revoked_at: null,
+    });
+    expect(res.body[0]).not.toHaveProperty('token'); // never leak the secret
+  });
+
+  it('DELETE /api/cli-tokens/:id revokes it; subsequent bearer use returns 401', async () => {
+    const { app, handle } = fixture();
+    const user = handle.upsertUser({ id: 7, login: 'tester' });
+    const tokenA = mintCliToken(handle, user.id, 'token-a');
+    const tokenB = mintCliToken(handle, user.id, 'token-b');
+
+    // Find tokenA's rowid via the list endpoint
+    const list = await request(app)
+      .get('/api/cli-tokens')
+      .set('Authorization', `Bearer ${tokenB}`);
+    const tokenA_row = (list.body as { id: number; token_prefix: string }[]).find(
+      (t) => t.token_prefix === tokenA.slice(0, 8),
+    );
+    expect(tokenA_row).toBeDefined();
+
+    const del = await request(app)
+      .delete(`/api/cli-tokens/${tokenA_row?.id}`)
+      .set('Authorization', `Bearer ${tokenB}`);
+    expect(del.status).toBe(200);
+
+    // tokenA no longer works
+    const denied = await request(app)
+      .get('/api/projects')
+      .set('Authorization', `Bearer ${tokenA}`);
+    expect(denied.status).toBe(401);
+
+    // tokenB still works
+    const ok = await request(app).get('/api/projects').set('Authorization', `Bearer ${tokenB}`);
+    expect(ok.status).toBe(200);
+  });
+
+  it('getUserByCliToken stamps last_used_at', async () => {
+    const { app, handle } = fixture();
+    const user = handle.upsertUser({ id: 7, login: 'tester' });
+    const token = mintCliToken(handle, user.id);
+
+    const before = handle.listCliTokens(user.id)[0];
+    expect(before.last_used_at).toBeNull();
+
+    await request(app).get('/api/whoami').set('Authorization', `Bearer ${token}`);
+
+    const after = handle.listCliTokens(user.id)[0];
+    expect(after.last_used_at).toBeTypeOf('number');
+  });
+
+  it('POST /tokens/:id/revoke (dashboard form) requires CSRF, then revokes + redirects', async () => {
+    const { app, handle } = fixture();
+    const user = handle.upsertUser({ id: 42, login: 'tester' });
+    const sid = handle.createSession(user.id, 3600);
+    mintCliToken(handle, user.id);
+    const tokenRow = handle.listCliTokens(user.id)[0];
+
+    // GET the tokens page to receive a CSRF cookie
+    const formRes = await request(app).get('/tokens').set('Cookie', `airlock_sid=${sid}`);
+    const csrfCookie = (formRes.headers['set-cookie'] as string[]).find((c) =>
+      c.startsWith('airlock_csrf='),
+    );
+    const csrf = csrfCookie?.split(';')[0].split('=')[1];
+
+    const res = await request(app)
+      .post(`/tokens/${tokenRow.id}/revoke`)
+      .set('Cookie', `airlock_sid=${sid}; airlock_csrf=${csrf}`)
+      .type('form')
+      .send({ _csrf: csrf });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/tokens');
+    expect(handle.listCliTokens(user.id)[0].revoked_at).toBeTypeOf('number');
+  });
+});
+
+describe('call detail', () => {
+  it('GET /api/projects/:id/calls/:callId returns full body fields', async () => {
+    const { app, handle } = fixture();
+    const user = handle.upsertUser({ id: 7, login: 'tester' });
+    const token = mintCliToken(handle, user.id);
+    const project = handle.upsertProject(user.id, 'my-agent', 'fly');
+    handle.recordInspectCall(project.id, {
+      timestamp: Date.now(),
+      caller: '0xabc',
+      status: 200,
+      request_url: 'http://agent.test/chat',
+      request_body: '{"prompt":"hi"}',
+      response_body: '{"text":"hello"}',
+      tokens_used: 42,
+      amount_usdc: '0.001',
+      payment_settled: 1,
+    });
+    const call = handle.listInspectCalls(project.id)[0];
+
+    const res = await request(app)
+      .get(`/api/projects/${project.id}/calls/${call.id}`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      request_body: '{"prompt":"hi"}',
+      response_body: '{"text":"hello"}',
+      tokens_used: 42,
+      payment_settled: 1,
+    });
+  });
+
+  it('GET /api/projects/:id/calls/:callId 404s for a call that belongs to another project', async () => {
+    const { app, handle } = fixture();
+    const user = handle.upsertUser({ id: 7, login: 'tester' });
+    const token = mintCliToken(handle, user.id);
+    const projectA = handle.upsertProject(user.id, 'agent-a', 'fly');
+    const projectB = handle.upsertProject(user.id, 'agent-b', 'fly');
+    handle.recordInspectCall(projectA.id, {
+      timestamp: Date.now(),
+      caller: null,
+      status: 200,
+      request_url: 'http://x',
+      request_body: null,
+      response_body: null,
+      tokens_used: null,
+      amount_usdc: null,
+      payment_settled: 0,
+    });
+    const call = handle.listInspectCalls(projectA.id)[0];
+
+    const res = await request(app)
+      .get(`/api/projects/${projectB.id}/calls/${call.id}`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(404);
+  });
+});
+
+function mintCliToken(handle: DbHandle, userId: number, name = 'test-cli-token'): string {
   handle.db
     .prepare('INSERT INTO cli_tokens (token, user_id, created_at) VALUES (?, ?, ?)')
-    .run(token, userId, Date.now());
-  return token;
+    .run(name, userId, Date.now());
+  return name;
 }

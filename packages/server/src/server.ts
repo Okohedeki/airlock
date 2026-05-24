@@ -1,5 +1,5 @@
 /**
- * airlock-deploy backend server.
+ * airlock backend server.
  *
  * Env:
  *   PORT                 default 8787
@@ -15,7 +15,14 @@ import { z } from 'zod';
 import { type GitHubAuth, RealGitHubAuth } from './auth/github.js';
 import { issueToken, verifyToken } from './csrf.js';
 import { type DbHandle, makeDbHandle, openDb, type User } from './db.js';
-import { deviceApprovePage, loginPage, projectDetailPage, projectsPage } from './pages.js';
+import {
+  callDetailPage,
+  deviceApprovePage,
+  loginPage,
+  projectDetailPage,
+  projectsPage,
+  tokensPage,
+} from './pages.js';
 
 const SESSION_COOKIE = 'airlock_sid';
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
@@ -269,6 +276,74 @@ export function buildApp(options: ServerOptions = {}): BuildAppResult {
     res.json(handle.getProjectStats(project.id));
   });
 
+  app.delete('/api/projects/:id', (req, res) => {
+    const user = bearerUser(req, handle);
+    if (!user) {
+      res.status(401).json({ error: 'unauthenticated' });
+      return;
+    }
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: 'invalid id' });
+      return;
+    }
+    const ok = handle.archiveProject(user.id, id);
+    if (!ok) {
+      res.status(404).json({ error: 'project not found or already archived' });
+      return;
+    }
+    res.json({ ok: true, archived: true });
+  });
+
+  app.get('/api/projects/:id/calls/:callId', (req, res) => {
+    const user = bearerUser(req, handle);
+    if (!user) {
+      res.status(401).json({ error: 'unauthenticated' });
+      return;
+    }
+    const id = Number.parseInt(req.params.id, 10);
+    const callId = Number.parseInt(req.params.callId, 10);
+    const project = handle.getProject(user.id, id);
+    if (!project) {
+      res.status(404).json({ error: 'project not found' });
+      return;
+    }
+    const call = handle.getInspectCall(project.id, callId);
+    if (!call) {
+      res.status(404).json({ error: 'call not found' });
+      return;
+    }
+    res.json(call);
+  });
+
+  app.get('/api/cli-tokens', (req, res) => {
+    const user = bearerUser(req, handle);
+    if (!user) {
+      res.status(401).json({ error: 'unauthenticated' });
+      return;
+    }
+    res.json(handle.listCliTokens(user.id));
+  });
+
+  app.delete('/api/cli-tokens/:id', (req, res) => {
+    const user = bearerUser(req, handle);
+    if (!user) {
+      res.status(401).json({ error: 'unauthenticated' });
+      return;
+    }
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: 'invalid id' });
+      return;
+    }
+    const ok = handle.revokeCliToken(user.id, id);
+    if (!ok) {
+      res.status(404).json({ error: 'token not found or already revoked' });
+      return;
+    }
+    res.json({ ok: true, revoked: true });
+  });
+
   // ──────────────────────────────── Dashboard pages ────────────────────────────────
 
   app.get('/', (req, res) => {
@@ -316,6 +391,76 @@ export function buildApp(options: ServerOptions = {}): BuildAppResult {
       );
   });
 
+  app.post('/projects/:id/delete', (req, res) => {
+    const user = currentUser(req, handle);
+    if (!user) {
+      res.redirect('/');
+      return;
+    }
+    if (!verifyToken(req)) {
+      res.status(403).send('CSRF token invalid');
+      return;
+    }
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) {
+      res.status(400).send('invalid id');
+      return;
+    }
+    handle.archiveProject(user.id, id);
+    res.redirect('/projects');
+  });
+
+  app.get('/projects/:id/calls/:callId', (req, res) => {
+    const user = currentUser(req, handle);
+    if (!user) {
+      res.redirect('/');
+      return;
+    }
+    const id = Number.parseInt(req.params.id, 10);
+    const callId = Number.parseInt(req.params.callId, 10);
+    const project = handle.getProject(user.id, id);
+    if (!project) {
+      res.status(404).send('project not found');
+      return;
+    }
+    const call = handle.getInspectCall(project.id, callId);
+    if (!call) {
+      res.status(404).send('call not found');
+      return;
+    }
+    const csrf = issueToken(res);
+    res.type('html').send(callDetailPage(user, csrf, project, call));
+  });
+
+  app.get('/tokens', (req, res) => {
+    const user = currentUser(req, handle);
+    if (!user) {
+      res.redirect('/');
+      return;
+    }
+    const csrf = issueToken(res);
+    res.type('html').send(tokensPage(user, csrf, handle.listCliTokens(user.id)));
+  });
+
+  app.post('/tokens/:id/revoke', (req, res) => {
+    const user = currentUser(req, handle);
+    if (!user) {
+      res.redirect('/');
+      return;
+    }
+    if (!verifyToken(req)) {
+      res.status(403).send('CSRF token invalid');
+      return;
+    }
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) {
+      res.status(400).send('invalid id');
+      return;
+    }
+    handle.revokeCliToken(user.id, id);
+    res.redirect('/tokens');
+  });
+
   app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
   return { app, handle, dbPath, publicBaseUrl };
@@ -346,7 +491,7 @@ if (arg1 && (url === `file://${arg1}` || url.endsWith(`/${arg1.split('/').pop()}
   const port = Number.parseInt(process.env.PORT ?? '8787', 10);
   const { app, dbPath, publicBaseUrl } = buildApp();
   app.listen(port, () => {
-    console.log(`airlock-deploy server listening on http://localhost:${port}`);
+    console.log(`airlock server listening on http://localhost:${port}`);
     console.log(`  db:           ${dbPath}`);
     console.log(`  public URL:   ${publicBaseUrl}`);
     console.log(

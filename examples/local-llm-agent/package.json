@@ -1,5 +1,5 @@
 {
-  "name": "@airlock-deploy/example-local-llm-agent",
+  "name": "@airlockhq/example-local-llm-agent",
   "version": "0.0.0",
   "private": true,
   "description": "Expose a locally-running LLM (Ollama by default) over HTTP with optional x402 payment enforcement.",
@@ -13,8 +13,8 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@airlock-deploy/payment-core": "workspace:*",
-    "@airlock-deploy/payment-fly-node": "workspace:*",
+    "@airlockhq/payment-core": "workspace:*",
+    "@airlockhq/payment-fly-node": "workspace:*",
     "@x402/core": "^2.13.0",
     "@x402/evm": "^2.13.0",
     "@x402/fetch": "^2.13.0",

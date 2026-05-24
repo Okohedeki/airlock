@@ -1,11 +1,11 @@
-# airlock-deploy-payment
+# airlock-payment
 
-x402 Payment Middleware for Python ASGI apps (Starlette / FastAPI). Companion to [`@airlock-deploy/payment-fly-node`](../../packages/payment-fly-node/) — same `PaymentConfig` schema so a `.airlock-deploy/config.toml` works under either Recipe.
+x402 Payment Middleware for Python ASGI apps (Starlette / FastAPI). Companion to [`@airlockhq/payment-fly-node`](../../packages/payment-fly-node/) — same `PaymentConfig` schema so a `.airlock/config.toml` works under either Recipe.
 
 ## Install
 
 ```bash
-pip install airlock-deploy-payment
+pip install airlock-payment
 # or, from this monorepo:
 pip install -e ./python/payment-fly
 ```
@@ -16,7 +16,7 @@ Requires Python 3.9+.
 
 ```python
 from fastapi import FastAPI
-from airlock_deploy_payment import PaymentMiddleware, parse_payment_config
+from airlock_payment import PaymentMiddleware, parse_payment_config
 
 config = parse_payment_config({
     "mode": "flat",

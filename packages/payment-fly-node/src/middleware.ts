@@ -9,7 +9,7 @@ import {
   report,
   SESSION_HEADER,
   TOKENS_USED_HEADER,
-} from '@airlock-deploy/payment-core';
+} from '@airlockhq/payment-core';
 import { decodePaymentSignatureHeader, encodePaymentResponseHeader } from '@x402/core/http';
 import { HTTPFacilitatorClient } from '@x402/core/server';
 import type { NextFunction, Request, Response } from 'express';
@@ -60,7 +60,7 @@ const PAYMENT_RESPONSE_HEADER = 'X-PAYMENT-RESPONSE';
 
 /**
  * Wrap a Publisher's async handler in an Express request handler that enforces
- * x402 payment per call. Mirrors `withPayment` in `@airlock-deploy/payment-workers`.
+ * x402 payment per call. Mirrors `withPayment` in `@airlockhq/payment-workers`.
  *
  * - **Flat mode**: every call requires X-PAYMENT; verify → handler → settle.
  * - **Per-token mode**: first call requires X-PAYMENT (topup) and returns an

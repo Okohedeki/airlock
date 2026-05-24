@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from airlock_deploy_payment import build_payment_required, parse_payment_config
-from airlock_deploy_payment.envelope import usdc_to_atomic
+from airlock_payment import build_payment_required, parse_payment_config
+from airlock_payment.envelope import usdc_to_atomic
 
 WALLET = "0x1234567890abcdef1234567890abcdef12345678"
 

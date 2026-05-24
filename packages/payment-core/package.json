@@ -1,8 +1,8 @@
 {
-  "name": "@airlock-deploy/payment-core",
+  "name": "@airlockhq/payment-core",
   "version": "0.0.0",
   "private": true,
-  "description": "Shared payment logic for airlock-deploy Payment Middleware — config schema, x402 envelope wrappers, credit ledger interface.",
+  "description": "Shared payment logic for airlock Payment Middleware — config schema, x402 envelope wrappers, credit ledger interface.",
   "type": "module",
   "license": "Apache-2.0",
   "main": "./dist/index.js",

@@ -1,4 +1,4 @@
-import { withPaymentExpress } from '@airlock-deploy/payment-fly-node';
+import { withPaymentExpress } from '@airlockhq/payment-fly-node';
 import express from 'express';
 import { MODEL, OLLAMA_URL, PORT, paymentConfig } from './config.js';
 

@@ -1,6 +1,6 @@
 /** Minimal HTML rendering for the dashboard. Server-rendered, no framework. */
 
-import type { InspectCall, Project, ProjectStats, User } from './db.js';
+import type { CliTokenSummary, InspectCall, Project, ProjectStats, User } from './db.js';
 
 const baseStyle = `
   :root { color-scheme: light dark; font-family: -apple-system, system-ui, sans-serif; }
@@ -32,15 +32,32 @@ const baseStyle = `
   .stat-value { font-size: 1.5rem; font-weight: 600; margin-top: 0.25rem; }
   .stat-value-sm { font-size: 0.95rem; margin-top: 0.25rem; }
   .stat-unit { font-size: 0.7em; color: #888; font-weight: 400; }
+  nav.primary { display: inline-flex; gap: 1rem; margin-right: 1rem; }
+  nav.primary a { color: inherit; text-decoration: none; font-size: 0.95rem; }
+  nav.primary a:hover { text-decoration: underline; }
+  .danger { background: #dc3545; }
+  .danger:hover { background: #b02a37; }
+  button.btn { font: inherit; border: none; cursor: pointer; color: white;
+               padding: 0.4rem 0.8rem; border-radius: 4px; }
+  .body-pre { background: #00000008; padding: 1rem; border-radius: 6px;
+              white-space: pre-wrap; word-break: break-word; max-height: 400px;
+              overflow: auto; font-size: 0.85rem; }
+  .archived-note { background: #fff3cd; color: #664d03; padding: 0.5rem 1rem;
+                   border-radius: 4px; margin: 1rem 0; }
+  .token-revoked { color: #888; text-decoration: line-through; }
 `;
 
 function layout(title: string, user: User | null, csrfToken: string, body: string): string {
   const head = `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>${title} — airlock-deploy</title>
+<html lang="en"><head><meta charset="utf-8"><title>${title} — airlock</title>
 <style>${baseStyle}</style></head><body>`;
   const headerHtml = user
-    ? `<header><h1>airlock-deploy</h1>
+    ? `<header><h1>airlock</h1>
        <span class="login">
+         <nav class="primary">
+           <a href="/projects">Projects</a>
+           <a href="/tokens">Tokens</a>
+         </nav>
          ${user.avatar_url ? `<img src="${user.avatar_url}" alt="">` : ''}
          <strong>${escHtml(user.github_login)}</strong>
          &middot;
@@ -49,7 +66,7 @@ function layout(title: string, user: User | null, csrfToken: string, body: strin
            <button type="submit" style="background:none;border:none;color:#0d6efd;cursor:pointer;padding:0;font:inherit;text-decoration:underline">log out</button>
          </form>
        </span></header>`
-    : '<header><h1>airlock-deploy</h1></header>';
+    : '<header><h1>airlock</h1></header>';
   return `${head}${headerHtml}<main>${body}</main></body></html>`;
 }
 
@@ -59,7 +76,7 @@ export function loginPage(): string {
     null,
     '',
     `<h2>Sign in</h2>
-     <p>airlock-deploy uses your GitHub account to identify your projects.</p>
+     <p>airlock uses your GitHub account to identify your projects.</p>
      <p><a href="/auth/github" class="btn">Continue with GitHub</a></p>`,
   );
 }
@@ -77,8 +94,8 @@ export function projectsPage(user: User, csrfToken: string, projects: Project[])
   const body =
     projects.length === 0
       ? `<div class="empty">
-           No projects yet. Run <code>airlock-deploy init my-agent --target=fly</code> in a project directory,
-           then sync via <code>airlock-deploy push</code> (coming soon).
+           No projects yet. Run <code>airlock init my-agent --target=fly</code> in a project directory,
+           then sync via <code>airlock push</code> (coming soon).
          </div>`
       : `<table><thead><tr><th>Project</th><th>Target</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table>`;
   return layout('Projects', user, csrfToken, `<h2>Your projects</h2>${body}`);
@@ -95,7 +112,7 @@ export function projectDetailPage(
     .map((c) => {
       const cls = c.status < 400 ? 'status-2xx' : c.status < 500 ? 'status-4xx' : 'status-5xx';
       return `<tr>
-        <td>${new Date(c.timestamp).toLocaleString()}</td>
+        <td><a href="/projects/${project.id}/calls/${c.id}">${new Date(c.timestamp).toLocaleString()}</a></td>
         <td class="${cls}">${c.status}</td>
         <td><code>${escHtml(c.caller ?? 'anon')}</code></td>
         <td>${c.tokens_used ?? '—'}</td>
@@ -118,6 +135,19 @@ export function projectDetailPage(
       <div class="stat"><div class="stat-label">Last call</div><div class="stat-value-sm">${escHtml(lastCallAt)}</div></div>
     </div>
   `;
+  const archivedBanner = project.archived_at
+    ? `<div class="archived-note">This project is archived (on ${new Date(project.archived_at).toLocaleString()}). Run <code>airlock sync</code> to un-archive it.</div>`
+    : '';
+  const dangerZone = project.archived_at
+    ? ''
+    : `<hr style="margin-top:3rem">
+       <h3>Danger zone</h3>
+       <p>Archiving hides this project from the dashboard list. Historical calls and stats stay accessible via direct URL. Running <code>airlock sync</code> again revives it.</p>
+       <form method="POST" action="/projects/${project.id}/delete"
+             onsubmit="return confirm('Archive ${escAttr(project.name)}? Historical data stays. You can revive with sync.');">
+         <input type="hidden" name="_csrf" value="${escHtml(csrfToken)}">
+         <button type="submit" class="btn danger">Archive project</button>
+       </form>`;
   return layout(
     project.name,
     user,
@@ -125,9 +155,80 @@ export function projectDetailPage(
     `<p><a href="/projects">← back to projects</a></p>
      <h2>${escHtml(project.name)}</h2>
      <p>Target: <code>${escHtml(project.target)}</code></p>
+     ${archivedBanner}
      ${statsBody}
      <h3>Recent calls</h3>
-     ${callsBody}`,
+     ${callsBody}
+     ${dangerZone}`,
+  );
+}
+
+export function callDetailPage(
+  user: User,
+  csrfToken: string,
+  project: Project,
+  call: InspectCall,
+): string {
+  const cls = call.status < 400 ? 'status-2xx' : call.status < 500 ? 'status-4xx' : 'status-5xx';
+  const requestBody = call.request_body ?? '(empty)';
+  const responseBody = call.response_body ?? '(empty)';
+  return layout(
+    `Call ${call.id} — ${project.name}`,
+    user,
+    csrfToken,
+    `<p><a href="/projects/${project.id}">← back to ${escHtml(project.name)}</a></p>
+     <h2>Call ${call.id}</h2>
+     <div class="stats-grid">
+       <div class="stat"><div class="stat-label">Time</div><div class="stat-value-sm">${escHtml(new Date(call.timestamp).toLocaleString())}</div></div>
+       <div class="stat"><div class="stat-label">Status</div><div class="stat-value ${cls}">${call.status}</div></div>
+       <div class="stat"><div class="stat-label">Caller</div><div class="stat-value-sm"><code>${escHtml(call.caller ?? 'anon')}</code></div></div>
+       <div class="stat"><div class="stat-label">Tokens</div><div class="stat-value">${call.tokens_used ?? '—'}</div></div>
+       <div class="stat"><div class="stat-label">USDC</div><div class="stat-value">${escHtml(call.amount_usdc ?? '—')}</div></div>
+       <div class="stat"><div class="stat-label">Settled</div><div class="stat-value">${call.payment_settled ? '✓' : '—'}</div></div>
+     </div>
+     <p>Request URL: <code>${escHtml(call.request_url)}</code></p>
+     <h3>Request body</h3>
+     <pre class="body-pre">${escHtml(requestBody)}</pre>
+     <h3>Response body</h3>
+     <pre class="body-pre">${escHtml(responseBody)}</pre>`,
+  );
+}
+
+export function tokensPage(user: User, csrfToken: string, tokens: CliTokenSummary[]): string {
+  const rows = tokens
+    .map((t) => {
+      const status = t.revoked_at
+        ? `<span class="token-revoked">revoked ${new Date(t.revoked_at).toLocaleString()}</span>`
+        : 'active';
+      const lastUsed = t.last_used_at ? new Date(t.last_used_at).toLocaleString() : 'never';
+      const revokeBtn = t.revoked_at
+        ? '—'
+        : `<form method="POST" action="/tokens/${t.id}/revoke" style="margin:0"
+             onsubmit="return confirm('Revoke this token? Any CLI using it will get 401 on the next request.');">
+             <input type="hidden" name="_csrf" value="${escHtml(csrfToken)}">
+             <button type="submit" class="btn danger">Revoke</button>
+           </form>`;
+      return `<tr>
+        <td><code>${escHtml(t.token_prefix)}…</code></td>
+        <td>${escHtml(t.label ?? '—')}</td>
+        <td>${escHtml(new Date(t.created_at).toLocaleString())}</td>
+        <td>${escHtml(lastUsed)}</td>
+        <td>${status}</td>
+        <td>${revokeBtn}</td>
+      </tr>`;
+    })
+    .join('');
+  const body =
+    tokens.length === 0
+      ? `<div class="empty">No CLI tokens yet. Run <code>airlock login</code> on a machine to mint one.</div>`
+      : `<table><thead><tr><th>Token</th><th>Label</th><th>Created</th><th>Last used</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  return layout(
+    'CLI tokens',
+    user,
+    csrfToken,
+    `<h2>CLI tokens</h2>
+     <p>Each <code>airlock login</code> mints a token tied to this account. Revoke any you don't recognize.</p>
+     ${body}`,
   );
 }
 
@@ -175,4 +276,14 @@ function escHtml(s: string): string {
         return '&#39;';
     }
   });
+}
+
+/**
+ * Escape a string for inclusion inside an HTML attribute's single-quoted JS
+ * snippet (e.g. onsubmit="return confirm('...')"). The browser unescapes the
+ * outer attribute *then* parses the JS, so escHtml's &#39; would round-trip
+ * back to ' and break the JS string. Strip single quotes and backslashes.
+ */
+function escAttr(s: string): string {
+  return escHtml(s.replace(/[\\']/g, ''));
 }

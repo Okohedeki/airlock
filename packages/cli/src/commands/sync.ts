@@ -16,8 +16,8 @@ export interface SyncOptions {
 }
 
 /**
- * Register the local project with the airlock-deploy backend so the dashboard
- * can record its inspect calls. Reads `.airlock-deploy/config.toml` + the
+ * Register the local project with the airlock backend so the dashboard
+ * can record its inspect calls. Reads `.airlock/config.toml` + the
  * stored auth token, POSTs `/api/projects` (idempotent upsert), and returns
  * the saved project record. Publishers run this after `init` + `login`.
  */
@@ -27,7 +27,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncedProject> {
 
   const config = await readConfig(opts.cwd);
   if (!config.project?.name || !config.project?.target) {
-    throw new Error('invalid .airlock-deploy/config.toml — project.name and target required');
+    throw new Error('invalid .airlock/config.toml — project.name and target required');
   }
 
   const fetchFn = opts.fetchImpl ?? fetch;

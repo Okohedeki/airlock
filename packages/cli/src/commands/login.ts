@@ -34,12 +34,12 @@ export interface LoginResult {
 }
 
 /**
- * Run the device-code login flow against the airlock-deploy backend.
+ * Run the device-code login flow against the airlock backend.
  *
  * 1. POST {backend}/auth/device          → device_code + user_code + verification_uri
  * 2. Print verification_uri + user_code  → publisher visits in browser, types code
  * 3. GET  {backend}/auth/device/poll?…   → poll until 'approved'
- * 4. Persist {backend, token} to ~/.airlock-deploy/auth.json (chmod 600)
+ * 4. Persist {backend, token} to ~/.airlock/auth.json (chmod 600)
  */
 export async function runLogin(opts: LoginOptions): Promise<LoginResult> {
   const io = opts.io ?? {};

@@ -1,6 +1,6 @@
 # x402 for Publisher monetization
 
-Publishers deploying AI agents via `airlock-deploy` need a way to charge Callers for inbound calls (token costs, compute, value). We adopted Coinbase's **x402** standard — HTTP 402 Payment Required with signed USDC payments on Base — as the v1 payment rail. The Publisher provides a wallet; Callers pay directly to that wallet via on-chain settlement; we never custody funds, run a Facilitator, or have a payout obligation. This matches ADR-0001 (we don't hold prod traffic) and ADR-0004 (open source, publisher owns everything). Payment enforcement ships as per-Recipe middleware libraries the Publisher imports into their handler — we don't proxy paid requests because we don't sit in the prod request path.
+Publishers deploying AI agents via `airlock` need a way to charge Callers for inbound calls (token costs, compute, value). We adopted Coinbase's **x402** standard — HTTP 402 Payment Required with signed USDC payments on Base — as the v1 payment rail. The Publisher provides a wallet; Callers pay directly to that wallet via on-chain settlement; we never custody funds, run a Facilitator, or have a payout obligation. This matches ADR-0001 (we don't hold prod traffic) and ADR-0004 (open source, publisher owns everything). Payment enforcement ships as per-Recipe middleware libraries the Publisher imports into their handler — we don't proxy paid requests because we don't sit in the prod request path.
 
 ## Considered Options
 
@@ -11,4 +11,4 @@ Publishers deploying AI agents via `airlock-deploy` need a way to charge Callers
 
 - Callers without a crypto wallet cannot pay. Acceptable for v1: the target audience (agent developers calling other agents) is already crypto-adjacent or willing to set up a wallet for sub-cent USDC.
 - We depend on Coinbase's public Facilitator (`https://facilitator.x402.org/`) being available. The `facilitator_url` config key lets Publishers swap to a self-hosted Facilitator if they want, but the default path has a third-party dependency.
-- The Publisher's wallet address sits in `.airlock-deploy/config.toml`, which is committed to git. A misconfigured wallet means payments route to the wrong address — `airlock-deploy doctor` must validate it pre-deploy.
+- The Publisher's wallet address sits in `.airlock/config.toml`, which is committed to git. A misconfigured wallet means payments route to the wrong address — `airlock doctor` must validate it pre-deploy.

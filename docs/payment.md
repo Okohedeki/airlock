@@ -1,30 +1,32 @@
 # Payment quickstart
 
-> Charge Callers per call to your deployed Agent via [x402](https://www.x402.org/) — USDC micropayments over HTTP 402. The Publisher's wallet receives funds directly; `airlock-deploy` never custodies money. See [ADR-0005](./adr/0005-x402-for-monetization.md) for the design decision.
+> Charge Callers per call to your deployed Agent via [x402](https://www.x402.org/) — USDC micropayments over HTTP 402. The Publisher's wallet receives funds directly; `airlock` never custodies money. See [ADR-0005](./adr/0005-x402-for-monetization.md) for the design decision.
+>
+> **For the canonical end-to-end llama.cpp + Fly GPU walkthrough, see [`llama-cpp-on-fly.md`](./llama-cpp-on-fly.md).** This document is the Payment Middleware reference (config schema, pricing modes, wiring it into Workers / Express / FastAPI).
 
 ## Pick your Recipe
 
 | Recipe | Package | Use when |
 |---|---|---|
-| Cloudflare Workers | `@airlock-deploy/payment-workers` | TS, stateless, edge |
-| Fly.io / Node | `@airlock-deploy/payment-fly-node` | Node/Express, Docker |
-| Fly.io / Python | `airlock-deploy-payment` (PyPI; in [`python/payment-fly`](../python/payment-fly/)) | Python agents (Starlette / FastAPI) |
+| Cloudflare Workers | `@airlockhq/payment-workers` | TS, stateless, edge |
+| Fly.io / Node | `@airlockhq/payment-fly-node` | Node/Express, Docker |
+| Fly.io / Python | `airlock-payment` (PyPI; in [`python/payment-fly`](../python/payment-fly/)) | Python agents (Starlette / FastAPI) |
 
-All Recipes share the same `PaymentConfig` schema — the same `.airlock-deploy/config.toml` works under any of them. Schema lives in `@airlock-deploy/payment-core` (TS) and `airlock_deploy_payment.config` (Python).
+All Recipes share the same `PaymentConfig` schema — the same `.airlock/config.toml` works under any of them. Schema lives in `@airlockhq/payment-core` (TS) and `airlock_payment.config` (Python).
 
 ## Scaffold a project
 
-The `airlock-deploy` CLI writes the config skeleton + a starter Recipe config for you:
+The `airlock` CLI writes the config skeleton + a starter Recipe config for you:
 
 ```bash
-# Wraps the current directory with .airlock-deploy/config.toml + fly.toml
-npx -y @airlock-deploy/cli init my-agent --target=fly
+# Wraps the current directory with .airlock/config.toml + fly.toml
+npx -y @airlockhq/cli init my-agent --target=fly
 
 # Or for Cloudflare Workers
-npx -y @airlock-deploy/cli init my-worker --target=workers
+npx -y @airlockhq/cli init my-worker --target=workers
 
 # Validate the config before deploying
-npx -y @airlock-deploy/cli doctor
+npx -y @airlockhq/cli doctor
 ```
 
 `init` defaults `payment.enabled=false` with a placeholder wallet, so the project is callable for free until you edit the file. `doctor` re-runs the Zod / Pydantic schema and flags the placeholder so you can't ship it accidentally.
@@ -32,7 +34,7 @@ npx -y @airlock-deploy/cli doctor
 ## Config
 
 ```ts
-import { PaymentConfigSchema } from '@airlock-deploy/payment-core';
+import { PaymentConfigSchema } from '@airlockhq/payment-core';
 
 const config = PaymentConfigSchema.parse({
   enabled: true,
@@ -61,7 +63,7 @@ The publisher's middleware accepts an optional `ledger` option (defaults to in-m
 ## Wire it into a Worker
 
 ```ts
-import { withPayment } from '@airlock-deploy/payment-workers';
+import { withPayment } from '@airlockhq/payment-workers';
 
 export default {
   fetch: withPayment(config, async (request, env, ctx) => {
@@ -78,7 +80,7 @@ export default {
 
 ```python
 from fastapi import FastAPI
-from airlock_deploy_payment import PaymentMiddleware, parse_payment_config
+from airlock_payment import PaymentMiddleware, parse_payment_config
 
 config = parse_payment_config({
     "mode": "flat",
@@ -100,7 +102,7 @@ async def chat(body: dict):
 
 ```ts
 import express from 'express';
-import { withPaymentExpress } from '@airlock-deploy/payment-fly-node';
+import { withPaymentExpress } from '@airlockhq/payment-fly-node';
 
 const app = express();
 app.use(express.json());
@@ -116,7 +118,7 @@ app.post(
 app.listen(3000);
 ```
 
-The Publisher's handler is an `async (req) => { status, body, headers }` — `airlock-deploy` handles the actual `res.send` so it can attach `X-PAYMENT-RESPONSE` after settlement.
+The Publisher's handler is an `async (req) => { status, body, headers }` — `airlock` handles the actual `res.send` so it can attach `X-PAYMENT-RESPONSE` after settlement.
 
 ## What happens per request
 
@@ -134,12 +136,12 @@ If verify or settle fails, the handler is rolled back and the Caller gets 402 wi
 The middleware can fire-and-forget every call's outcome to the backend so you see paid calls + revenue on the dashboard:
 
 ```ts
-import { withPaymentExpress, type CallReporter } from '@airlock-deploy/payment-fly-node';
+import { withPaymentExpress, type CallReporter } from '@airlockhq/payment-fly-node';
 
 const reporter: CallReporter = {
   url: process.env.AIRLOCK_BACKEND ?? 'http://localhost:8787',
-  token: process.env.AIRLOCK_TOKEN!,         // from `airlock-deploy login`
-  projectName: 'my-agent',                   // matches what `airlock-deploy init` set
+  token: process.env.AIRLOCK_TOKEN!,         // from `airlock login`
+  projectName: 'my-agent',                   // matches what `airlock init` set
 };
 
 app.post('/chat', withPaymentExpress(config, handler, { reporter }));
@@ -148,10 +150,10 @@ app.post('/chat', withPaymentExpress(config, handler, { reporter }));
 Setup once per project:
 
 ```bash
-airlock-deploy init my-agent --target=fly    # writes config
-airlock-deploy login                         # device-flow OAuth → ~/.airlock-deploy/auth.json
-airlock-deploy sync                          # POSTs project to the backend
-# Then start your agent with AIRLOCK_TOKEN=$(jq -r .token ~/.airlock-deploy/auth.json)
+airlock init my-agent --target=fly    # writes config
+airlock login                         # device-flow OAuth → ~/.airlock/auth.json
+airlock sync                          # POSTs project to the backend
+# Then start your agent with AIRLOCK_TOKEN=$(jq -r .token ~/.airlock/auth.json)
 ```
 
 The dashboard at `http://localhost:8787/projects/<id>` shows: total revenue (USDC), paid-call count, unique callers, tokens served, and the last 50 calls with status + caller + tokens + amount.
@@ -165,7 +167,7 @@ For a real on-chain test on Base Sepolia (free testnet USDC):
 1. **Get a test wallet.** `openssl rand -hex 32` → use as `PRIVATE_KEY` for the Caller side; `viem` or any wallet tool can derive the address for the Publisher side.
 2. **Fund the Caller wallet.** [Circle's Base Sepolia USDC faucet](https://faucet.circle.com/) — pick Base Sepolia, paste the Caller address, get test USDC.
 3. **Set Publisher config:** `wallet=<your-publisher-address>`, `network=base-sepolia`, `priceUsdc=0.001`.
-4. **Run a paid call:** `PRIVATE_KEY=0x... pnpm --filter @airlock-deploy/example-local-llm-agent client "hello"` — the client script wraps `fetch` with `@x402/fetch`, signs the payment, and retries automatically.
+4. **Run a paid call:** `PRIVATE_KEY=0x... pnpm --filter @airlockhq/example-local-llm-agent client "hello"` — the client script wraps `fetch` with `@x402/fetch`, signs the payment, and retries automatically.
 5. **Check settlement:** the response's `X-PAYMENT-RESPONSE` header contains the on-chain transaction hash; view it on [sepolia.basescan.org](https://sepolia.basescan.org/).
 
 ## Swap the Facilitator
@@ -176,9 +178,9 @@ Default `facilitatorUrl` is Coinbase's public Facilitator (free, hosted). To run
 { ..., facilitatorUrl: 'https://my-facilitator.example.com' }
 ```
 
-See the [x402 spec](https://www.x402.org/) for facilitator implementation requirements. v1 of `airlock-deploy` does not ship a self-hosted Facilitator binary.
+See the [x402 spec](https://www.x402.org/) for facilitator implementation requirements. v1 of `airlock` does not ship a self-hosted Facilitator binary.
 
-## What `airlock-deploy` does NOT do
+## What `airlock` does NOT do
 
 - **No platform fee.** We don't take a cut. Caller-Publisher payments are direct.
 - **No KYC.** Wallets are wallets.
