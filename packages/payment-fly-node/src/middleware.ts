@@ -1,10 +1,12 @@
 import {
   buildPaymentRequired,
   type CallerId,
+  type CallReporter,
   type CreditLedger,
   InMemoryCreditLedger,
   InsufficientBalanceError,
   type PaymentConfig,
+  report,
   SESSION_HEADER,
   TOKENS_USED_HEADER,
 } from '@airlock-deploy/payment-core';
@@ -34,6 +36,8 @@ export interface WithPaymentExpressOptions {
   facilitator?: PaymentFacilitator;
   /** Per-token mode only. Defaults to a per-process in-memory ledger. */
   ledger?: CreditLedger;
+  /** Optional fire-and-forget reporter — POSTs each call to the dashboard. */
+  reporter?: CallReporter;
 }
 
 export interface AgentResponse {
@@ -67,6 +71,9 @@ export function withPaymentExpress(
   const ledger: CreditLedger = options.ledger ?? new InMemoryCreditLedger();
 
   return async (req, res, next) => {
+    if (options.reporter) {
+      attachReporter(req, res, options.reporter, config);
+    }
     try {
       if (!config.enabled) {
         await respond(res, await handler(req));
@@ -90,6 +97,49 @@ export function withPaymentExpress(
       next(err);
     }
   };
+}
+
+/**
+ * Attach a `res.on('finish')` hook that fires the reporter once the response is
+ * fully sent. Reads tokens + payer from the response headers we set elsewhere.
+ */
+function attachReporter(
+  req: Request,
+  res: Response,
+  reporter: CallReporter,
+  config: PaymentConfig,
+): void {
+  res.on('finish', () => {
+    const tokensHeader = res.getHeader(TOKENS_USED_HEADER);
+    const settledHeader = res.getHeader(PAYMENT_RESPONSE_HEADER);
+    const tokensStr = typeof tokensHeader === 'string' ? tokensHeader : '';
+    const tokens = tokensStr ? Number.parseInt(tokensStr, 10) : null;
+    let caller: CallerId | null = null;
+    if (typeof settledHeader === 'string') {
+      try {
+        const decoded = JSON.parse(Buffer.from(settledHeader, 'base64').toString()) as {
+          payer?: string;
+        };
+        if (decoded.payer) caller = decoded.payer as CallerId;
+      } catch {
+        // ignore malformed
+      }
+    }
+    const settled = settledHeader !== undefined;
+    const amount_usdc = settled
+      ? config.mode === 'flat'
+        ? config.priceUsdc
+        : config.minCreditBalanceUsdc
+      : null;
+    report(reporter, {
+      caller,
+      status: res.statusCode,
+      request_url: absoluteUrl(req),
+      tokens_used: tokens !== null && Number.isFinite(tokens) ? tokens : null,
+      amount_usdc,
+      payment_settled: settled,
+    });
+  });
 }
 
 async function runFlat(

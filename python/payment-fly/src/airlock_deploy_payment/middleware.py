@@ -21,6 +21,7 @@ from .config import FlatPaymentConfig, PerTokenPaymentConfig
 from .envelope import build_payment_required
 from .facilitator import Facilitator, HTTPFacilitator
 from .ledger import CreditLedger, InMemoryCreditLedger, InsufficientBalanceError
+from .reporter import CallReporter, ReportableCall, report
 from .types import SESSION_HEADER, TOKENS_USED_HEADER
 
 PAYMENT_HEADER = "x-payment"
@@ -76,6 +77,7 @@ class PaymentMiddleware(BaseHTTPMiddleware):
         config: FlatPaymentConfig | PerTokenPaymentConfig,
         facilitator: Facilitator | None = None,
         ledger: CreditLedger | None = None,
+        reporter: CallReporter | None = None,
     ) -> None:
         super().__init__(app)
         self.config = config
@@ -83,6 +85,7 @@ class PaymentMiddleware(BaseHTTPMiddleware):
             str(config.facilitator_url)
         )
         self.ledger: CreditLedger = ledger or InMemoryCreditLedger()
+        self.reporter = reporter
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
@@ -95,10 +98,50 @@ class PaymentMiddleware(BaseHTTPMiddleware):
         requirements_dict = required_body["accepts"][0]
 
         if isinstance(self.config, PerTokenPaymentConfig):
-            return await self._run_per_token(
+            response = await self._run_per_token(
                 request, call_next, required_body, requirements_dict
             )
-        return await self._run_flat(request, call_next, required_body, requirements_dict)
+        else:
+            response = await self._run_flat(
+                request, call_next, required_body, requirements_dict
+            )
+
+        if self.reporter is not None:
+            await self._fire_report(request, response)
+        return response
+
+    async def _fire_report(self, request: Request, response: Response) -> None:
+        if self.reporter is None:
+            return
+        tokens_header = response.headers.get(TOKENS_USED_HEADER)
+        settled_header = response.headers.get(PAYMENT_RESPONSE_HEADER)
+        tokens = int(tokens_header) if tokens_header and tokens_header.isdigit() else None
+        caller: str | None = None
+        if settled_header:
+            try:
+                decoded = json.loads(base64.b64decode(settled_header).decode("utf-8"))
+                caller = decoded.get("payer")
+            except Exception:
+                caller = None
+        settled = settled_header is not None
+        if settled:
+            if isinstance(self.config, PerTokenPaymentConfig):
+                amount_usdc: str | None = self.config.min_credit_balance_usdc
+            else:
+                amount_usdc = self.config.price_usdc
+        else:
+            amount_usdc = None
+        await report(
+            self.reporter,
+            ReportableCall(
+                caller=caller,
+                status=response.status_code,
+                request_url=str(request.url),
+                tokens_used=tokens,
+                amount_usdc=amount_usdc,
+                payment_settled=settled,
+            ),
+        )
 
     async def _run_flat(
         self,

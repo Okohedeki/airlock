@@ -34,7 +34,17 @@ export interface InspectCall {
   request_body: string | null;
   response_body: string | null;
   tokens_used: number | null;
+  amount_usdc: string | null;
   payment_settled: number; // boolean
+}
+
+export interface ProjectStats {
+  total_calls: number;
+  paid_calls: number;
+  total_revenue_usdc: string;
+  unique_callers: number;
+  total_tokens: number;
+  last_call_at: number | null;
 }
 
 /** Open a SQLite DB and run the schema migration. Idempotent. */
@@ -91,13 +101,23 @@ export function openDb(path: string): Database.Database {
       request_body TEXT,
       response_body TEXT,
       tokens_used INTEGER,
+      amount_usdc TEXT,
       payment_settled INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS idx_inspect_project_time
       ON inspect_calls(project_id, timestamp DESC);
   `);
+  // Forward-compatibility: add columns missing from older DBs.
+  ensureColumn(db, 'inspect_calls', 'amount_usdc', 'TEXT');
   return db;
+}
+
+function ensureColumn(db: Database.Database, table: string, column: string, type: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
 }
 
 export interface DbHandle {
@@ -115,6 +135,7 @@ export interface DbHandle {
   getProject(userId: number, id: number): Project | null;
   recordInspectCall(project_id: number, call: Omit<InspectCall, 'id' | 'project_id'>): void;
   listInspectCalls(projectId: number, limit?: number): InspectCall[];
+  getProjectStats(projectId: number): ProjectStats;
 }
 
 export function makeDbHandle(db: Database.Database): DbHandle {
@@ -267,8 +288,8 @@ export function makeDbHandle(db: Database.Database): DbHandle {
     recordInspectCall(project_id, call) {
       db.prepare(
         `INSERT INTO inspect_calls
-          (project_id, timestamp, caller, status, request_url, request_body, response_body, tokens_used, payment_settled)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (project_id, timestamp, caller, status, request_url, request_body, response_body, tokens_used, amount_usdc, payment_settled)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         project_id,
         call.timestamp,
@@ -278,6 +299,7 @@ export function makeDbHandle(db: Database.Database): DbHandle {
         call.request_body,
         call.response_body,
         call.tokens_used,
+        call.amount_usdc,
         call.payment_settled,
       );
     },
@@ -287,7 +309,59 @@ export function makeDbHandle(db: Database.Database): DbHandle {
         .prepare('SELECT * FROM inspect_calls WHERE project_id = ? ORDER BY timestamp DESC LIMIT ?')
         .all(projectId, limit) as InspectCall[];
     },
+
+    getProjectStats(projectId) {
+      const agg = db
+        .prepare(
+          `SELECT
+              COUNT(*) AS total_calls,
+              COALESCE(SUM(payment_settled), 0) AS paid_calls,
+              COALESCE(SUM(tokens_used), 0) AS total_tokens,
+              MAX(timestamp) AS last_call_at,
+              COUNT(DISTINCT caller) AS unique_callers
+           FROM inspect_calls WHERE project_id = ?`,
+        )
+        .get(projectId) as {
+        total_calls: number;
+        paid_calls: number;
+        total_tokens: number;
+        last_call_at: number | null;
+        unique_callers: number;
+      };
+
+      // Sum USDC decimal strings in atomic units, then convert back.
+      const amounts = db
+        .prepare(
+          'SELECT amount_usdc FROM inspect_calls WHERE project_id = ? AND payment_settled = 1 AND amount_usdc IS NOT NULL',
+        )
+        .all(projectId) as { amount_usdc: string }[];
+      let revenueAtomic = 0n;
+      for (const row of amounts) {
+        revenueAtomic += usdcToAtomic(row.amount_usdc);
+      }
+
+      return {
+        total_calls: agg.total_calls,
+        paid_calls: agg.paid_calls,
+        total_revenue_usdc: atomicToUsdc(revenueAtomic),
+        unique_callers: agg.unique_callers,
+        total_tokens: agg.total_tokens,
+        last_call_at: agg.last_call_at,
+      };
+    },
   };
+}
+
+function usdcToAtomic(usdc: string): bigint {
+  const [whole, frac = ''] = usdc.split('.');
+  return BigInt(`${whole}${`${frac}000000`.slice(0, 6)}`);
+}
+
+function atomicToUsdc(atomic: bigint): string {
+  const s = atomic.toString().padStart(7, '0');
+  const whole = s.slice(0, -6);
+  const frac = s.slice(-6).replace(/0+$/, '');
+  return frac === '' ? whole : `${whole}.${frac}`;
 }
 
 function randHex(bytes: number): string {

@@ -33,3 +33,7 @@ skills-lock.json
 __pycache__/
 *.egg-info/
 *.pyc
+
+# Local LLM artifacts (large; not part of the project)
+models/
+tools/llama.cpp/

@@ -1,4 +1,5 @@
 import {
+  type CallReporter,
   InMemoryCreditLedger,
   type PaymentConfig,
   PaymentConfigSchema,
@@ -232,6 +233,43 @@ describe('withPayment — per_token mode', () => {
 
     expect(res.status).toBe(402);
     expect(((await res.json()) as { error: string }).error).toMatch(/invalid|expired/i);
+  });
+
+  it('fires the reporter with paid-call details after a successful topup', async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+      return new Response('', { status: 200 });
+    }) as typeof fetch;
+    const reporter: CallReporter = {
+      url: 'http://backend.test',
+      token: 'tok',
+      projectName: 'my-agent',
+      fetchImpl,
+    };
+    const wrapped = withPayment(perTokenConfig(), tokensHandler(1000), {
+      facilitator: mockFacilitator(),
+      ledger: new InMemoryCreditLedger(),
+      reporter,
+    });
+
+    await wrapped(
+      new Request('https://agent.test/run', { headers: { 'X-PAYMENT': validPaymentHeader } }),
+      env,
+      ctx,
+    );
+    // Reporter is fire-and-forget; give the microtask queue a turn
+    await new Promise((r) => setImmediate(r));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe('http://backend.test/api/inspect');
+    expect(calls[0]?.body).toMatchObject({
+      project_name: 'my-agent',
+      caller: PAYER,
+      status: 200,
+      tokens_used: 1000,
+      payment_settled: true,
+    });
   });
 
   it('returns 402 once balance is fully depleted', async () => {

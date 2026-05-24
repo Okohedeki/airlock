@@ -196,6 +196,71 @@ describe('api', () => {
     });
   });
 
+  it('/api/projects/:id/stats aggregates calls + revenue + tokens + unique callers', async () => {
+    const { app, handle } = fixture();
+    const user = handle.upsertUser({ id: 7, login: 'x' });
+    const token = mintCliToken(handle, user.id);
+    const project = handle.upsertProject(user.id, 'my-agent', 'fly');
+
+    // Two paid (different callers), one unpaid 402.
+    handle.recordInspectCall(project.id, {
+      timestamp: Date.now(),
+      caller: '0xa',
+      status: 200,
+      request_url: 'http://x',
+      request_body: null,
+      response_body: null,
+      tokens_used: 100,
+      amount_usdc: '0.10',
+      payment_settled: 1,
+    });
+    handle.recordInspectCall(project.id, {
+      timestamp: Date.now(),
+      caller: '0xb',
+      status: 200,
+      request_url: 'http://x',
+      request_body: null,
+      response_body: null,
+      tokens_used: 200,
+      amount_usdc: '0.25',
+      payment_settled: 1,
+    });
+    handle.recordInspectCall(project.id, {
+      timestamp: Date.now(),
+      caller: null,
+      status: 402,
+      request_url: 'http://x',
+      request_body: null,
+      response_body: null,
+      tokens_used: null,
+      amount_usdc: null,
+      payment_settled: 0,
+    });
+
+    const res = await request(app)
+      .get(`/api/projects/${project.id}/stats`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      total_calls: 3,
+      paid_calls: 2,
+      total_revenue_usdc: '0.35',
+      unique_callers: 2, // COUNT(DISTINCT caller) skips NULLs
+      total_tokens: 300,
+    });
+  });
+
+  it('/api/projects/:id/stats returns 404 for unknown project', async () => {
+    const { app, handle } = fixture();
+    const user = handle.upsertUser({ id: 8, login: 'x' });
+    const token = mintCliToken(handle, user.id);
+    const res = await request(app)
+      .get('/api/projects/9999/stats')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(404);
+  });
+
   it('/api/inspect returns 404 for unknown project', async () => {
     const { app, handle } = fixture();
     const user = handle.upsertUser({ id: 9, login: 'x' });
@@ -209,6 +274,89 @@ describe('api', () => {
         request_url: 'http://x',
       });
     expect(res.status).toBe(404);
+  });
+});
+
+describe('CSRF', () => {
+  async function loggedInClient() {
+    const { app, handle } = fixture();
+    const user = handle.upsertUser({ id: 42, login: 'tester' });
+    const sid = handle.createSession(user.id, 3600);
+    return { app, handle, user, sid };
+  }
+
+  it('rejects POST /auth/device/approve without a CSRF token', async () => {
+    const { app, sid } = await loggedInClient();
+    const res = await request(app)
+      .post('/auth/device/approve')
+      .set('Cookie', `airlock_sid=${sid}`)
+      .type('form')
+      .send({ user_code: 'AAAA-BBBB' });
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects POST /auth/device/approve with a mismatched CSRF token', async () => {
+    const { app, sid } = await loggedInClient();
+    const res = await request(app)
+      .post('/auth/device/approve')
+      .set('Cookie', `airlock_sid=${sid}; airlock_csrf=real-token`)
+      .type('form')
+      .send({ user_code: 'AAAA-BBBB', _csrf: 'wrong-token' });
+    expect(res.status).toBe(403);
+  });
+
+  it('accepts POST /auth/device/approve with matching CSRF token from a GET', async () => {
+    const { app, sid, handle } = await loggedInClient();
+    // Pre-create a pending device code we can approve
+    const code = handle.createDeviceCode(600);
+
+    // GET the form to receive the CSRF cookie
+    const formRes = await request(app)
+      .get('/auth/device/approve')
+      .set('Cookie', `airlock_sid=${sid}`);
+    const csrfCookie = (formRes.headers['set-cookie'] as string[]).find((c) =>
+      c.startsWith('airlock_csrf='),
+    );
+    expect(csrfCookie).toBeDefined();
+    const csrf = csrfCookie?.split(';')[0].split('=')[1];
+
+    const res = await request(app)
+      .post('/auth/device/approve')
+      .set('Cookie', `airlock_sid=${sid}; airlock_csrf=${csrf}`)
+      .type('form')
+      .send({ user_code: code.user_code, _csrf: csrf });
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('Authorized CLI device');
+  });
+
+  it('rejects POST /auth/logout without CSRF', async () => {
+    const { app, sid } = await loggedInClient();
+    const res = await request(app).post('/auth/logout').set('Cookie', `airlock_sid=${sid}`);
+    expect(res.status).toBe(403);
+  });
+
+  it('accepts POST /auth/logout with valid CSRF and clears the session', async () => {
+    const { app, sid } = await loggedInClient();
+    // /projects issues the CSRF cookie for us
+    const page = await request(app).get('/projects').set('Cookie', `airlock_sid=${sid}`);
+    const csrfCookie = (page.headers['set-cookie'] as string[]).find((c) =>
+      c.startsWith('airlock_csrf='),
+    );
+    const csrf = csrfCookie?.split(';')[0].split('=')[1];
+
+    const res = await request(app)
+      .post('/auth/logout')
+      .set('Cookie', `airlock_sid=${sid}; airlock_csrf=${csrf}`)
+      .type('form')
+      .send({ _csrf: csrf });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/');
+    // The Set-Cookie should clear airlock_sid
+    const clearCookie = (res.headers['set-cookie'] as string[]).find((c) =>
+      c.startsWith('airlock_sid='),
+    );
+    expect(clearCookie).toMatch(/Expires=/);
   });
 });
 

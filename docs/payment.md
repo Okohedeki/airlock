@@ -129,6 +129,33 @@ The Publisher's handler is an `async (req) => { status, body, headers }` — `ai
 
 If verify or settle fails, the handler is rolled back and the Caller gets 402 with the reason — they don't get charged for failed deliveries (verify failure means no settlement attempt; settle failure means the on-chain transfer didn't go through).
 
+## See payments in the dashboard
+
+The middleware can fire-and-forget every call's outcome to the backend so you see paid calls + revenue on the dashboard:
+
+```ts
+import { withPaymentExpress, type CallReporter } from '@airlock-deploy/payment-fly-node';
+
+const reporter: CallReporter = {
+  url: process.env.AIRLOCK_BACKEND ?? 'http://localhost:8787',
+  token: process.env.AIRLOCK_TOKEN!,         // from `airlock-deploy login`
+  projectName: 'my-agent',                   // matches what `airlock-deploy init` set
+};
+
+app.post('/chat', withPaymentExpress(config, handler, { reporter }));
+```
+
+Setup once per project:
+
+```bash
+airlock-deploy init my-agent --target=fly    # writes config
+airlock-deploy login                         # device-flow OAuth → ~/.airlock-deploy/auth.json
+airlock-deploy sync                          # POSTs project to the backend
+# Then start your agent with AIRLOCK_TOKEN=$(jq -r .token ~/.airlock-deploy/auth.json)
+```
+
+The dashboard at `http://localhost:8787/projects/<id>` shows: total revenue (USDC), paid-call count, unique callers, tokens served, and the last 50 calls with status + caller + tokens + amount.
+
 ## Test it locally
 
 The fastest loop is the [`examples/local-llm-agent`](../examples/local-llm-agent/) example — start the server with `PAYMENT_ENABLED=0` to verify the agent works, then flip to `PAYMENT_ENABLED=1` to see the 402 flow.

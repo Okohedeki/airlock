@@ -13,6 +13,7 @@ import cookieParser from 'cookie-parser';
 import express, { type Express, type Request } from 'express';
 import { z } from 'zod';
 import { type GitHubAuth, RealGitHubAuth } from './auth/github.js';
+import { issueToken, verifyToken } from './csrf.js';
 import { type DbHandle, makeDbHandle, openDb, type User } from './db.js';
 import { deviceApprovePage, loginPage, projectDetailPage, projectsPage } from './pages.js';
 
@@ -82,7 +83,11 @@ export function buildApp(options: ServerOptions = {}): BuildAppResult {
     }
   });
 
-  app.get('/auth/logout', (req, res) => {
+  app.post('/auth/logout', (req, res) => {
+    if (!verifyToken(req)) {
+      res.status(403).send('CSRF token invalid');
+      return;
+    }
     const sid = req.cookies[SESSION_COOKIE];
     if (sid) handle.deleteSession(sid);
     res.clearCookie(SESSION_COOKIE);
@@ -108,7 +113,8 @@ export function buildApp(options: ServerOptions = {}): BuildAppResult {
       res.redirect(`/auth/github?next=/auth/device/approve`);
       return;
     }
-    res.type('html').send(deviceApprovePage(user));
+    const csrf = issueToken(res);
+    res.type('html').send(deviceApprovePage(user, csrf));
   });
 
   app.post('/auth/device/approve', (req, res) => {
@@ -117,11 +123,19 @@ export function buildApp(options: ServerOptions = {}): BuildAppResult {
       res.redirect('/auth/github?next=/auth/device/approve');
       return;
     }
+    if (!verifyToken(req)) {
+      res.status(403).send('CSRF token invalid');
+      return;
+    }
     const userCode = String(req.body.user_code ?? '')
       .trim()
       .toUpperCase();
+    const csrf = issueToken(res);
     if (!userCode) {
-      res.status(400).type('html').send(deviceApprovePage(user, 'no code provided'));
+      res
+        .status(400)
+        .type('html')
+        .send(deviceApprovePage(user, csrf, 'no code provided'));
       return;
     }
     const ok = handle.approveDeviceCode(userCode, user.id);
@@ -129,8 +143,13 @@ export function buildApp(options: ServerOptions = {}): BuildAppResult {
       .type('html')
       .send(
         ok
-          ? deviceApprovePage(user, undefined, `Authorized CLI device for ${user.github_login}`)
-          : deviceApprovePage(user, `code ${userCode} not found or already used`),
+          ? deviceApprovePage(
+              user,
+              csrf,
+              undefined,
+              `Authorized CLI device for ${user.github_login}`,
+            )
+          : deviceApprovePage(user, csrf, `code ${userCode} not found or already used`),
       );
   });
 
@@ -201,6 +220,7 @@ export function buildApp(options: ServerOptions = {}): BuildAppResult {
     request_body: z.string().nullable().optional(),
     response_body: z.string().nullable().optional(),
     tokens_used: z.number().int().nullable().optional(),
+    amount_usdc: z.string().nullable().optional(),
     payment_settled: z.boolean().optional(),
   });
 
@@ -228,9 +248,25 @@ export function buildApp(options: ServerOptions = {}): BuildAppResult {
       request_body: parsed.data.request_body ?? null,
       response_body: parsed.data.response_body ?? null,
       tokens_used: parsed.data.tokens_used ?? null,
+      amount_usdc: parsed.data.amount_usdc ?? null,
       payment_settled: parsed.data.payment_settled ? 1 : 0,
     });
     res.json({ ok: true });
+  });
+
+  app.get('/api/projects/:id/stats', (req, res) => {
+    const user = bearerUser(req, handle);
+    if (!user) {
+      res.status(401).json({ error: 'unauthenticated' });
+      return;
+    }
+    const id = Number.parseInt(req.params.id, 10);
+    const project = handle.getProject(user.id, id);
+    if (!project) {
+      res.status(404).json({ error: 'project not found' });
+      return;
+    }
+    res.json(handle.getProjectStats(project.id));
   });
 
   // ──────────────────────────────── Dashboard pages ────────────────────────────────
@@ -250,7 +286,8 @@ export function buildApp(options: ServerOptions = {}): BuildAppResult {
       res.redirect('/');
       return;
     }
-    res.type('html').send(projectsPage(user, handle.listProjects(user.id)));
+    const csrf = issueToken(res);
+    res.type('html').send(projectsPage(user, csrf, handle.listProjects(user.id)));
   });
 
   app.get('/projects/:id', (req, res) => {
@@ -259,13 +296,24 @@ export function buildApp(options: ServerOptions = {}): BuildAppResult {
       res.redirect('/');
       return;
     }
+    const csrf = issueToken(res);
     const id = Number.parseInt(req.params.id, 10);
     const project = handle.getProject(user.id, id);
     if (!project) {
       res.status(404).send('project not found');
       return;
     }
-    res.type('html').send(projectDetailPage(user, project, handle.listInspectCalls(project.id)));
+    res
+      .type('html')
+      .send(
+        projectDetailPage(
+          user,
+          csrf,
+          project,
+          handle.getProjectStats(project.id),
+          handle.listInspectCalls(project.id),
+        ),
+      );
   });
 
   app.get('/healthz', (_req, res) => res.json({ ok: true }));

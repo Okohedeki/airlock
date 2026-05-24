@@ -8,6 +8,7 @@ import { runDoctor } from './commands/doctor.js';
 import { runInit } from './commands/init.js';
 import { runLogin } from './commands/login.js';
 import { runStatus } from './commands/status.js';
+import { runSync } from './commands/sync.js';
 import { NotLoggedInError, runWhoami } from './commands/whoami.js';
 import { readConfig } from './config-file.js';
 import {
@@ -186,6 +187,23 @@ async function main() {
         console.log(`\n✓ logged in. token saved to ~/.airlock-deploy/auth.json`);
         console.log(`  backend: ${result.backend}`);
       } catch (err) {
+        console.error(`error: ${(err as Error).message}`);
+        process.exit(1);
+      }
+    });
+
+  program
+    .command('sync')
+    .description('Register this project with the airlock-deploy backend so the dashboard shows it')
+    .action(async () => {
+      try {
+        const result = await runSync({ cwd: process.cwd() });
+        console.log(`✓ project synced: ${result.name} (id=${result.id}, target=${result.target})`);
+      } catch (err) {
+        if (err instanceof NotLoggedInError) {
+          console.error('not logged in — run `airlock-deploy login`');
+          process.exit(1);
+        }
         console.error(`error: ${(err as Error).message}`);
         process.exit(1);
       }

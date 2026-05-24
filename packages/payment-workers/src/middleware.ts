@@ -1,10 +1,12 @@
 import {
   buildPaymentRequired,
   type CallerId,
+  type CallReporter,
   type CreditLedger,
   InMemoryCreditLedger,
   InsufficientBalanceError,
   type PaymentConfig,
+  report,
   SESSION_HEADER,
   TOKENS_USED_HEADER,
 } from '@airlock-deploy/payment-core';
@@ -35,6 +37,8 @@ export interface WithPaymentOptions {
   /** Per-token mode only. Defaults to a per-process in-memory ledger — wire a
    * persistent impl (KV / D1 / Postgres) for production. */
   ledger?: CreditLedger;
+  /** Optional fire-and-forget reporter — POSTs each call to the dashboard. */
+  reporter?: CallReporter;
 }
 
 type FetchHandler<Env = unknown> = (
@@ -78,12 +82,44 @@ export function withPayment<Env = unknown>(
       return json({ error: 'internal: no payment requirements built' }, { status: 500 });
     }
 
-    if (config.mode === 'per_token') {
-      return runPerToken(request, env, ctx, config, handler, facilitator, ledger, required);
+    const response =
+      config.mode === 'per_token'
+        ? await runPerToken(request, env, ctx, config, handler, facilitator, ledger, required)
+        : await runFlat(request, env, ctx, handler, facilitator, required);
+
+    if (options.reporter) {
+      const settledHeader = response.headers.get(PAYMENT_RESPONSE_HEADER);
+      const tokensHeader = response.headers.get(TOKENS_USED_HEADER);
+      const tokens = tokensHeader ? Number.parseInt(tokensHeader, 10) : null;
+      const amount_usdc =
+        settledHeader !== null
+          ? config.mode === 'flat'
+            ? config.priceUsdc
+            : config.minCreditBalanceUsdc
+          : null;
+      // Fire-and-forget; do NOT await — reports lag the response.
+      report(options.reporter, {
+        caller: callerFromResponse(response, settledHeader),
+        status: response.status,
+        request_url: request.url,
+        tokens_used: Number.isFinite(tokens) ? tokens : null,
+        amount_usdc,
+        payment_settled: settledHeader !== null,
+      });
     }
 
-    return runFlat(request, env, ctx, handler, facilitator, required);
+    return response;
   };
+}
+
+function callerFromResponse(_response: Response, settledHeader: string | null): CallerId | null {
+  if (!settledHeader) return null;
+  try {
+    const decoded = JSON.parse(atob(settledHeader)) as { payer?: string };
+    return (decoded.payer as CallerId | undefined) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function runFlat<Env>(
