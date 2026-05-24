@@ -103,6 +103,58 @@ describe('buildServeApp', () => {
     expect(res.status).toBe(200);
   });
 
+  it('forwards stream:true requests as a real SSE stream with usage parsed for billing', async () => {
+    await writeConfig(cwd, {
+      project: { name: 'my-llm', target: 'fly', schemaVersion: 1 },
+      payment: {
+        enabled: false,
+        wallet: '0x1234567890abcdef1234567890abcdef12345678',
+        mode: 'flat',
+        priceUsdc: '0.001',
+      },
+    });
+
+    let capturedBody: { stream?: boolean; stream_options?: object } | undefined;
+    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      capturedBody = JSON.parse(String(init?.body));
+      const chunks = [
+        'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+        'data: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}\n\n',
+        'data: [DONE]\n\n',
+      ];
+      const enc = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const c of chunks) controller.enqueue(enc.encode(c));
+          controller.close();
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    }) as typeof fetch;
+
+    const { app } = await buildServeApp({
+      cwd,
+      upstream: 'http://localhost:9999',
+      port: 0,
+      fetchImpl,
+    });
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .send({ messages: [{ role: 'user', content: 'hi' }], stream: true });
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/text\/event-stream/);
+    expect(res.text).toContain('"total_tokens":5');
+    expect(res.text).toContain('[DONE]');
+    // serve.ts forces stream_options.include_usage so per-token billing works
+    expect(capturedBody?.stream).toBe(true);
+    expect((capturedBody?.stream_options as { include_usage?: boolean })?.include_usage).toBe(true);
+  });
+
   it('throws when no config and no --wallet/--price flags', async () => {
     await expect(
       buildServeApp({ cwd, upstream: 'http://localhost:9999', port: 0 }),

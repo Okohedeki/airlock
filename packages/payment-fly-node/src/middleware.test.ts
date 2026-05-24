@@ -76,6 +76,7 @@ function mockRes(): MockRes {
   let sent = false;
   const headers: Record<string, string> = {};
   const finishListeners: Array<() => void> = [];
+  const writeBuf: string[] = [];
 
   const fireFinish = () => {
     if (sent) return;
@@ -97,6 +98,14 @@ function mockRes(): MockRes {
     getHeader(k: string) {
       return headers[k];
     },
+    flushHeaders() {
+      // no-op for mock
+    },
+    write(chunk: Buffer | Uint8Array | string) {
+      const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk as Uint8Array).toString();
+      writeBuf.push(text);
+      return true;
+    },
     json(b: unknown) {
       body = b;
       fireFinish();
@@ -108,7 +117,11 @@ function mockRes(): MockRes {
       return res as MockRes;
     },
     end(b?: unknown) {
-      if (b !== undefined) body = b;
+      if (b !== undefined) {
+        body = b;
+      } else if (writeBuf.length > 0) {
+        body = writeBuf.join('');
+      }
       fireFinish();
       return res as MockRes;
     },
@@ -120,6 +133,16 @@ function mockRes(): MockRes {
     _state: () => ({ status, headers, body, sent }),
   };
   return res as MockRes;
+}
+
+function makeStream(chunks: string[]): ReadableStream<Uint8Array> {
+  const enc = new TextEncoder();
+  return new ReadableStream({
+    start(controller) {
+      for (const c of chunks) controller.enqueue(enc.encode(c));
+      controller.close();
+    },
+  });
 }
 
 const noopNext: NextFunction = () => {};
@@ -300,6 +323,48 @@ describe('withPaymentExpress — per_token mode', () => {
       tokens_used: 1000,
       payment_settled: true,
     });
+  });
+
+  it('streams an SSE response through the middleware and debits parsed tokens', async () => {
+    const facilitator = mockFacilitator();
+    const ledger = new InMemoryCreditLedger();
+    const sseChunks = [
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":" there"}}]}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":7,"total_tokens":10}}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    const streamingHandler: AgentHandler = async () => ({
+      status: 200,
+      stream: makeStream(sseChunks),
+    });
+
+    const mw = withPaymentExpress(perTokenConfig(), streamingHandler, { facilitator, ledger });
+    const res = mockRes();
+    await mw(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), res, noopNext);
+    const s = res._state();
+
+    expect(s.status).toBe(200);
+    expect(s.headers[SESSION_HEADER]).toBeTruthy();
+    // Body has been built up by chunked writes
+    expect(String(s.body)).toContain('"total_tokens":10');
+    // Balance: credited 0.10, debited 10 * 0.000001 = 0.00001 → 0.09999
+    expect(await ledger.getBalance(PAYER)).toBe('0.09999');
+  });
+
+  it('streams cleanly when upstream emits no usage payload (tokens=0, no debit)', async () => {
+    const ledger = new InMemoryCreditLedger();
+    const sseChunks = ['data: {"choices":[{"delta":{"content":"alpha"}}]}\n\n', 'data: [DONE]\n\n'];
+    const mw = withPaymentExpress(
+      perTokenConfig(),
+      async () => ({ status: 200, stream: makeStream(sseChunks) }),
+      { facilitator: mockFacilitator(), ledger },
+    );
+
+    const res = mockRes();
+    await mw(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), res, noopNext);
+    // Full topup amount remains; no debit because no usage parsed
+    expect(await ledger.getBalance(PAYER)).toBe('0.1');
   });
 
   it('returns 402 once balance is fully depleted', async () => {

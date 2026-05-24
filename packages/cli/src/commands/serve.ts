@@ -113,24 +113,46 @@ export async function startServe(opts: ServeOptions): Promise<{ close: () => Pro
 
 function makeForwarder(upstream: string, fetchFn: typeof fetch) {
   return async (req: Request) => {
+    const body = req.body as { stream?: boolean; stream_options?: { include_usage?: boolean } };
+    const wantsStream = body?.stream === true;
+
+    // For streaming + per-token billing, the caller MUST opt into usage events
+    // (OpenAI omits them by default in streams). We force-enable it.
+    const upstreamBody = wantsStream
+      ? { ...body, stream_options: { include_usage: true, ...(body.stream_options ?? {}) } }
+      : body;
+
     const upstreamRes = await fetchFn(`${upstream.replace(/\/$/, '')}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(req.body),
+      body: JSON.stringify(upstreamBody),
     });
+
+    if (wantsStream && upstreamRes.body) {
+      return {
+        status: upstreamRes.status,
+        headers: {
+          'content-type': upstreamRes.headers.get('content-type') ?? 'text/event-stream',
+          'cache-control': 'no-cache',
+        },
+        stream: upstreamRes.body,
+      };
+    }
+
+    // Buffered (non-streaming) path
     const text = await upstreamRes.text();
-    let body: unknown;
+    let respBody: unknown;
     let tokens = 0;
     try {
       const parsed = JSON.parse(text) as { usage?: { total_tokens?: number } };
-      body = parsed;
+      respBody = parsed;
       tokens = parsed.usage?.total_tokens ?? 0;
     } catch {
-      body = text;
+      respBody = text;
     }
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (tokens > 0) headers['X-Tokens-Used'] = String(tokens);
-    return { status: upstreamRes.status, headers, body };
+    return { status: upstreamRes.status, headers, body: respBody };
   };
 }
 

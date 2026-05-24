@@ -44,6 +44,13 @@ export interface AgentResponse {
   status?: number;
   headers?: Record<string, string>;
   body?: unknown;
+  /**
+   * If set, middleware pipes this stream straight through to the client
+   * (default Content-Type: text/event-stream) while parsing OpenAI-format
+   * SSE chunks for `usage.total_tokens`. `body` is ignored when `stream` is
+   * present.
+   */
+  stream?: ReadableStream<Uint8Array>;
 }
 
 export type AgentHandler = (req: Request) => Promise<AgentResponse> | AgentResponse;
@@ -71,12 +78,16 @@ export function withPaymentExpress(
   const ledger: CreditLedger = options.ledger ?? new InMemoryCreditLedger();
 
   return async (req, res, next) => {
+    // Streaming-handled flag: set true synchronously when we'll fire the
+    // reporter ourselves (because res headers are flushed before tokens are
+    // known, so the res.on('finish') reporter can't get the right value).
+    const streamHandled = { value: false };
     if (options.reporter) {
-      attachReporter(req, res, options.reporter, config);
+      attachReporter(req, res, options.reporter, config, () => streamHandled.value);
     }
     try {
       if (!config.enabled) {
-        await respond(res, await handler(req));
+        await respondAndExtractTokens(res, await handler(req));
         return;
       }
 
@@ -88,11 +99,30 @@ export function withPaymentExpress(
       }
 
       if (config.mode === 'per_token') {
-        await runPerToken(req, res, config, handler, facilitator, ledger, required);
+        await runPerToken(
+          req,
+          res,
+          config,
+          handler,
+          facilitator,
+          ledger,
+          required,
+          options.reporter,
+          streamHandled,
+        );
         return;
       }
 
-      await runFlat(req, res, handler, facilitator, required);
+      await runFlat(
+        req,
+        res,
+        handler,
+        facilitator,
+        required,
+        config,
+        options.reporter,
+        streamHandled,
+      );
     } catch (err) {
       next(err);
     }
@@ -108,8 +138,10 @@ function attachReporter(
   res: Response,
   reporter: CallReporter,
   config: PaymentConfig,
+  suppress?: () => boolean,
 ): void {
   res.on('finish', () => {
+    if (suppress?.()) return;
     const tokensHeader = res.getHeader(TOKENS_USED_HEADER);
     const settledHeader = res.getHeader(PAYMENT_RESPONSE_HEADER);
     const tokensStr = typeof tokensHeader === 'string' ? tokensHeader : '';
@@ -148,6 +180,9 @@ async function runFlat(
   handler: AgentHandler,
   facilitator: PaymentFacilitator,
   required: ReturnType<typeof buildPaymentRequired>,
+  config: PaymentConfig,
+  reporter: CallReporter | undefined,
+  streamHandled: { value: boolean },
 ): Promise<void> {
   const requirements = required.accepts[0];
   if (!requirements) {
@@ -185,11 +220,28 @@ async function runFlat(
     return;
   }
 
+  // Headers MUST be set before respond() so they reach the client even for streams.
   res.setHeader(
     PAYMENT_RESPONSE_HEADER,
     encodePaymentResponseHeader(settle as Parameters<typeof encodePaymentResponseHeader>[0]),
   );
-  await respond(res, agentResponse);
+
+  // Tell the on('finish') reporter to stand down — we'll fire it ourselves
+  // after the stream completes (headers are already flushed by then).
+  if (agentResponse.stream) streamHandled.value = true;
+
+  const result = await respondAndExtractTokens(res, agentResponse);
+
+  if (agentResponse.stream && reporter) {
+    await report(reporter, {
+      caller: (settle.payer ?? null) as CallerId | null,
+      status: res.statusCode,
+      request_url: absoluteUrl(req),
+      tokens_used: result.tokens > 0 ? result.tokens : null,
+      amount_usdc: config.mode === 'flat' ? config.priceUsdc : null,
+      payment_settled: true,
+    });
+  }
 }
 
 async function runPerToken(
@@ -200,6 +252,8 @@ async function runPerToken(
   facilitator: PaymentFacilitator,
   ledger: CreditLedger,
   required: ReturnType<typeof buildPaymentRequired>,
+  reporter: CallReporter | undefined,
+  streamHandled: { value: boolean },
 ): Promise<void> {
   const requirements = required.accepts[0];
   if (!requirements) {
@@ -270,18 +324,8 @@ async function runPerToken(
   }
 
   const agentResponse = await handler(req);
-  const tokens = readTokensUsed(agentResponse);
-  if (tokens > 0) {
-    const cost = multiplyUsdc(config.pricePerTokenUsdc, tokens);
-    try {
-      await ledger.debit(caller, cost);
-    } catch (err) {
-      if (!(err instanceof InsufficientBalanceError)) throw err;
-      // Overdraft tolerated: drain remaining balance and return the response
-      await ledger.debit(caller, balance).catch(() => {});
-    }
-  }
 
+  // Headers MUST be set before respond() so they reach the client even for streams.
   const issuedSession = sessionHeader ?? (await ledger.issueSession(caller));
   res.setHeader(SESSION_HEADER, issuedSession);
   if (settleResult) {
@@ -292,7 +336,52 @@ async function runPerToken(
       ),
     );
   }
-  await respond(res, agentResponse);
+
+  if (agentResponse.stream) streamHandled.value = true;
+
+  // For buffered responses, the handler put X-Tokens-Used on its agent.headers
+  // and we can debit *before* writing. For streams, tokens are unknown until
+  // pipeAndParseSse drains the upstream — so we debit *after* respond.
+  let tokens = readTokensUsed(agentResponse);
+  if (!agentResponse.stream && tokens > 0) {
+    await debitWithOverdraft(ledger, caller, balance, config.pricePerTokenUsdc, tokens);
+  }
+
+  const result = await respondAndExtractTokens(res, agentResponse);
+
+  if (agentResponse.stream) {
+    tokens = result.tokens;
+    if (tokens > 0) {
+      await debitWithOverdraft(ledger, caller, balance, config.pricePerTokenUsdc, tokens);
+    }
+    if (reporter) {
+      await report(reporter, {
+        caller,
+        status: res.statusCode,
+        request_url: absoluteUrl(req),
+        tokens_used: tokens > 0 ? tokens : null,
+        amount_usdc: settleResult ? config.minCreditBalanceUsdc : null,
+        payment_settled: settleResult !== undefined,
+      });
+    }
+  }
+}
+
+async function debitWithOverdraft(
+  ledger: CreditLedger,
+  caller: CallerId,
+  balance: string,
+  pricePerToken: string,
+  tokens: number,
+): Promise<void> {
+  const cost = multiplyUsdc(pricePerToken, tokens);
+  try {
+    await ledger.debit(caller, cost);
+  } catch (err) {
+    if (!(err instanceof InsufficientBalanceError)) throw err;
+    // Overdraft tolerated: drain remaining balance and accept the response.
+    await ledger.debit(caller, balance).catch(() => {});
+  }
 }
 
 function readTokensUsed(agent: AgentResponse): number {
@@ -308,22 +397,84 @@ function absoluteUrl(req: Request): string {
   return `${proto}://${host}${req.originalUrl ?? req.url}`;
 }
 
-async function respond(res: Response, agent: AgentResponse): Promise<void> {
+interface RespondResult {
+  /** Token count detected. From agent.headers[X-Tokens-Used] for buffered; from
+   *  SSE `usage.total_tokens` for streamed. 0 if not present. */
+  tokens: number;
+  streamed: boolean;
+}
+
+async function respondAndExtractTokens(
+  res: Response,
+  agent: AgentResponse,
+): Promise<RespondResult> {
   res.status(agent.status ?? 200);
   if (agent.headers) {
     for (const [k, v] of Object.entries(agent.headers)) {
       res.setHeader(k, v);
     }
   }
+  if (agent.stream) {
+    if (!res.getHeader('content-type')) {
+      res.setHeader('content-type', 'text/event-stream');
+    }
+    res.flushHeaders?.();
+    const tokens = await pipeAndParseSse(res, agent.stream);
+    res.end();
+    return { tokens, streamed: true };
+  }
   if (agent.body === undefined) {
     res.end();
-    return;
-  }
-  if (typeof agent.body === 'string') {
+  } else if (typeof agent.body === 'string') {
     res.send(agent.body);
-    return;
+  } else {
+    res.json(agent.body);
   }
-  res.json(agent.body);
+  return { tokens: readTokensUsed(agent), streamed: false };
+}
+
+/**
+ * Pipe a web ReadableStream to the Express response while parsing OpenAI-format
+ * Server-Sent Events for `usage.total_tokens`. Returns the last-seen token
+ * count, or 0 if no `usage` payload was emitted by the upstream.
+ *
+ * Note: OpenAI streaming only emits `usage` when the client requests it via
+ * `stream_options: { include_usage: true }`. Without that, per-token billing
+ * on streamed responses will be 0 (call is effectively free).
+ */
+async function pipeAndParseSse(res: Response, stream: ReadableStream<Uint8Array>): Promise<number> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let tokens = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      res.write(value);
+      buffer += decoder.decode(value, { stream: true });
+      let nl: number;
+      // biome-ignore lint/suspicious/noAssignInExpressions: classic line-splitter
+      while ((nl = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '' || payload === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(payload) as { usage?: { total_tokens?: number } };
+          if (typeof parsed.usage?.total_tokens === 'number') {
+            tokens = parsed.usage.total_tokens;
+          }
+        } catch {
+          // Non-JSON data line; ignore.
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return tokens;
 }
 
 function compareUsdc(a: string, b: string): number {
