@@ -1,0 +1,30 @@
+{
+  "name": "@airlockhq/example-agent-template",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Forkable, model-free reference agent: real work on POST /run with in-process x402 payment. Deploy to a paid web URL.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node --import=tsx src/server.ts",
+    "client": "tsx src/client.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@airlockhq/payment-core": "workspace:*",
+    "@airlockhq/payment-fly-node": "workspace:*",
+    "@x402/core": "^2.13.0",
+    "@x402/evm": "^2.13.0",
+    "@x402/fetch": "^2.13.0",
+    "express": "^5.0.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,13 @@
+app = "agent-template"
+primary_region = "iad"
+
+[build]
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  # Keep one machine warm to avoid cold-start latency on the first paid call.
+  # Set to 0 to scale to zero (cheaper, but adds cold-start latency).
+  min_machines_running = 1
