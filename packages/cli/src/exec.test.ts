@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AirlockConfig } from './config-file.js';
-import { buildDelete, buildDeploy, buildDev, buildDomain, buildLogs, buildSecret } from './exec.js';
+import { buildDelete, buildDeploy, buildDomain, buildLogs, buildSecret } from './exec.js';
 
 const flyConfig: AirlockConfig = {
   project: { name: 'my-agent', target: 'fly', schemaVersion: 1 },
@@ -102,14 +102,5 @@ describe('buildDomain', () => {
   });
   it('empty hostname throws', () => {
     expect(() => buildDomain(flyConfig, 'add', '')).toThrow(/HOSTNAME/);
-  });
-});
-
-describe('buildDev', () => {
-  it('wraps cloudflared with the local URL', () => {
-    expect(buildDev(3000)).toEqual({
-      binary: 'cloudflared',
-      args: ['tunnel', '--url', 'http://localhost:3000'],
-    });
   });
 });

@@ -24,6 +24,7 @@ coverage/
 .agents/
 .claude/
 skills-lock.json
+.airlock-tasks.md
 
 # Wrangler (Cloudflare) — when we start using it
 .wrangler/

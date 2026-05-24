@@ -1,6 +1,8 @@
-import { writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { type AirlockConfig, type Target, writeConfig } from '../config-file.js';
+import { flyNodeStarter } from '../templates/fly-node.js';
+import { workersStarter } from '../templates/workers.js';
 
 export interface InitOptions {
   cwd: string;
@@ -8,11 +10,15 @@ export interface InitOptions {
   target: Target;
   /** Write a starter Recipe config (`wrangler.toml` or `fly.toml`) alongside ours. */
   scaffoldRecipe?: boolean;
+  /** Also scaffold a runnable starter agent (entry point, Dockerfile, deps). */
+  withAgent?: boolean;
 }
 
 export interface InitResult {
   configPath: string;
   recipePath?: string;
+  /** Paths of starter-agent files written when `withAgent` is set. */
+  agentPaths?: string[];
 }
 
 const WRANGLER_STARTER = (name: string) => `name = "${name}"
@@ -33,7 +39,9 @@ primary_region = "iad"
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 0
+  # Keep one machine warm to avoid cold-start latency on the first paid call.
+  # Set to 0 to scale to zero (cheaper, but adds cold-start latency).
+  min_machines_running = 1
 `;
 
 const PAYMENT_SCAFFOLD = {
@@ -63,5 +71,17 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
     await writeFile(recipePath, recipeContent, 'utf8');
   }
 
-  return { configPath, recipePath };
+  let agentPaths: string[] | undefined;
+  if (opts.withAgent) {
+    const files = opts.target === 'workers' ? workersStarter(opts.name) : flyNodeStarter(opts.name);
+    agentPaths = [];
+    for (const file of files) {
+      const dest = resolve(opts.cwd, file.path);
+      await mkdir(dirname(dest), { recursive: true });
+      await writeFile(dest, file.content, 'utf8');
+      agentPaths.push(dest);
+    }
+  }
+
+  return { configPath, recipePath, agentPaths };
 }

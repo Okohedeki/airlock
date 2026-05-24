@@ -18,10 +18,13 @@ import { withPaymentExpress } from '@airlockhq/payment-fly-node';
 import express, { type Express, type Request } from 'express';
 import { readAuth } from '../auth-store.js';
 import { readConfig } from '../config-file.js';
+import { startTunnel, type TunnelHandle } from '../tunnel.js';
 
 export interface ServeOptions {
   /** Local LLM URL. Defaults to llama-server's :8080. */
   upstream: string;
+  /** Path on the upstream to forward to. Defaults to OpenAI's chat-completions. */
+  upstreamPath?: string;
   /** Port for the wrapper to listen on. */
   port: number;
   /** Project name for the dashboard reporter (defaults to config.project.name). */
@@ -36,6 +39,8 @@ export interface ServeOptions {
   noPayment?: boolean;
   /** Working directory to read config from. */
   cwd?: string;
+  /** Expose the wrapper publicly via a bundled Cloudflare tunnel. */
+  tunnel?: boolean;
   /** Override fetch (tests). */
   fetchImpl?: typeof fetch;
 }
@@ -72,7 +77,8 @@ export async function buildServeApp(opts: ServeOptions): Promise<ServeResolved> 
 
   app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
-  const handler = makeForwarder(opts.upstream, fetchFn);
+  const upstreamPath = opts.upstreamPath ?? '/v1/chat/completions';
+  const handler = makeForwarder(opts.upstream, upstreamPath, fetchFn);
   const wrapped = withPaymentExpress(paymentConfig, handler, reporter ? { reporter } : {});
 
   app.post('/v1/chat/completions', wrapped);
@@ -88,7 +94,7 @@ export async function buildServeApp(opts: ServeOptions): Promise<ServeResolved> 
 export async function startServe(opts: ServeOptions): Promise<{ close: () => Promise<void> }> {
   const { app, paymentConfig, upstream, reporter } = await buildServeApp(opts);
   return new Promise((resolve) => {
-    const server = app.listen(opts.port, () => {
+    const server = app.listen(opts.port, async () => {
       const addr = server.address() as AddressInfo;
       console.log(`airlock serve  →  listening on http://localhost:${addr.port}`);
       console.log(`  upstream:    ${upstream}`);
@@ -104,14 +110,37 @@ export async function startServe(opts: ServeOptions): Promise<{ close: () => Pro
       console.log('    GET  /                      (info)');
       console.log('    GET  /healthz');
       console.log(
-        '\n  expose publicly with:  cloudflared tunnel --url http://localhost:' + addr.port,
+        '\n  note: `serve` is a dev convenience (adds a proxy hop). In production,',
       );
-      resolve({ close: () => new Promise<void>((r) => server.close(() => r())) });
+      console.log('        mount the middleware in-process — see `airlock init --with-agent`.');
+
+      let tunnel: TunnelHandle | undefined;
+      if (opts.tunnel) {
+        console.log('\n  opening public tunnel…');
+        try {
+          tunnel = await startTunnel(addr.port);
+          console.log(`  public URL:  ${tunnel.url}`);
+          console.log(`    callers POST to:  ${tunnel.url}/v1/chat/completions`);
+        } catch (err) {
+          console.error(`  tunnel failed: ${(err as Error).message}`);
+        }
+      } else {
+        console.log('\n  expose publicly with:  airlock serve --tunnel');
+      }
+
+      resolve({
+        close: () =>
+          new Promise<void>((r) => {
+            tunnel?.stop();
+            server.close(() => r());
+          }),
+      });
     });
   });
 }
 
-function makeForwarder(upstream: string, fetchFn: typeof fetch) {
+function makeForwarder(upstream: string, upstreamPath: string, fetchFn: typeof fetch) {
+  const path = upstreamPath.startsWith('/') ? upstreamPath : `/${upstreamPath}`;
   return async (req: Request) => {
     const body = req.body as { stream?: boolean; stream_options?: { include_usage?: boolean } };
     const wantsStream = body?.stream === true;
@@ -122,7 +151,7 @@ function makeForwarder(upstream: string, fetchFn: typeof fetch) {
       ? { ...body, stream_options: { include_usage: true, ...(body.stream_options ?? {}) } }
       : body;
 
-    const upstreamRes = await fetchFn(`${upstream.replace(/\/$/, '')}/v1/chat/completions`, {
+    const upstreamRes = await fetchFn(`${upstream.replace(/\/$/, '')}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(upstreamBody),

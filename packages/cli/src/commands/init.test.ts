@@ -53,4 +53,40 @@ describe('runInit', () => {
     const result = await runInit({ cwd, name: 'x', target: 'fly', scaffoldRecipe: false });
     expect(result.recipePath).toBeUndefined();
   });
+
+  it('does not scaffold a starter agent by default', async () => {
+    const result = await runInit({ cwd, name: 'x', target: 'fly' });
+    expect(result.agentPaths).toBeUndefined();
+  });
+
+  it('scaffolds a runnable fly-node starter agent with --with-agent', async () => {
+    const result = await runInit({ cwd, name: 'my-agent', target: 'fly', withAgent: true });
+    expect(result.agentPaths?.length).toBeGreaterThan(0);
+    const server = await readFile(join(cwd, 'src/server.ts'), 'utf8');
+    expect(server).toContain("withPaymentExpress");
+    expect(server).toContain("'/run'");
+    const pkg = JSON.parse(await readFile(join(cwd, 'package.json'), 'utf8')) as {
+      name: string;
+      dependencies: Record<string, string>;
+    };
+    expect(pkg.name).toBe('my-agent');
+    expect(pkg.dependencies['@airlockhq/payment-fly-node']).toBeTruthy();
+    // Dockerfile present for containerized deploy
+    await expect(readFile(join(cwd, 'Dockerfile'), 'utf8')).resolves.toContain('EXPOSE 3000');
+  });
+
+  it('scaffolds a workers starter agent with --with-agent --target=workers', async () => {
+    const result = await runInit({ cwd, name: 'my-worker', target: 'workers', withAgent: true });
+    expect(result.agentPaths?.length).toBeGreaterThan(0);
+    const index = await readFile(join(cwd, 'src/index.ts'), 'utf8');
+    expect(index).toContain('withPayment');
+    expect(index).toContain('X-Airlock-Units');
+  });
+
+  it('warms one machine by default in the fly recipe (cold-start fix)', async () => {
+    const result = await runInit({ cwd, name: 'warm', target: 'fly' });
+    if (!result.recipePath) throw new Error('recipePath missing');
+    const raw = await readFile(result.recipePath, 'utf8');
+    expect(raw).toContain('min_machines_running = 1');
+  });
 });

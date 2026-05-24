@@ -124,14 +124,3 @@ export function buildDomain(
         : ['certs', 'remove', hostname, '--app', config.project.name],
   };
 }
-
-/**
- * `airlock dev` — open a public Tunnel to localhost:PORT via cloudflared.
- * The Publisher's local agent must already be listening on PORT.
- */
-export function buildDev(port: number): CommandBuild {
-  return {
-    binary: 'cloudflared',
-    args: ['tunnel', '--url', `http://localhost:${port}`],
-  };
-}
