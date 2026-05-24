@@ -1,6 +1,6 @@
 # airlock-deploy
 
-> **Status:** early development. Design locked in [`CONTEXT.md`](./CONTEXT.md) and [`docs/adr/`](./docs/adr/); first packages (`payment-core`, `payment-workers`) shipped under [`packages/`](./packages/). CLI and Recipes still to come. `docs/PLAN.md` is the original placeholder and is superseded.
+> **Status:** early development. Design locked in [`CONTEXT.md`](./CONTEXT.md) and [`docs/adr/`](./docs/adr/). v0.x ships: CLI ([`packages/cli`](./packages/cli/)), three Payment Middlewares (Workers / Fly-Node / Fly-Python), and an end-to-end Ollama demo ([`examples/local-llm-agent`](./examples/local-llm-agent/)). Tunnel server, dashboard, and remaining v1 CLI commands still to come. `docs/PLAN.md` is the original placeholder and is superseded.
 
 "ngrok for AI agents" — expose any HTTP-speaking Agent in dev via a public Tunnel, deploy it to the Publisher's own cloud in prod. Airlock contracts are one supported Shape; MCP, A2A, and OpenAI tools are first-class too.
 

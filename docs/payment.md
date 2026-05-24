@@ -7,10 +7,27 @@
 | Recipe | Package | Use when |
 |---|---|---|
 | Cloudflare Workers | `@airlock-deploy/payment-workers` | TS, stateless, edge |
-| Fly.io / Node | `@airlock-deploy/payment-fly-node` | Node/Express, Docker, Python interop |
-| Fly.io / Python | (coming in v1.1) | Python agents |
+| Fly.io / Node | `@airlock-deploy/payment-fly-node` | Node/Express, Docker |
+| Fly.io / Python | `airlock-deploy-payment` (PyPI; in [`python/payment-fly`](../python/payment-fly/)) | Python agents (Starlette / FastAPI) |
 
-Both Recipes share the same `PaymentConfig` schema from `@airlock-deploy/payment-core`.
+All Recipes share the same `PaymentConfig` schema — the same `.airlock-deploy/config.toml` works under any of them. Schema lives in `@airlock-deploy/payment-core` (TS) and `airlock_deploy_payment.config` (Python).
+
+## Scaffold a project
+
+The `airlock-deploy` CLI writes the config skeleton + a starter Recipe config for you:
+
+```bash
+# Wraps the current directory with .airlock-deploy/config.toml + fly.toml
+npx -y @airlock-deploy/cli init my-agent --target=fly
+
+# Or for Cloudflare Workers
+npx -y @airlock-deploy/cli init my-worker --target=workers
+
+# Validate the config before deploying
+npx -y @airlock-deploy/cli doctor
+```
+
+`init` defaults `payment.enabled=false` with a placeholder wallet, so the project is callable for free until you edit the file. `doctor` re-runs the Zod / Pydantic schema and flags the placeholder so you can't ship it accidentally.
 
 ## Config
 
@@ -56,7 +73,29 @@ export default {
 };
 ```
 
-## Wire it into Express (Fly Recipe)
+## Wire it into FastAPI / Starlette (Fly Python Recipe)
+
+```python
+from fastapi import FastAPI
+from airlock_deploy_payment import PaymentMiddleware, parse_payment_config
+
+config = parse_payment_config({
+    "mode": "flat",
+    "wallet": "0x1234567890abcdef1234567890abcdef12345678",
+    "network": "base-sepolia",
+    "priceUsdc": "0.001",
+})
+
+app = FastAPI()
+app.add_middleware(PaymentMiddleware, config=config)
+
+@app.post("/chat")
+async def chat(body: dict):
+    result = await run_my_agent(body)
+    return result
+```
+
+## Wire it into Express (Fly Node Recipe)
 
 ```ts
 import express from 'express';

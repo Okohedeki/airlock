@@ -17,12 +17,12 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "lint": "biome lint .",
-    "format": "biome format --write .",
-    "check": "biome check ."
+    "lint": "biome lint packages examples package.json pnpm-workspace.yaml biome.json tsconfig.base.json",
+    "format": "biome format --write packages examples package.json biome.json tsconfig.base.json",
+    "check": "biome check packages examples package.json biome.json tsconfig.base.json"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.2.0",
+    "@biomejs/biome": "2.2.4",
     "@types/node": "^22.10.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"

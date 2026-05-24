@@ -27,3 +27,9 @@ skills-lock.json
 
 # Wrangler (Cloudflare) — when we start using it
 .wrangler/
+
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+*.pyc

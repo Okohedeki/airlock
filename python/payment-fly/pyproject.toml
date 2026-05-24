@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "airlock-deploy-payment"
+version = "0.0.0"
+description = "x402 Payment Middleware for Python ASGI apps (FastAPI / Starlette) on the Fly Recipe."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "airlock-deploy contributors" }]
+dependencies = [
+    "pydantic>=2.6,<3",
+    "httpx>=0.27,<1",
+    "starlette>=0.37,<1",
+    # Pydantic v2 on Python 3.9 needs this to evaluate PEP-604 `X | None`
+    # annotations in BaseModel fields. No-op on Python 3.10+.
+    "eval_type_backport>=0.2; python_version<'3.10'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/airlock_deploy_payment"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP"]
