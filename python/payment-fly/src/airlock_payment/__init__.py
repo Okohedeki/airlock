@@ -40,9 +40,15 @@ from .config import (
 from .envelope import PaymentRequired, PaymentRequirements, build_payment_required
 from .facilitator import Facilitator, HTTPFacilitator, SettleResponse, VerifyResponse
 from .ledger import CreditLedger, InMemoryCreditLedger, InsufficientBalanceError
-from .middleware import PaymentMiddleware
+from .middleware import PaymentMiddleware, default_usage_extractor
 from .reporter import CallReporter, ReportableCall, report
-from .types import CallerId, PaymentMode, SESSION_HEADER, TOKENS_USED_HEADER
+from .types import (
+    CallerId,
+    PaymentMode,
+    SESSION_HEADER,
+    TOKENS_USED_HEADER,
+    USAGE_UNITS_HEADER,
+)
 
 __all__ = [
 "CallReporter",
@@ -63,9 +69,11 @@ __all__ = [
     "SettleResponse",
     "SESSION_HEADER",
     "TOKENS_USED_HEADER",
+    "USAGE_UNITS_HEADER",
     "USDC_ADDRESSES",
     "VerifyResponse",
     "build_payment_required",
+    "default_usage_extractor",
     "parse_payment_config",
     "report",
     "resolve_asset",

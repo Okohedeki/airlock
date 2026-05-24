@@ -1,10 +1,12 @@
 import {
   type CallReporter,
   InMemoryCreditLedger,
+  openAiUsageExtractor,
   type PaymentConfig,
   PaymentConfigSchema,
   SESSION_HEADER,
   TOKENS_USED_HEADER,
+  USAGE_UNITS_HEADER,
 } from '@airlockhq/payment-core';
 import { encodePaymentSignatureHeader } from '@x402/core/http';
 import type { NextFunction, Request, Response } from 'express';
@@ -365,6 +367,56 @@ describe('withPaymentExpress — per_token mode', () => {
     await mw(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), res, noopNext);
     // Full topup amount remains; no debit because no usage parsed
     expect(await ledger.getBalance(PAYER)).toBe('0.1');
+  });
+
+  it('debits via AgentResponse.usage (harness-agnostic, no OpenAI body or header)', async () => {
+    const ledger = new InMemoryCreditLedger();
+    const stepHandler: AgentHandler = async () => ({
+      status: 200,
+      body: { result: 'done' },
+      usage: { units: 1000, unitLabel: 'steps' },
+    });
+    const mw = withPaymentExpress(perTokenConfig(), stepHandler, {
+      facilitator: mockFacilitator(),
+      ledger,
+    });
+    const res = mockRes();
+    await mw(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), res, noopNext);
+    expect(res._state().status).toBe(200);
+    // 0.10 topup − 1000 × 0.000001 = 0.099
+    expect(await ledger.getBalance(PAYER)).toBe('0.099');
+  });
+
+  it('debits via the X-Airlock-Units header', async () => {
+    const ledger = new InMemoryCreditLedger();
+    const unitsHandler: AgentHandler = async () => ({
+      status: 200,
+      headers: { [USAGE_UNITS_HEADER]: '1000' },
+      body: { ok: true },
+    });
+    const mw = withPaymentExpress(perTokenConfig(), unitsHandler, {
+      facilitator: mockFacilitator(),
+      ledger,
+    });
+    const res = mockRes();
+    await mw(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), res, noopNext);
+    expect(await ledger.getBalance(PAYER)).toBe('0.099');
+  });
+
+  it('debits via openAiUsageExtractor reading usage.total_tokens from the body', async () => {
+    const ledger = new InMemoryCreditLedger();
+    const openAiHandler: AgentHandler = async () => ({
+      status: 200,
+      body: { choices: [], usage: { total_tokens: 1000 } },
+    });
+    const mw = withPaymentExpress(perTokenConfig(), openAiHandler, {
+      facilitator: mockFacilitator(),
+      ledger,
+      usageExtractor: openAiUsageExtractor(),
+    });
+    const res = mockRes();
+    await mw(mockReq({ headers: { 'X-PAYMENT': validPaymentHeader } }), res, noopNext);
+    expect(await ledger.getBalance(PAYER)).toBe('0.099');
   });
 
   it('returns 402 once balance is fully depleted', async () => {

@@ -17,6 +17,7 @@ from airlock_payment import (
     SESSION_HEADER,
     SettleResponse,
     TOKENS_USED_HEADER,
+    USAGE_UNITS_HEADER,
     VerifyResponse,
     parse_payment_config,
 )
@@ -77,6 +78,17 @@ def _tokens_handler(tokens: int):
             content=json.dumps({"ok": True}),
             status_code=200,
             headers={TOKENS_USED_HEADER: str(tokens), "content-type": "application/json"},
+        )
+
+    return handler
+
+
+def _units_handler(units: int):
+    async def handler(request):
+        return Response(
+            content=json.dumps({"ok": True}),
+            status_code=200,
+            headers={USAGE_UNITS_HEADER: str(units), "content-type": "application/json"},
         )
 
     return handler
@@ -179,6 +191,24 @@ def test_per_token_topup_call_settles_credits_runs_handler_debits():
     # Credit 0.10, debit 1000 * 0.000001 = 0.001 → balance 0.099
     import asyncio
 
+    assert asyncio.get_event_loop().run_until_complete(ledger.get_balance(PAYER)) == "0.099"
+
+
+def test_per_token_debits_via_units_header():
+    facilitator = make_facilitator()
+    ledger = InMemoryCreditLedger()
+    client = make_client(
+        per_token_config(),
+        handler=_units_handler(1000),
+        facilitator=facilitator,
+        ledger=ledger,
+    )
+
+    res = client.post("/run", headers={"x-payment": valid_payment_header()})
+    assert res.status_code == 200
+    import asyncio
+
+    # Same 0.099 as the tokens path — units header is read identically.
     assert asyncio.get_event_loop().run_until_complete(ledger.get_balance(PAYER)) == "0.099"
 
 

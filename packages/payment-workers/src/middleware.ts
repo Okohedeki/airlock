@@ -3,12 +3,14 @@ import {
   type CallerId,
   type CallReporter,
   type CreditLedger,
+  headerUsageExtractor,
   InMemoryCreditLedger,
   InsufficientBalanceError,
   type PaymentConfig,
   report,
   SESSION_HEADER,
-  TOKENS_USED_HEADER,
+  type UsageExtractor,
+  type UsageReport,
 } from '@airlockhq/payment-core';
 import { decodePaymentSignatureHeader, encodePaymentResponseHeader } from '@x402/core/http';
 import { HTTPFacilitatorClient } from '@x402/core/server';
@@ -39,6 +41,13 @@ export interface WithPaymentOptions {
   ledger?: CreditLedger;
   /** Optional fire-and-forget reporter — POSTs each call to the dashboard. */
   reporter?: CallReporter;
+  /**
+   * How to read billable units from the worker's response. Defaults to reading
+   * the `X-Airlock-Units` / legacy `X-Tokens-Used` response headers. (Workers
+   * handlers return a `Response`, so usage is reported via a header — set it on
+   * the response your handler returns.)
+   */
+  usageExtractor?: UsageExtractor;
 }
 
 type FetchHandler<Env = unknown> = (
@@ -70,6 +79,7 @@ export function withPayment<Env = unknown>(
   const facilitator: PaymentFacilitator =
     options.facilitator ?? new HTTPFacilitatorClient({ url: config.facilitatorUrl });
   const ledger: CreditLedger = options.ledger ?? new InMemoryCreditLedger();
+  const usageExtractor: UsageExtractor = options.usageExtractor ?? headerUsageExtractor();
 
   return async (request, env, ctx) => {
     if (!config.enabled) {
@@ -84,13 +94,22 @@ export function withPayment<Env = unknown>(
 
     const response =
       config.mode === 'per_token'
-        ? await runPerToken(request, env, ctx, config, handler, facilitator, ledger, required)
+        ? await runPerToken(
+            request,
+            env,
+            ctx,
+            config,
+            handler,
+            facilitator,
+            ledger,
+            required,
+            usageExtractor,
+          )
         : await runFlat(request, env, ctx, handler, facilitator, required);
 
     if (options.reporter) {
       const settledHeader = response.headers.get(PAYMENT_RESPONSE_HEADER);
-      const tokensHeader = response.headers.get(TOKENS_USED_HEADER);
-      const tokens = tokensHeader ? Number.parseInt(tokensHeader, 10) : null;
+      const usage = usageFromResponse(response, usageExtractor);
       const amount_usdc =
         settledHeader !== null
           ? config.mode === 'flat'
@@ -102,14 +121,25 @@ export function withPayment<Env = unknown>(
         caller: callerFromResponse(response, settledHeader),
         status: response.status,
         request_url: request.url,
-        tokens_used: Number.isFinite(tokens) ? tokens : null,
+        tokens_used: usage?.units ?? null,
         amount_usdc,
         payment_settled: settledHeader !== null,
+        unit_label: usage?.unitLabel,
+        event_version: 1,
       });
     }
 
     return response;
   };
+}
+
+/** Read billable units from a worker Response via the configured extractor. */
+function usageFromResponse(response: Response, extractor: UsageExtractor): UsageReport | null {
+  const agentHeaders: Record<string, string> = {};
+  response.headers.forEach((v, k) => {
+    agentHeaders[k] = v;
+  });
+  return extractor({ agentHeaders });
 }
 
 function callerFromResponse(_response: Response, settledHeader: string | null): CallerId | null {
@@ -170,6 +200,7 @@ async function runPerToken<Env>(
   facilitator: PaymentFacilitator,
   ledger: CreditLedger,
   required: ReturnType<typeof buildPaymentRequired>,
+  usageExtractor: UsageExtractor,
 ): Promise<Response> {
   const requirements = required.accepts[0];
   if (!requirements) return json({ error: 'internal' }, { status: 500 });
@@ -239,9 +270,8 @@ async function runPerToken<Env>(
   // accepts a single-call overrun rather than refusing to return the response
   // the publisher already computed). Future versions can pre-gate using an
   // `expectedMaxTokens` config knob.
-  const tokensHeader = response.headers.get(TOKENS_USED_HEADER);
-  const tokens = tokensHeader ? Number.parseInt(tokensHeader, 10) : 0;
-  if (Number.isFinite(tokens) && tokens > 0) {
+  const tokens = usageFromResponse(response, usageExtractor)?.units ?? 0;
+  if (tokens > 0) {
     const cost = multiplyUsdc(config.pricePerTokenUsdc, tokens);
     try {
       await ledger.debit(caller, cost);

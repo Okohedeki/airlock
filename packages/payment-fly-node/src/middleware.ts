@@ -3,12 +3,15 @@ import {
   type CallerId,
   type CallReporter,
   type CreditLedger,
+  headerUsageExtractor,
   InMemoryCreditLedger,
   InsufficientBalanceError,
   type PaymentConfig,
   report,
   SESSION_HEADER,
   TOKENS_USED_HEADER,
+  type UsageExtractor,
+  type UsageReport,
 } from '@airlockhq/payment-core';
 import { decodePaymentSignatureHeader, encodePaymentResponseHeader } from '@x402/core/http';
 import { HTTPFacilitatorClient } from '@x402/core/server';
@@ -38,12 +41,25 @@ export interface WithPaymentExpressOptions {
   ledger?: CreditLedger;
   /** Optional fire-and-forget reporter — POSTs each call to the dashboard. */
   reporter?: CallReporter;
+  /**
+   * How to read billable units from the Agent response when the handler does
+   * not return `AgentResponse.usage` directly. Defaults to reading the
+   * `X-Airlock-Units` / legacy `X-Tokens-Used` headers. Pass
+   * `openAiUsageExtractor()` to read `usage.total_tokens` from the body.
+   */
+  usageExtractor?: UsageExtractor;
 }
 
 export interface AgentResponse {
   status?: number;
   headers?: Record<string, string>;
   body?: unknown;
+  /**
+   * Billable units consumed by this request. Preferred over header/body
+   * extraction — set this when the in-process handler already knows its unit
+   * count (tokens summed across internal model calls, steps, tool-calls, …).
+   */
+  usage?: UsageReport;
   /**
    * If set, middleware pipes this stream straight through to the client
    * (default Content-Type: text/event-stream) while parsing OpenAI-format
@@ -76,18 +92,23 @@ export function withPaymentExpress(
   const facilitator: PaymentFacilitator =
     options.facilitator ?? new HTTPFacilitatorClient({ url: config.facilitatorUrl });
   const ledger: CreditLedger = options.ledger ?? new InMemoryCreditLedger();
+  const usageExtractor: UsageExtractor = options.usageExtractor ?? headerUsageExtractor();
 
   return async (req, res, next) => {
     // Streaming-handled flag: set true synchronously when we'll fire the
     // reporter ourselves (because res headers are flushed before tokens are
     // known, so the res.on('finish') reporter can't get the right value).
     const streamHandled = { value: false };
+    // Shared so respond/run paths can hand the resolved usage to the finish
+    // reporter without round-tripping through a response header.
+    const usageBox: UsageBox = { usage: null };
     if (options.reporter) {
-      attachReporter(req, res, options.reporter, config, () => streamHandled.value);
+      attachReporter(req, res, options.reporter, config, () => streamHandled.value, usageBox);
     }
     try {
       if (!config.enabled) {
-        await respondAndExtractTokens(res, await handler(req));
+        const r = await respondAndExtractTokens(res, await handler(req), usageExtractor);
+        usageBox.usage = r.usage;
         return;
       }
 
@@ -109,6 +130,8 @@ export function withPaymentExpress(
           required,
           options.reporter,
           streamHandled,
+          usageExtractor,
+          usageBox,
         );
         return;
       }
@@ -122,11 +145,18 @@ export function withPaymentExpress(
         config,
         options.reporter,
         streamHandled,
+        usageExtractor,
+        usageBox,
       );
     } catch (err) {
       next(err);
     }
   };
+}
+
+/** Mutable holder for the resolved usage of the in-flight request. */
+interface UsageBox {
+  usage: UsageReport | null;
 }
 
 /**
@@ -138,14 +168,21 @@ function attachReporter(
   res: Response,
   reporter: CallReporter,
   config: PaymentConfig,
-  suppress?: () => boolean,
+  suppress: (() => boolean) | undefined,
+  usageBox: UsageBox,
 ): void {
   res.on('finish', () => {
     if (suppress?.()) return;
-    const tokensHeader = res.getHeader(TOKENS_USED_HEADER);
     const settledHeader = res.getHeader(PAYMENT_RESPONSE_HEADER);
-    const tokensStr = typeof tokensHeader === 'string' ? tokensHeader : '';
-    const tokens = tokensStr ? Number.parseInt(tokensStr, 10) : null;
+    // Prefer the usage resolved during respond (covers AgentResponse.usage and
+    // the X-Airlock-Units header); fall back to the legacy response header.
+    let tokens = usageBox.usage?.units ?? null;
+    if (tokens === null) {
+      const tokensHeader = res.getHeader(TOKENS_USED_HEADER);
+      const tokensStr = typeof tokensHeader === 'string' ? tokensHeader : '';
+      const parsed = tokensStr ? Number.parseInt(tokensStr, 10) : Number.NaN;
+      tokens = Number.isFinite(parsed) ? parsed : null;
+    }
     let caller: CallerId | null = null;
     if (typeof settledHeader === 'string') {
       try {
@@ -167,9 +204,11 @@ function attachReporter(
       caller,
       status: res.statusCode,
       request_url: absoluteUrl(req),
-      tokens_used: tokens !== null && Number.isFinite(tokens) ? tokens : null,
+      tokens_used: tokens,
       amount_usdc,
       payment_settled: settled,
+      unit_label: usageBox.usage?.unitLabel,
+      event_version: 1,
     });
   });
 }
@@ -183,6 +222,8 @@ async function runFlat(
   config: PaymentConfig,
   reporter: CallReporter | undefined,
   streamHandled: { value: boolean },
+  usageExtractor: UsageExtractor,
+  usageBox: UsageBox,
 ): Promise<void> {
   const requirements = required.accepts[0];
   if (!requirements) {
@@ -230,16 +271,19 @@ async function runFlat(
   // after the stream completes (headers are already flushed by then).
   if (agentResponse.stream) streamHandled.value = true;
 
-  const result = await respondAndExtractTokens(res, agentResponse);
+  const result = await respondAndExtractTokens(res, agentResponse, usageExtractor);
+  usageBox.usage = result.usage;
 
   if (agentResponse.stream && reporter) {
     await report(reporter, {
       caller: (settle.payer ?? null) as CallerId | null,
       status: res.statusCode,
       request_url: absoluteUrl(req),
-      tokens_used: result.tokens > 0 ? result.tokens : null,
+      tokens_used: result.usage?.units ?? null,
       amount_usdc: config.mode === 'flat' ? config.priceUsdc : null,
       payment_settled: true,
+      unit_label: result.usage?.unitLabel,
+      event_version: 1,
     });
   }
 }
@@ -254,6 +298,8 @@ async function runPerToken(
   required: ReturnType<typeof buildPaymentRequired>,
   reporter: CallReporter | undefined,
   streamHandled: { value: boolean },
+  usageExtractor: UsageExtractor,
+  usageBox: UsageBox,
 ): Promise<void> {
   const requirements = required.accepts[0];
   if (!requirements) {
@@ -339,18 +385,21 @@ async function runPerToken(
 
   if (agentResponse.stream) streamHandled.value = true;
 
-  // For buffered responses, the handler put X-Tokens-Used on its agent.headers
-  // and we can debit *before* writing. For streams, tokens are unknown until
-  // pipeAndParseSse drains the upstream — so we debit *after* respond.
-  let tokens = readTokensUsed(agentResponse);
+  // For buffered responses, the handler reports usage (AgentResponse.usage or a
+  // units header) and we can debit *before* writing. For streams, units are
+  // unknown until pipeAndParseSse drains the upstream — so we debit *after*.
+  let usage = readUsage(agentResponse, usageExtractor);
+  let tokens = usage?.units ?? 0;
   if (!agentResponse.stream && tokens > 0) {
     await debitWithOverdraft(ledger, caller, balance, config.pricePerTokenUsdc, tokens);
   }
 
-  const result = await respondAndExtractTokens(res, agentResponse);
+  const result = await respondAndExtractTokens(res, agentResponse, usageExtractor);
+  if (!agentResponse.stream) usageBox.usage = result.usage;
 
   if (agentResponse.stream) {
-    tokens = result.tokens;
+    usage = result.usage;
+    tokens = usage?.units ?? 0;
     if (tokens > 0) {
       await debitWithOverdraft(ledger, caller, balance, config.pricePerTokenUsdc, tokens);
     }
@@ -362,6 +411,8 @@ async function runPerToken(
         tokens_used: tokens > 0 ? tokens : null,
         amount_usdc: settleResult ? config.minCreditBalanceUsdc : null,
         payment_settled: settleResult !== undefined,
+        unit_label: usage?.unitLabel,
+        event_version: 1,
       });
     }
   }
@@ -384,11 +435,14 @@ async function debitWithOverdraft(
   }
 }
 
-function readTokensUsed(agent: AgentResponse): number {
-  const headerVal = agent.headers?.[TOKENS_USED_HEADER];
-  if (!headerVal) return 0;
-  const n = Number.parseInt(headerVal, 10);
-  return Number.isFinite(n) && n > 0 ? n : 0;
+/**
+ * Resolve billable units for a response: prefer the handler-supplied
+ * `AgentResponse.usage`, else run the configured extractor over the response
+ * headers + body. Returns null when nothing is reported (flat per-call).
+ */
+function readUsage(agent: AgentResponse, extractor: UsageExtractor): UsageReport | null {
+  if (agent.usage && agent.usage.units > 0) return agent.usage;
+  return extractor({ agentHeaders: agent.headers, agentBody: agent.body });
 }
 
 function absoluteUrl(req: Request): string {
@@ -398,15 +452,16 @@ function absoluteUrl(req: Request): string {
 }
 
 interface RespondResult {
-  /** Token count detected. From agent.headers[X-Tokens-Used] for buffered; from
-   *  SSE `usage.total_tokens` for streamed. 0 if not present. */
-  tokens: number;
+  /** Resolved usage: from AgentResponse.usage / units header for buffered, or
+   *  SSE `usage.total_tokens` for streamed. null if none reported. */
+  usage: UsageReport | null;
   streamed: boolean;
 }
 
 async function respondAndExtractTokens(
   res: Response,
   agent: AgentResponse,
+  extractor: UsageExtractor,
 ): Promise<RespondResult> {
   res.status(agent.status ?? 200);
   if (agent.headers) {
@@ -421,7 +476,7 @@ async function respondAndExtractTokens(
     res.flushHeaders?.();
     const tokens = await pipeAndParseSse(res, agent.stream);
     res.end();
-    return { tokens, streamed: true };
+    return { usage: tokens > 0 ? { units: tokens, unitLabel: 'tokens' } : null, streamed: true };
   }
   if (agent.body === undefined) {
     res.end();
@@ -430,7 +485,7 @@ async function respondAndExtractTokens(
   } else {
     res.json(agent.body);
   }
-  return { tokens: readTokensUsed(agent), streamed: false };
+  return { usage: readUsage(agent, extractor), streamed: false };
 }
 
 /**

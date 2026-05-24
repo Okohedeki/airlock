@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import Any
+from typing import Any, Callable, Optional
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -22,10 +22,25 @@ from .envelope import build_payment_required
 from .facilitator import Facilitator, HTTPFacilitator
 from .ledger import CreditLedger, InMemoryCreditLedger, InsufficientBalanceError
 from .reporter import CallReporter, ReportableCall, report
-from .types import SESSION_HEADER, TOKENS_USED_HEADER
+from .types import SESSION_HEADER, TOKENS_USED_HEADER, USAGE_UNITS_HEADER
 
 PAYMENT_HEADER = "x-payment"
 PAYMENT_RESPONSE_HEADER = "X-PAYMENT-RESPONSE"
+
+# How to read billable units from a response. Defaults to the header reader
+# below; pass a custom callable to PaymentMiddleware for non-header schemes.
+UsageExtractor = Callable[[Response], Optional[int]]
+
+
+def default_usage_extractor(response: Response) -> Optional[int]:
+    """Read billable units from the generic units header, then legacy tokens."""
+    for name in (USAGE_UNITS_HEADER, TOKENS_USED_HEADER):
+        raw = response.headers.get(name.lower()) or response.headers.get(name)
+        if raw and raw.isdigit():
+            n = int(raw)
+            if n > 0:
+                return n
+    return None
 
 
 def _decode_payment_header(header: str) -> dict:
@@ -78,6 +93,7 @@ class PaymentMiddleware(BaseHTTPMiddleware):
         facilitator: Facilitator | None = None,
         ledger: CreditLedger | None = None,
         reporter: CallReporter | None = None,
+        usage_extractor: UsageExtractor | None = None,
     ) -> None:
         super().__init__(app)
         self.config = config
@@ -86,6 +102,7 @@ class PaymentMiddleware(BaseHTTPMiddleware):
         )
         self.ledger: CreditLedger = ledger or InMemoryCreditLedger()
         self.reporter = reporter
+        self.usage_extractor: UsageExtractor = usage_extractor or default_usage_extractor
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
@@ -113,9 +130,8 @@ class PaymentMiddleware(BaseHTTPMiddleware):
     async def _fire_report(self, request: Request, response: Response) -> None:
         if self.reporter is None:
             return
-        tokens_header = response.headers.get(TOKENS_USED_HEADER)
         settled_header = response.headers.get(PAYMENT_RESPONSE_HEADER)
-        tokens = int(tokens_header) if tokens_header and tokens_header.isdigit() else None
+        tokens = self.usage_extractor(response)
         caller: str | None = None
         if settled_header:
             try:
@@ -256,10 +272,7 @@ class PaymentMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
-        tokens_str = response.headers.get(TOKENS_USED_HEADER.lower()) or response.headers.get(
-            TOKENS_USED_HEADER
-        )
-        tokens = int(tokens_str) if tokens_str and tokens_str.isdigit() else 0
+        tokens = self.usage_extractor(response) or 0
         if tokens > 0:
             cost = _multiply_usdc(self.config.price_per_token_usdc, tokens)
             try:

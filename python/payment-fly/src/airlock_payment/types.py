@@ -17,5 +17,9 @@ CallerId = str
 TOKENS_USED_HEADER = "X-Tokens-Used"
 """Response header an Agent sets to report token usage; consumed by per_token mode."""
 
+USAGE_UNITS_HEADER = "X-Airlock-Units"
+"""Harness-agnostic usage header: billable units (tokens, steps, tool-calls, …).
+Supersedes X-Tokens-Used; the default reader checks this first, then falls back."""
+
 SESSION_HEADER = "X-Airlock-Session"
 """Header carrying the opaque per-Caller session token issued after x402 topup."""
