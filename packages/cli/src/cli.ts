@@ -15,7 +15,6 @@ import { readConfig } from './config-file.js';
 import {
   buildDelete,
   buildDeploy,
-  buildDev,
   buildDomain,
   buildLogs,
   buildSecret,
@@ -25,6 +24,7 @@ import {
   type SecretAction,
   TargetBinaryMissingError,
 } from './exec.js';
+import { startTunnel } from './tunnel.js';
 
 async function readPackageVersion(): Promise<string> {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -54,18 +54,20 @@ async function runWithConfig(
 
 async function runDev(port: number): Promise<number> {
   try {
-    return await inheritSpawner(
-      ...(Object.values(buildDev(port)).slice(0, 2) as [string, string[]]),
-      process.cwd(),
-    );
+    const tunnel = await startTunnel(port);
+    console.log(`✓ public tunnel  →  ${tunnel.url}`);
+    console.log(`  forwarding to  http://localhost:${port}`);
+    console.log('  press Ctrl-C to close');
+    await new Promise<void>((resolve) => {
+      process.on('SIGINT', () => {
+        tunnel.stop();
+        resolve();
+      });
+    });
+    return 0;
   } catch (err) {
-    if (err instanceof TargetBinaryMissingError) {
-      console.error(
-        `error: \`cloudflared\` is not on your PATH. Install: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/`,
-      );
-      return 127;
-    }
-    throw err;
+    console.error(`error: tunnel failed — ${(err as Error).message}`);
+    return 1;
   }
 }
 
@@ -84,7 +86,8 @@ async function main() {
     .argument('<name>', 'project name (used in recipe configs)')
     .option('-t, --target <target>', 'deploy Target: workers | fly', 'fly')
     .option('--no-recipe', 'skip writing the Recipe config (wrangler.toml / fly.toml)')
-    .action(async (name: string, opts: { target: string; recipe: boolean }) => {
+    .option('--with-agent', 'also scaffold a runnable starter agent (entry point, Dockerfile, deps)')
+    .action(async (name: string, opts: { target: string; recipe: boolean; withAgent?: boolean }) => {
       if (opts.target !== 'workers' && opts.target !== 'fly') {
         console.error(`error: --target must be "workers" or "fly", got "${opts.target}"`);
         process.exit(2);
@@ -94,13 +97,22 @@ async function main() {
         name,
         target: opts.target,
         scaffoldRecipe: opts.recipe,
+        withAgent: opts.withAgent,
       });
       console.log(`✓ wrote ${result.configPath}`);
       if (result.recipePath) console.log(`✓ wrote ${result.recipePath}`);
+      for (const p of result.agentPaths ?? []) console.log(`✓ wrote ${p}`);
       console.log('\nnext steps:');
-      console.log('  1. Edit .airlock/config.toml — set payment.wallet to your address');
-      console.log('  2. Run `airlock doctor` to validate');
-      console.log('  3. Deploy with `airlock deploy`');
+      if (result.agentPaths?.length) {
+        console.log('  1. `npm install` (or pnpm/yarn) in the project');
+        console.log('  2. Edit src/ — replace the /run handler with your agent logic');
+        console.log('  3. Edit .airlock/config.toml — set payment.wallet to your address');
+        console.log('  4. `airlock doctor`, then `airlock deploy`');
+      } else {
+        console.log('  1. Edit .airlock/config.toml — set payment.wallet to your address');
+        console.log('  2. Run `airlock doctor` to validate');
+        console.log('  3. Deploy with `airlock deploy`');
+      }
     });
 
   program
@@ -237,25 +249,35 @@ async function main() {
 
   program
     .command('serve')
-    .description('Wrap a locally-running LLM HTTP endpoint with x402 payment + dashboard reporting')
+    .description(
+      'DEV-ONLY proxy: wrap a locally-running agent/LLM with x402 + reporting (prod mounts the middleware in-process — see `init`)',
+    )
     .option(
       '-u, --upstream <url>',
-      'local LLM URL (OpenAI-compatible /v1/chat/completions)',
+      'local agent/LLM URL (OpenAI-compatible /v1/chat/completions by default)',
       'http://localhost:8080',
+    )
+    .option(
+      '--upstream-path <path>',
+      'path on the upstream to forward to',
+      '/v1/chat/completions',
     )
     .option('-p, --port <port>', 'port for the wrapper to listen on', '3000')
     .option('--wallet <addr>', 'override payment.wallet (skip config.toml)')
     .option('--price <usdc>', 'override per-call price in USDC (flat mode)')
     .option('--no-payment', 'disable payment enforcement (for upstream debugging)')
+    .option('--tunnel', 'expose the wrapper publicly via a bundled Cloudflare tunnel')
     .option('--backend <url>', 'dashboard backend URL for the reporter')
     .option('--project <name>', 'project name for the reporter (defaults to config.project.name)')
     .action(
       async (opts: {
         upstream: string;
+        upstreamPath: string;
         port: string;
         wallet?: string;
         price?: string;
         payment: boolean;
+        tunnel?: boolean;
         backend?: string;
         project?: string;
       }) => {
@@ -267,10 +289,12 @@ async function main() {
         try {
           const handle = await startServe({
             upstream: opts.upstream,
+            upstreamPath: opts.upstreamPath,
             port,
             wallet: opts.wallet,
             priceUsdc: opts.price,
             noPayment: !opts.payment,
+            tunnel: opts.tunnel,
             backendUrl: opts.backend,
             projectName: opts.project,
           });
