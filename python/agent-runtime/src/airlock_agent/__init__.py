@@ -20,20 +20,29 @@ from .adapter import (
     last_user_message,
     messages_to_task,
 )
+from .config import read_agent_config
+from .harnesses import DRIVERS, Driver, get_driver
+from .loader import load_entrypoint, resolve_entrypoint
 from .serve import config_from_env, serve
 from .surface import create_app, to_chat_completion
 from .wellknown import has_bundle, mount_wellknown, read_contract_metadata
 
 __all__ = [
     "AgentRunResult",
+    "DRIVERS",
+    "Driver",
     "HarnessAdapter",
     "config_from_env",
     "create_app",
+    "get_driver",
     "has_bundle",
     "last_user_message",
+    "load_entrypoint",
     "messages_to_task",
     "mount_wellknown",
+    "read_agent_config",
     "read_contract_metadata",
+    "resolve_entrypoint",
     "serve",
     "to_chat_completion",
 ]
