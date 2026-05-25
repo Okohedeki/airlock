@@ -89,10 +89,11 @@ async function main() {
     .option('--no-recipe', 'skip writing the Recipe config (wrangler.toml / fly.toml)')
     .option('--with-agent', 'also scaffold a runnable starter agent (entry point, Dockerfile, deps)')
     .option('--agent <harness>', 'scaffold a harness-backed agentic service: smolagents | langgraph | crewai (Fly-only)')
+    .option('--detect', 'scan THIS repo, detect the harness + entrypoint, and wire it via [agent] (Fly-only)')
     .action(
       async (
         name: string,
-        opts: { target: string; recipe: boolean; withAgent?: boolean; agent?: string },
+        opts: { target: string; recipe: boolean; withAgent?: boolean; agent?: string; detect?: boolean },
       ) => {
         if (opts.target !== 'workers' && opts.target !== 'fly') {
           console.error(`error: --target must be "workers" or "fly", got "${opts.target}"`);
@@ -106,6 +107,10 @@ async function main() {
           console.error(`error: --agent=${opts.agent} requires --target=fly (Python harnesses run on Fly)`);
           process.exit(2);
         }
+        if (opts.detect && opts.target !== 'fly') {
+          console.error('error: --detect requires --target=fly (Python harnesses run on Fly)');
+          process.exit(2);
+        }
         const result = await runInit({
           cwd: process.cwd(),
           name,
@@ -113,10 +118,21 @@ async function main() {
           scaffoldRecipe: opts.recipe,
           withAgent: opts.withAgent,
           harness: opts.agent as AgentHarness | undefined,
+          detect: opts.detect,
         });
         console.log(`✓ wrote ${result.configPath}`);
         if (result.recipePath) console.log(`✓ wrote ${result.recipePath}`);
         for (const p of result.agentPaths ?? []) console.log(`✓ wrote ${p}`);
+        for (const p of result.detectPaths ?? []) console.log(`✓ wrote ${p}`);
+        if (result.detected) {
+          console.log('\ndetected (confirm or edit .airlock/config.toml [agent]):');
+          for (const line of result.detected.evidence) console.log(`  • ${line}`);
+          console.log('\nnext steps:');
+          console.log('  1. Confirm [agent] harness + entrypoint in .airlock/config.toml');
+          console.log('  2. `pip install -r requirements.txt`');
+          console.log('  3. `python -m airlock_agent` to run locally, then `airlock deploy`');
+          return;
+        }
         console.log('\nnext steps:');
         if (opts.agent) {
           console.log('  1. `pip install -r requirements.txt`');

@@ -17,6 +17,16 @@ export interface AirlockConfig {
     schemaVersion: 1;
   };
   payment?: Record<string, unknown>;
+  /**
+   * Binds a Harness to the agent runtime. The `airlock-agent` package imports
+   * `entrypoint` once at startup and drives it with the built-in adapter for
+   * `harness` — the developer writes no adapter (see ADR-0007).
+   */
+  agent?: {
+    harness: string;
+    /** Python import path "module:attr" to the agent object or a build_* factory. */
+    entrypoint: string;
+  };
 }
 
 export const CONFIG_PATH = '.airlock/config.toml';

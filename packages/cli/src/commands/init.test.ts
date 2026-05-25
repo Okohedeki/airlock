@@ -106,4 +106,21 @@ describe('runInit', () => {
       runInit({ cwd, name: 'x', target: 'workers', harness: 'smolagents' }),
     ).rejects.toThrow(/requires --target=fly/);
   });
+
+  it('--detect scans the repo and writes the [agent] block + runtime Dockerfile', async () => {
+    const { writeFile: wf } = await import('node:fs/promises');
+    await wf(join(cwd, 'requirements.txt'), 'langgraph>=0.2\n');
+    await wf(join(cwd, 'agents.py'), 'def build_agent():\n    return object()\n');
+    const result = await runInit({ cwd, name: 'my-analyst', target: 'fly', detect: true });
+    expect(result.detected?.harness).toBe('langgraph');
+    expect(result.detected?.entrypoint).toBe('agents:build_agent');
+    const cfg = parse(await readFile(result.configPath, 'utf8')) as {
+      agent: { harness: string; entrypoint: string };
+    };
+    expect(cfg.agent).toEqual({ harness: 'langgraph', entrypoint: 'agents:build_agent' });
+    const docker = await readFile(join(cwd, 'Dockerfile'), 'utf8');
+    expect(docker).toContain('python", "-m", "airlock_agent');
+    const reqs = await readFile(join(cwd, 'requirements.txt'), 'utf8');
+    expect(reqs).toContain('airlock-agent');
+  });
 });

@@ -80,6 +80,30 @@ export async function runDoctor(cwd: string): Promise<DoctorReport> {
     }
   }
 
+  if (config.agent) {
+    const { harness, entrypoint } = config.agent;
+    const known = ['smolagents', 'langgraph', 'crewai', 'openai-agents', 'claude', 'custom'];
+    if (!harness || !known.includes(harness)) {
+      findings.push({
+        level: 'error',
+        message: `agent.harness must be one of ${known.join(' | ')}, got "${harness}"`,
+      });
+    }
+    if (!entrypoint || !/^[\w.]+:[\w.]+$/.test(entrypoint)) {
+      findings.push({
+        level: 'error',
+        message: `agent.entrypoint must be "module:attr", got "${entrypoint ?? '<missing>'}"`,
+      });
+    } else if (entrypoint.startsWith('CHANGE_ME')) {
+      findings.push({
+        level: 'error',
+        message: 'agent.entrypoint is the placeholder — set it to your agent (module:attr)',
+      });
+    } else {
+      findings.push({ level: 'ok', message: `agent: ${harness} → ${entrypoint}` });
+    }
+  }
+
   const ok = !findings.some((f) => f.level === 'error');
   return { ok, findings };
 }

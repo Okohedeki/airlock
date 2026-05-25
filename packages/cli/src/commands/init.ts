@@ -1,6 +1,7 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { type AirlockConfig, type Target, writeConfig } from '../config-file.js';
+import { scanRepo } from '../scan.js';
 import { type AgentHarness, flyAgentStarter } from '../templates/fly-agent.js';
 import { flyNodeStarter } from '../templates/fly-node.js';
 import { workersStarter } from '../templates/workers.js';
@@ -15,6 +16,8 @@ export interface InitOptions {
   withAgent?: boolean;
   /** Scaffold a harness-backed agentic service (implies an agent; Fly-only). */
   harness?: AgentHarness;
+  /** Scan an existing repo, detect the harness + entrypoint, and write [agent]. */
+  detect?: boolean;
 }
 
 export interface InitResult {
@@ -22,7 +25,22 @@ export interface InitResult {
   recipePath?: string;
   /** Paths of starter-agent files written when `withAgent` is set. */
   agentPaths?: string[];
+  /** Detection result + files written when `detect` is set. */
+  detected?: { harness?: string; entrypoint?: string; evidence: string[] };
+  detectPaths?: string[];
 }
+
+const RUNTIME_DOCKERFILE = `FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+ENV PORT=3000
+EXPOSE 3000
+# Config-driven: reads .airlock/config.toml [agent] and drives your harness.
+# Model is publisher-supplied — set OPENAI_API_BASE / OPENAI_API_KEY (ADR-0008).
+CMD ["python", "-m", "airlock_agent"]
+`;
 
 const WRANGLER_STARTER = (name: string) => `name = "${name}"
 main = "src/index.ts"
@@ -63,6 +81,31 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
     project: { name: opts.name, target: opts.target, schemaVersion: 1 },
     payment: PAYMENT_SCAFFOLD,
   };
+
+  // Detect mode: scan an existing repo and bind its harness via the [agent] block.
+  let detected: InitResult['detected'];
+  let detectPaths: string[] | undefined;
+  if (opts.detect) {
+    const scan = await scanRepo(opts.cwd);
+    detected = scan;
+    config.agent = {
+      harness: scan.harness ?? 'custom',
+      entrypoint: scan.entrypoint ?? 'CHANGE_ME:your_agent',
+    };
+    detectPaths = [];
+    // Dockerfile that runs the config-driven runtime (no app.py).
+    const dockerfile = resolve(opts.cwd, 'Dockerfile');
+    await writeFile(dockerfile, RUNTIME_DOCKERFILE, 'utf8');
+    detectPaths.push(dockerfile);
+    // Ensure airlock-agent is a dependency.
+    const reqPath = resolve(opts.cwd, 'requirements.txt');
+    const existing = await readFile(reqPath, 'utf8').catch(() => '');
+    if (!/^airlock-agent\b/m.test(existing)) {
+      await writeFile(reqPath, `${existing}${existing && !existing.endsWith('\n') ? '\n' : ''}airlock-agent\n`, 'utf8');
+      detectPaths.push(reqPath);
+    }
+  }
+
   const configPath = await writeConfig(opts.cwd, config);
 
   let recipePath: string | undefined;
@@ -94,5 +137,5 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
     }
   }
 
-  return { configPath, recipePath, agentPaths };
+  return { configPath, recipePath, agentPaths, detected, detectPaths };
 }
