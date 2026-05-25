@@ -2,6 +2,8 @@ export type { PaymentConfig, SupportedNetwork } from './config.js';
 export { PaymentConfigSchema, resolveAsset, USDC_ADDRESSES } from './config.js';
 export type { WalletProvider, WalletRef } from './crypto.js';
 export { unavailableWalletProvider, WalletProviderUnavailableError } from './crypto.js';
+export type { SandboxProvider, SandboxResult } from './sandbox.js';
+export { SandboxProviderUnavailableError, unavailableSandboxProvider } from './sandbox.js';
 export type { CreditLedger } from './ledger.js';
 export { InMemoryCreditLedger, InsufficientBalanceError } from './ledger.js';
 

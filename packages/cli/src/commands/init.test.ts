@@ -89,4 +89,21 @@ describe('runInit', () => {
     const raw = await readFile(result.recipePath, 'utf8');
     expect(raw).toContain('min_machines_running = 1');
   });
+
+  it('scaffolds a harness-backed agentic service with --agent', async () => {
+    const result = await runInit({ cwd, name: 'my-analyst', target: 'fly', harness: 'langgraph' });
+    expect(result.agentPaths?.length).toBeGreaterThan(0);
+    const app = await readFile(join(cwd, 'app.py'), 'utf8');
+    expect(app).toContain('from airlock_agent import serve');
+    const reqs = await readFile(join(cwd, 'requirements.txt'), 'utf8');
+    expect(reqs).toContain('langgraph');
+    expect(reqs).toContain('airlock-agent');
+    await expect(readFile(join(cwd, 'adapter.py'), 'utf8')).resolves.toContain('AgentRunResult');
+  });
+
+  it('rejects --agent on a non-fly target (ADR-0003)', async () => {
+    await expect(
+      runInit({ cwd, name: 'x', target: 'workers', harness: 'smolagents' }),
+    ).rejects.toThrow(/requires --target=fly/);
+  });
 });

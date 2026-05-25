@@ -24,6 +24,7 @@ import {
   type SecretAction,
   TargetBinaryMissingError,
 } from './exec.js';
+import { type AgentHarness, AGENT_HARNESSES } from './templates/fly-agent.js';
 import { startTunnel } from './tunnel.js';
 
 async function readPackageVersion(): Promise<string> {
@@ -87,33 +88,53 @@ async function main() {
     .option('-t, --target <target>', 'deploy Target: workers | fly', 'fly')
     .option('--no-recipe', 'skip writing the Recipe config (wrangler.toml / fly.toml)')
     .option('--with-agent', 'also scaffold a runnable starter agent (entry point, Dockerfile, deps)')
-    .action(async (name: string, opts: { target: string; recipe: boolean; withAgent?: boolean }) => {
-      if (opts.target !== 'workers' && opts.target !== 'fly') {
-        console.error(`error: --target must be "workers" or "fly", got "${opts.target}"`);
-        process.exit(2);
-      }
-      const result = await runInit({
-        cwd: process.cwd(),
-        name,
-        target: opts.target,
-        scaffoldRecipe: opts.recipe,
-        withAgent: opts.withAgent,
-      });
-      console.log(`✓ wrote ${result.configPath}`);
-      if (result.recipePath) console.log(`✓ wrote ${result.recipePath}`);
-      for (const p of result.agentPaths ?? []) console.log(`✓ wrote ${p}`);
-      console.log('\nnext steps:');
-      if (result.agentPaths?.length) {
-        console.log('  1. `npm install` (or pnpm/yarn) in the project');
-        console.log('  2. Edit src/ — replace the /run handler with your agent logic');
-        console.log('  3. Edit .airlock/config.toml — set payment.wallet to your address');
-        console.log('  4. `airlock doctor`, then `airlock deploy`');
-      } else {
-        console.log('  1. Edit .airlock/config.toml — set payment.wallet to your address');
-        console.log('  2. Run `airlock doctor` to validate');
-        console.log('  3. Deploy with `airlock deploy`');
-      }
-    });
+    .option('--agent <harness>', 'scaffold a harness-backed agentic service: smolagents | langgraph | crewai (Fly-only)')
+    .action(
+      async (
+        name: string,
+        opts: { target: string; recipe: boolean; withAgent?: boolean; agent?: string },
+      ) => {
+        if (opts.target !== 'workers' && opts.target !== 'fly') {
+          console.error(`error: --target must be "workers" or "fly", got "${opts.target}"`);
+          process.exit(2);
+        }
+        if (opts.agent && !AGENT_HARNESSES.includes(opts.agent as AgentHarness)) {
+          console.error(`error: --agent must be one of ${AGENT_HARNESSES.join(' | ')}`);
+          process.exit(2);
+        }
+        if (opts.agent && opts.target !== 'fly') {
+          console.error(`error: --agent=${opts.agent} requires --target=fly (Python harnesses run on Fly)`);
+          process.exit(2);
+        }
+        const result = await runInit({
+          cwd: process.cwd(),
+          name,
+          target: opts.target,
+          scaffoldRecipe: opts.recipe,
+          withAgent: opts.withAgent,
+          harness: opts.agent as AgentHarness | undefined,
+        });
+        console.log(`✓ wrote ${result.configPath}`);
+        if (result.recipePath) console.log(`✓ wrote ${result.recipePath}`);
+        for (const p of result.agentPaths ?? []) console.log(`✓ wrote ${p}`);
+        console.log('\nnext steps:');
+        if (opts.agent) {
+          console.log('  1. `pip install -r requirements.txt`');
+          console.log('  2. Edit adapter.py — run your harness (see examples/' + `${opts.agent}-agent` + ')');
+          console.log('  3. Point the model: OPENAI_API_BASE / OPENAI_API_KEY (airlock secret set …)');
+          console.log('  4. `airlock doctor`, then `airlock deploy`');
+        } else if (result.agentPaths?.length) {
+          console.log('  1. `npm install` (or pnpm/yarn) in the project');
+          console.log('  2. Edit src/ — replace the /run handler with your agent logic');
+          console.log('  3. Edit .airlock/config.toml — set payment.wallet to your address');
+          console.log('  4. `airlock doctor`, then `airlock deploy`');
+        } else {
+          console.log('  1. Edit .airlock/config.toml — set payment.wallet to your address');
+          console.log('  2. Run `airlock doctor` to validate');
+          console.log('  3. Deploy with `airlock deploy`');
+        }
+      },
+    );
 
   program
     .command('doctor')

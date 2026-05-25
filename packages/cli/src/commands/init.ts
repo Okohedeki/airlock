@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { type AirlockConfig, type Target, writeConfig } from '../config-file.js';
+import { type AgentHarness, flyAgentStarter } from '../templates/fly-agent.js';
 import { flyNodeStarter } from '../templates/fly-node.js';
 import { workersStarter } from '../templates/workers.js';
 
@@ -12,6 +13,8 @@ export interface InitOptions {
   scaffoldRecipe?: boolean;
   /** Also scaffold a runnable starter agent (entry point, Dockerfile, deps). */
   withAgent?: boolean;
+  /** Scaffold a harness-backed agentic service (implies an agent; Fly-only). */
+  harness?: AgentHarness;
 }
 
 export interface InitResult {
@@ -71,9 +74,17 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
     await writeFile(recipePath, recipeContent, 'utf8');
   }
 
+  if (opts.harness && opts.target !== 'fly') {
+    throw new Error(`--agent=${opts.harness} requires --target=fly (Python harnesses run on Fly)`);
+  }
+
   let agentPaths: string[] | undefined;
-  if (opts.withAgent) {
-    const files = opts.target === 'workers' ? workersStarter(opts.name) : flyNodeStarter(opts.name);
+  if (opts.harness || opts.withAgent) {
+    const files = opts.harness
+      ? flyAgentStarter(opts.name, opts.harness)
+      : opts.target === 'workers'
+        ? workersStarter(opts.name)
+        : flyNodeStarter(opts.name);
     agentPaths = [];
     for (const file of files) {
       const dest = resolve(opts.cwd, file.path);
