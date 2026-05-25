@@ -7,8 +7,12 @@
 ## Language
 
 **Agent**:
-Any HTTP server the publisher wants to expose. We accept any HTTP service — Airlock-aware, MCP, A2A, plain REST. The Agent's internals are opaque to us; we only inspect responses well enough to detect Shapes.
+Any HTTP server the publisher wants to expose. We accept any HTTP service — Airlock-aware, MCP, A2A, plain REST. The Agent's internals are opaque to us at *runtime*; we only inspect responses well enough to detect Shapes.
 _Avoid_: Service, server, function, endpoint (use Agent consistently when referring to the deployable unit)
+
+**Harness**:
+The agent framework *inside* an Agent — LangGraph, CrewAI, smolagents, or a custom loop. A scaffold-time concept: airlock helps package and run the Harness (via a per-Harness adapter behind an OpenAI-compatible surface), but never inspects its internals at runtime, so the Agent's runtime opacity still holds. The Harness lives in the deploy layer, not in the airlock-config contract (which declares *what* skills an Agent offers, not *how* it runs them).
+_Avoid_: Framework (too generic), runtime (forbidden), engine
 
 **Shape**:
 A recognized Agent protocol pattern (MCP, A2A, Airlock contract, OpenAI tool schema). Detected automatically from the Agent's responses at expose-time. Multiple Shapes can coexist on one Agent. Detection lights up Shape-specific ergonomics: well-known paths, tool listings, schema-aware logs.
