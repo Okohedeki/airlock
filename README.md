@@ -15,141 +15,113 @@
   </a>
 </p>
 
-<p align="center"><strong>ngrok for AI agents.</strong> Wrap a local LLM or self-hosted model with an x402 USDC paywall and a dashboard — without giving up custody, KYC, or a revenue cut.</p>
+<p align="center"><strong>Deploy any AI agent to a paid web URL.</strong> Take an agent built in any framework, expose it behind a standard OpenAI-compatible endpoint with a USDC paywall, and ship it to your own cloud — you keep the model, the money, and the keys.</p>
 
 ---
 
-Point airlock at any OpenAI-compatible upstream — llama.cpp on your laptop, vLLM on a GPU box, Ollama on your homelab — and it exposes the model with payment enforcement, request logging, and a publisher dashboard. USDC settles on Base directly from caller to publisher wallet. No middleman in the prod request path.
+airlock turns an **agentic process** — a real agent with its harness, tools, and multi-step loop — into a deployed service anyone can call with a stock OpenAI client. The agent answers `POST /v1/chat/completions`, runs its full native loop server-side, and returns the result. Payment settles on-chain from caller to your wallet; airlock never sits in the production request path and never hosts inference.
 
-- **Self-hosted runtime:** Your model runs on your hardware or your cloud account. airlock never sits in the prod inference path.
-- **Direct settlement:** Payments go caller-wallet → publisher-wallet on-chain. We never custody money. No KYC. No revenue cut.
-- **Works with what you already run:** Any OpenAI-compatible `POST /v1/chat/completions` upstream — llama.cpp, Ollama, LM Studio, vLLM, TGI.
-- **Pluggable middleware:** Wrap an existing service with `airlock serve`, or import the Payment Middleware for Workers, Node/Fly, or FastAPI/Starlette.
-- **Open source, day one:** Apache-2.0. CLI and Recipes are self-hostable. The paid product is the dashboard we operate.
+- **Harness-agnostic:** wrap **smolagents, LangGraph, CrewAI, the OpenAI Agents SDK, or the Claude Agent SDK** behind one shared surface. A new framework is a ~30-line adapter.
+- **OpenAI-compatible:** the deployed agent speaks `/v1/chat/completions`, so any existing chat client or SDK works unchanged — the multi-step run's final answer is the completion.
+- **You own the model:** the model is a dependency you supply via `OPENAI_API_BASE` (self-hosted vLLM/llama.cpp, a fast OS-model provider, or Anthropic for Claude). airlock never hosts inference — pick fast providers for speed; the same open weights, far cheaper than self-hosting.
+- **Direct settlement:** USDC goes caller-wallet → your wallet on Base. No custody, no KYC, no revenue cut.
+- **Open source, day one:** Apache-2.0. Run a fully open stack with zero airlock-operated infrastructure.
 
 ## Getting Started
 
-### Prerequisites
-
-A local LLM that speaks OpenAI's `/v1/chat/completions`. Any of these work out of the box:
-
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) (`llama-server`)
-- [Ollama](https://ollama.com)
-- [LM Studio](https://lmstudio.ai)
-- [vLLM](https://github.com/vllm-project/vllm)
-
-You'll also want an EVM wallet address for receiving USDC on Base.
-
-### 30-second dev quickstart
-
 ```bash
-# 1. Wrap your local model with payment + reporting
-npx -y @airlockhq/cli serve \
-  --upstream http://localhost:8080 \
-  --port 3000 \
-  --wallet 0xYourWalletAddress \
-  --price 0.001
+# 1. Scaffold an agentic service for your framework (Fly target)
+npx -y @airlockhq/cli init my-analyst --target=fly --agent=langgraph
 
-# 2. Make it public
-cloudflared tunnel --url http://localhost:3000
+# 2. Drop your agent into adapter.py (run its full loop), point at a model
+pip install -r requirements.txt
+export OPENAI_API_BASE=http://localhost:8080/v1   # local llama in dev
+
+# 3. Run it — any OpenAI client can now call it
+python app.py
+curl -s localhost:3000/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"messages":[{"role":"user","content":"analyze TSLA"}]}'
 ```
 
-Unpaid callers get HTTP `402 Payment Required`. Paid callers' USDC lands in your wallet on Base.
+### Supported harnesses
 
-For the full local-LLM walkthrough (llama.cpp + Metal on a Mac), see [`docs/llama-cpp-on-fly.md`](./docs/llama-cpp-on-fly.md).
+| `--agent=` | Framework | Example |
+| --- | --- | --- |
+| `smolagents` | Hugging Face smolagents (code agents) | [`examples/smolagent-local`](./examples/smolagent-local/) |
+| `langgraph` | LangGraph | [`examples/langgraph-agent`](./examples/langgraph-agent/) |
+| `crewai` | CrewAI | [`examples/crewai-agent`](./examples/crewai-agent/) |
+| `openai-agents` | OpenAI Agents SDK | [`examples/openai-agents-agent`](./examples/openai-agents-agent/) |
+| `claude` | Claude Agent SDK | [`examples/claude-agent`](./examples/claude-agent/) |
 
-### Production deploy
+Each example is a complete, forkable reference: the adapter binds the harness to the shared `airlock-agent` surface, mounts payment in-process, and serves an [`airlock-config`](https://github.com/Okohedeki/airlock-config) discovery bundle if present.
 
-Local `serve` is bottlenecked by your laptop's tk/s. For real traffic, run the model on a GPU box you own. Fly.io is the v1 default; Cloudflare Workers is the alternative for stateless TS agents.
+### Deploy
 
 ```bash
-# In your agent's project directory
-npx -y @airlockhq/cli init my-agent --target=fly
-# Edit .airlock/config.toml — set payment.wallet to your address
-
+npx -y @airlockhq/cli secret set OPENAI_API_BASE=… OPENAI_API_KEY=…   # → fly secrets
 npx -y @airlockhq/cli doctor          # validate
-npx -y @airlockhq/cli deploy          # wraps `fly deploy`
-npx -y @airlockhq/cli login           # GitHub device-flow → dashboard
-npx -y @airlockhq/cli sync            # register project with the dashboard
+npx -y @airlockhq/cli deploy          # wraps `fly deploy` → https://<app>.fly.dev
 ```
 
-You now have a public, paid endpoint on Fly, and the dashboard at `http://localhost:8787/projects/<id>` shows revenue, paid calls, unique callers, and per-call request/response detail.
+Your agent now lives at a public URL on **your** Fly account. airlock only ran `fly deploy` — it never touches your traffic.
+
+### Just wrapping a model? (dev convenience)
+
+If you only want to put a paywall in front of a local OpenAI-compatible model, `serve` is a dev-only proxy:
+
+```bash
+airlock serve --upstream http://localhost:8080 --no-payment --tunnel   # bundled cloudflared → public URL
+```
 
 ## CLI
 
 ```bash
-airlock serve --upstream http://localhost:8080 --port 3000 --wallet 0x... --price 0.001
-airlock init my-agent --target=fly                  # scaffold .airlock/config.toml + Dockerfile
-airlock doctor                                      # validate config + upstream reachability
-airlock deploy                                      # wraps `fly deploy` / `wrangler deploy`
-airlock login                                       # GitHub device-flow → dashboard auth
-airlock sync                                        # register project with the dashboard
-airlock whoami                                      # show authed identity
+airlock init my-agent --target=fly --agent=langgraph   # scaffold an agentic service
+airlock serve --upstream http://localhost:8080 --tunnel # DEV-ONLY proxy for a local model
+airlock dev -p 3000                                     # public Cloudflare tunnel to a local agent
+airlock doctor                                          # validate config + report discovery bundle
+airlock deploy                                          # wraps `fly deploy` / `wrangler deploy`
+airlock secret set OPENAI_API_KEY=…                     # → fly/wrangler secrets
+airlock login / sync / whoami                           # dashboard auth + project registration
 ```
 
-See the [full CLI reference](./docs/cli.md) for every flag.
+See the [full CLI reference](./docs/cli.md).
 
 ## Docs
 
 |     |     |
 | --- | --- |
-| [`docs/llama-cpp-on-fly.md`](./docs/llama-cpp-on-fly.md) | End-to-end: llama.cpp locally → containerized on Fly GPU → paywalled. |
-| [`docs/cli.md`](./docs/cli.md) | Every command, every flag, what it shells out to. |
-| [`docs/payment.md`](./docs/payment.md) | Payment Middleware reference: config schema, flat vs per-token, wiring into Workers / Express / FastAPI. |
-| [`examples/local-llm-agent`](./examples/local-llm-agent/) | Runnable end-to-end demo (Ollama-fronted). |
-| [`docs/adr/`](./docs/adr/) | Locked design decisions: hosted dev tunnel, dev-free / prod-paid pricing, two Targets at v1, OSS-first, x402 over Stripe. |
+| [`examples/`](./examples/) | Forkable agent references for all five harnesses. |
+| [`docs/cli.md`](./docs/cli.md) | Every command and flag. |
+| [`docs/payment.md`](./docs/payment.md) | Payment Middleware reference: config schema, flat vs per-token. |
+| [`docs/llama-cpp-on-fly.md`](./docs/llama-cpp-on-fly.md) | Running a local model + the dev `serve` loop. |
+| [`docs/adr/`](./docs/adr/) | Locked decisions: never hold prod traffic, harness adapters, never host inference, x402. |
 
 ## What airlock is, what it isn't
 
-**It is:**
+**It is:** a way to deploy an agent (any harness) behind an OpenAI-compatible, paywalled URL on your own cloud; a shared runtime (`airlock-agent`) + per-harness adapters; payment middleware (Workers, Node/Fly, FastAPI); a CLI that wraps `flyctl` / `wrangler`; a dashboard for paid calls and revenue.
 
-- A CLI that wraps `wrangler` / `flyctl` with airlock-aware defaults for deploys.
-- A local HTTP wrapper (`airlock serve`) that adds x402 + dashboard reporting in front of any OpenAI-compatible upstream.
-- Three Payment Middlewares — `@airlockhq/payment-workers`, `@airlockhq/payment-fly-node`, `airlock-payment` (PyPI) — for containers you build yourself.
-- A dashboard backend that tracks projects, calls, and revenue per GitHub identity.
+**It isn't:** a hosted inference runtime ([ADR-0008](./docs/adr/0008-airlock-never-hosts-inference.md) — the model is yours); a custodian (USDC settles wallet-to-wallet); a thing in your prod request path ([ADR-0001](./docs/adr/0001-we-operate-the-hosted-dev-tunnel.md)). Wallet creation/funding lives in a separate repo, `airlock-crypto` ([ADR-0006](./docs/adr/0006-wallets-in-airlock-crypto.md)).
 
-**It isn't:**
+## Discovery — composes with `airlock-config`
 
-- A hosted inference runtime. Your model runs on your laptop (dev) or in your cloud account (prod). airlock never sits in the prod request path.
-- A custodian. Payments settle on-chain from caller wallet to publisher wallet directly.
-- A KYC / payout service. Wallets are wallets.
-
-This isn't going to change. See [ADR-0001](./docs/adr/0001-we-operate-the-hosted-dev-tunnel.md) for the "never hold prod traffic" invariant and [ADR-0005](./docs/adr/0005-x402-for-monetization.md) for the x402 rationale.
-
-## Composes with agent contracts
-
-```
-agent contract files          airlock (this repo)
-  contract.yaml      ──►       reads for metadata
-  build → bundle     ──►       serves at /.well-known/contract.yaml
-  codegen → stubs    ──►       wires into the deployed entry point
-```
-
-airlock treats agent-contract files as immutable inputs and never modifies them. If your agent isn't contract-aware, that's fine — MCP, A2A, OpenAI tools, and plain REST all work.
+[`airlock-config`](https://github.com/Okohedeki/airlock-config) is the sister discovery layer: a publisher declares an agent's skills, pricing, region, and compliance in `airlock-config.yaml` and `airlock-config build` emits a static bundle. airlock **serves that bundle's well-known files automatically** when present, so other agents discover yours without coordination. It's optional — deploy works fine without a contract.
 
 ## Development
 
-Monorepo package map:
-
-- `packages/cli` — the `airlock` CLI (`serve`, `init`, `doctor`, `deploy`, `login`, `sync`)
-- `packages/server` — dashboard backend (GitHub OAuth, projects, inspect store) on `:8787`
-- `packages/payment-core` — shared x402 envelope + config schema + ledger interface
-- `packages/payment-workers` — Payment Middleware for Cloudflare Workers
-- `packages/payment-fly-node` — Payment Middleware for Node / Express on Fly
-- `python/payment-fly` — `airlock-payment` (PyPI) for FastAPI / Starlette
-- `examples/local-llm-agent` — runnable demo wrapping a local Ollama upstream
-
-Common commands:
+```
+packages/cli            the `airlock` CLI (init/serve/dev/deploy/doctor/login/sync)
+packages/server         dashboard backend (GitHub OAuth, projects, inspect store)
+packages/payment-core   shared x402 + usage units + Wallet/Sandbox seams
+packages/payment-*      Payment Middleware (Workers, Node/Fly)
+python/payment-fly      airlock-payment (FastAPI/Starlette middleware)
+python/agent-runtime    airlock-agent (OpenAI-chat surface + HarnessAdapter)
+examples/*-agent        forkable agent references, one per harness
+```
 
 ```bash
-pnpm install              # install workspace deps
-pnpm build                # build every package
-pnpm typecheck            # repo-wide typecheck
-pnpm test                 # repo-wide vitest
-pnpm check                # biome lint + format check
-
-# Python middleware
-cd python/payment-fly && pip install -e '.[dev]' && pytest
+pnpm install && pnpm build && pnpm typecheck && pnpm test   # JS/TS workspace
+# Python: airlock-agent surface + adapters + middleware (pytest)
 ```
 
 ---

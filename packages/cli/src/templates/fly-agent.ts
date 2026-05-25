@@ -7,14 +7,27 @@
 
 import type { TemplateFile } from './fly-node.js';
 
-export type AgentHarness = 'smolagents' | 'langgraph' | 'crewai';
+export type AgentHarness =
+  | 'smolagents'
+  | 'langgraph'
+  | 'crewai'
+  | 'openai-agents'
+  | 'claude';
 
-export const AGENT_HARNESSES: readonly AgentHarness[] = ['smolagents', 'langgraph', 'crewai'];
+export const AGENT_HARNESSES: readonly AgentHarness[] = [
+  'smolagents',
+  'langgraph',
+  'crewai',
+  'openai-agents',
+  'claude',
+];
 
 const HARNESS_DEPS: Record<AgentHarness, string> = {
   smolagents: 'smolagents==1.25.*',
   langgraph: 'langgraph>=0.2,<1\nlangchain-openai>=0.2,<1',
   crewai: 'crewai>=0.80,<1',
+  'openai-agents': 'openai-agents>=0.1,<1',
+  claude: 'claude-agent-sdk>=0.1,<1',
 };
 
 export function flyAgentStarter(name: string, harness: AgentHarness): TemplateFile[] {
