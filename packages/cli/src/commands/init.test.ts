@@ -120,7 +120,29 @@ describe('runInit', () => {
     expect(cfg.agent).toEqual({ harness: 'langgraph', entrypoint: 'agents:build_agent' });
     const docker = await readFile(join(cwd, 'Dockerfile'), 'utf8');
     expect(docker).toContain('python", "-m", "airlock_agent');
+    // airlock runtime is vendored + pip-installed from local source (Blocker 0:
+    // the packages aren't on PyPI), not listed as a bare requirement.
+    expect(docker).toContain('/app/.airlock/vendor/payment-fly');
+    expect(docker).toContain('/app/.airlock/vendor/agent-runtime');
     const reqs = await readFile(join(cwd, 'requirements.txt'), 'utf8');
-    expect(reqs).toContain('airlock-agent');
+    expect(reqs).not.toMatch(/^airlock-agent\b/m);
+    // Both packages were copied into the build context with their pyproject.
+    await expect(
+      readFile(join(cwd, '.airlock/vendor/agent-runtime/pyproject.toml'), 'utf8'),
+    ).resolves.toContain('name = "airlock-agent"');
+    await expect(
+      readFile(join(cwd, '.airlock/vendor/payment-fly/pyproject.toml'), 'utf8'),
+    ).resolves.toContain('name = "airlock-payment"');
+  });
+
+  it('--detect strips an unresolvable bare airlock-agent line from requirements', async () => {
+    const { writeFile: wf } = await import('node:fs/promises');
+    await wf(join(cwd, 'requirements.txt'), 'smolagents==1.25.*\nairlock-agent\nairlock-payment\n');
+    await wf(join(cwd, 'agents.py'), 'from smolagents import CodeAgent\nagent = CodeAgent()\n');
+    await runInit({ cwd, name: 'x', target: 'fly', detect: true });
+    const reqs = await readFile(join(cwd, 'requirements.txt'), 'utf8');
+    expect(reqs).toContain('smolagents');
+    expect(reqs).not.toMatch(/^airlock-agent\b/m);
+    expect(reqs).not.toMatch(/^airlock-payment\b/m);
   });
 });
