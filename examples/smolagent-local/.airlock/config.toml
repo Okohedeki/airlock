@@ -3,6 +3,10 @@ name = "smolagent-local"
 target = "fly"
 schemaVersion = 1
 
+[agent]
+harness = "smolagents"
+entrypoint = "agent:build_agent"
+
 [payment]
 enabled = false
 # placeholder — replace with your wallet before enabling payment

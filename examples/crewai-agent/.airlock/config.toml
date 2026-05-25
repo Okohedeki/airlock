@@ -3,6 +3,10 @@ name = "crewai-agent"
 target = "fly"
 schemaVersion = 1
 
+[agent]
+harness = "crewai"
+entrypoint = "agent:build_crew"
+
 [payment]
 enabled = false
 wallet = "0x0000000000000000000000000000000000000001"

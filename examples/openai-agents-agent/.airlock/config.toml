@@ -3,6 +3,10 @@ name = "openai-agents-agent"
 target = "fly"
 schemaVersion = 1
 
+[agent]
+harness = "openai-agents"
+entrypoint = "agent:build_agent"
+
 [payment]
 enabled = false
 wallet = "0x0000000000000000000000000000000000000001"
