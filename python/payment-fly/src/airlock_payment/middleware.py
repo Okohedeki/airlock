@@ -94,6 +94,7 @@ class PaymentMiddleware(BaseHTTPMiddleware):
         ledger: CreditLedger | None = None,
         reporter: CallReporter | None = None,
         usage_extractor: UsageExtractor | None = None,
+        exempt_paths: list[str] | None = None,
     ) -> None:
         super().__init__(app)
         self.config = config
@@ -103,11 +104,23 @@ class PaymentMiddleware(BaseHTTPMiddleware):
         self.ledger: CreditLedger = ledger or InMemoryCreditLedger()
         self.reporter = reporter
         self.usage_extractor: UsageExtractor = usage_extractor or default_usage_extractor
+        # Paths that are always free (health checks, discovery /.well-known, info).
+        # An exempt entry matches the exact path or any sub-path under it.
+        self.exempt_paths: list[str] = exempt_paths or []
+
+    def _is_exempt(self, path: str) -> bool:
+        for p in self.exempt_paths:
+            if p == "/":
+                if path == "/":
+                    return True
+            elif path == p or path.startswith(p.rstrip("/") + "/"):
+                return True
+        return False
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        if not self.config.enabled:
+        if not self.config.enabled or self._is_exempt(request.url.path):
             return await call_next(request)
 
         required = build_payment_required(self.config, str(request.url))
