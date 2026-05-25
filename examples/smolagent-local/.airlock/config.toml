@@ -1,0 +1,14 @@
+[project]
+name = "smolagent-local"
+target = "fly"
+schemaVersion = 1
+
+[payment]
+enabled = false
+# placeholder — replace with your wallet before enabling payment
+wallet = "0x0000000000000000000000000000000000000001"
+network = "base-sepolia"
+facilitatorUrl = "https://facilitator.x402.org"
+description = "Call this agent"
+mode = "flat"
+priceUsdc = "0.001"
