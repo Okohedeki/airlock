@@ -19,6 +19,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Lets a deployed agent BUY from other agents (airlock_agent.tools.buy). Optional
+# because airlock-crypto needs Python >=3.10; non-paying agents stay on >=3.9.
+crypto = ["airlock-crypto>=0"]
 dev = [
     "pytest>=8",
     "httpx>=0.27,<1",

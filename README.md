@@ -159,12 +159,13 @@ See the [full CLI reference](./docs/cli.md).
 
 ## Roadmap & To-Do
 
-**Shipped:** self-host (`airlock up`) with a public Cloudflare tunnel · config-driven harness binding for all five harnesses · in-process x402 payment · capped-parallel concurrency via per-call isolation + a bounded queue ([ADR-0010](./docs/adr/0010-per-call-agent-isolation.md), `scripts/concurrency-check.sh`).
+**Shipped:** self-host (`airlock up`) with a public Cloudflare tunnel · config-driven harness binding for all five harnesses · in-process x402 payment · capped-parallel concurrency via per-call isolation + a bounded queue ([ADR-0010](./docs/adr/0010-per-call-agent-isolation.md), `scripts/concurrency-check.sh`) · **`airlock-crypto` v1** — a Python-first x402 transaction layer so an agent can buy *and* sell from other agents (self-custody wallet + autopay + spend cap; [ADR-0006](./docs/adr/0006-wallets-in-airlock-crypto.md)).
 
 What's left, grouped. Items marked **(operator prereq)** need an airlock-owned account/credential before they can ship.
 
-**`airlock-crypto` — the transactions package**
-- [ ] Build the sister `airlock-crypto` package that implements the `WalletProvider` seam (`payment-core/src/crypto.ts`, today a throwing stub): wallet create / fund / transfer, on-chain USDC settlement, prepaid Credit Balance, and per-token billing. Keeps custody and key handling out of the core repo ([ADR-0006](./docs/adr/0006-wallets-in-airlock-crypto.md)).
+**`airlock-crypto` — next**
+- [ ] Publish `airlock-crypto` to PyPI + its own repo; wire the optional `airlock-agent[crypto]` buy tool into the harness adapters so a model can call `buy(url)`.
+- [ ] Implement the TypeScript `WalletProvider` (`payment-core/src/crypto.ts`, today a stub) over the same x402 libs for TS callers; prepaid Credit Balance + per-token billing.
 
 **`airlock-directory` — searchable agent registry ("DNS for agents")**
 - [ ] A central index a publisher opts into with a flag (e.g. `airlock up --list` / `directory.searchable = true`) so their deployed agent becomes discoverable and searchable by capability, price, and region. Composes with [`airlock-config`](https://github.com/Okohedeki/airlock-config) — the per-agent bundle is the record, the directory is the searchable index across them. **Opt-in only — private by default.**
