@@ -66,6 +66,10 @@ _Avoid_: Settler, processor
 For per-token pricing, the pre-funded USDC balance a Caller holds against a Publisher's Agent. Funded via a single upfront x402 payment, drawn down per call by `(tokens_used × price_per_token_usdc)` as reported in the Agent's `X-Tokens-Used` response header. Callers top up by paying again when the balance falls below `min_credit_balance_usdc`.
 _Avoid_: Prepaid balance, escrow
 
+**Concurrency cap** *(deploy path)*:
+The maximum number of in-flight `/v1/chat/completions` runs one deployed Agent executes in parallel (`AIRLOCK_MAX_CONCURRENCY`). Callers beyond the cap queue (FIFO); callers beyond the queue bound, or who wait too long, get HTTP 429. Distinct from ADR-0002's **concurrent tunnels** (how many Agents a Publisher may expose at once) — the cap is *per Agent*, about simultaneous Callers, not a count of tunnels.
+_Avoid_: throughput, rate limit (that's request-rate over time, not simultaneity), pool size
+
 ## Flagged ambiguities
 
 **"Deploy"** has two valid uses:

@@ -57,4 +57,25 @@ describe('resolveUpPlan', () => {
     const plan = resolveUpPlan(base, { python: '/tmp/venv/bin/python' });
     expect(plan.python).toBe('/tmp/venv/bin/python');
   });
+
+  it('maps concurrency options to AIRLOCK_* env vars', () => {
+    const plan = resolveUpPlan(base, {
+      maxConcurrency: 8,
+      maxQueue: 100,
+      queueTimeout: 15,
+      buildPerCall: false,
+    });
+    expect(plan.env.AIRLOCK_MAX_CONCURRENCY).toBe('8');
+    expect(plan.env.AIRLOCK_MAX_QUEUE).toBe('100');
+    expect(plan.env.AIRLOCK_QUEUE_TIMEOUT_S).toBe('15');
+    expect(plan.env.AIRLOCK_BUILD_PER_CALL).toBe('0');
+  });
+
+  it('omits concurrency env when not set (runtime keeps its own defaults)', () => {
+    const plan = resolveUpPlan(base);
+    expect(plan.env.AIRLOCK_MAX_CONCURRENCY).toBeUndefined();
+    expect(plan.env.AIRLOCK_MAX_QUEUE).toBeUndefined();
+    expect(plan.env.AIRLOCK_QUEUE_TIMEOUT_S).toBeUndefined();
+    expect(plan.env.AIRLOCK_BUILD_PER_CALL).toBeUndefined();
+  });
 });

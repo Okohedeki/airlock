@@ -8,6 +8,7 @@ Harness means writing a small adapter, not touching this file. See ADR-0007.
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from typing import Any
@@ -17,6 +18,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from .adapter import AgentRunResult, HarnessAdapter
+from .concurrency import BoundedGate, QueueFull
 from .wellknown import mount_wellknown, read_contract_metadata
 
 
@@ -44,11 +46,32 @@ def create_app(
     payment_config: Any | None = None,
     payment_kwargs: dict[str, Any] | None = None,
     dist_dir: str = "dist",
+    max_concurrency: int = 1,
+    max_queue: int = 0,
+    queue_timeout_s: float = 30.0,
 ) -> FastAPI:
     from airlock_payment import USAGE_UNITS_HEADER
 
     app = FastAPI(title=name)
     metadata = read_contract_metadata(dist_dir)
+
+    def _ensure_gate() -> BoundedGate:
+        # Lazily built on the running loop (first request) so the semaphore binds
+        # to the right loop without depending on startup events firing — which
+        # they don't under a plain (non-context-manager) TestClient.
+        gate = getattr(app.state, "run_gate", None)
+        if gate is None:
+            gate = BoundedGate(max_concurrency, max_queue, queue_timeout_s)
+            app.state.run_gate = gate
+            try:
+                import anyio
+
+                limiter = anyio.to_thread.current_default_thread_limiter()
+                if limiter.total_tokens < max_concurrency + 1:
+                    limiter.total_tokens = max_concurrency + 1
+            except Exception:
+                pass
+        return gate
 
     @app.get("/")
     def info() -> dict[str, Any]:
@@ -57,6 +80,7 @@ def create_app(
             "shape": "openai",
             "endpoints": ["POST /v1/chat/completions"],
             "payment": {"enabled": bool(payment_config and payment_config.enabled)},
+            "concurrency": {"max": max_concurrency, "queue": max_queue},
             "discovery": "/.well-known/airlock-config.yaml" if metadata is not None else None,
             "contract": metadata,
         }
@@ -69,8 +93,17 @@ def create_app(
         body = await request.json()
         messages = body.get("messages") or []
         model = body.get("model") or name
-        # Run the Harness's full native loop off the event loop (adapters are sync).
-        result: AgentRunResult = await run_in_threadpool(adapter.run, messages)
+        gate = _ensure_gate()
+        # Run the Harness's full native loop off the event loop (adapters are sync),
+        # bounded by the run-gate: up to N in parallel, the rest queue (FIFO),
+        # overflow / timeout is shed with 429.
+        try:
+            async with gate:
+                result: AgentRunResult = await run_in_threadpool(adapter.run, messages)
+        except (QueueFull, asyncio.TimeoutError):
+            return JSONResponse(
+                {"error": "agent at capacity, retry shortly"}, status_code=429
+            )
         headers: dict[str, str] = {}
         if result.units and result.units > 0:
             headers[USAGE_UNITS_HEADER] = str(result.units)

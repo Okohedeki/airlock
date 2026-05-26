@@ -37,6 +37,12 @@ export interface AirlockConfig {
     harness: string;
     /** Python import path "module:attr" to the agent object or a build_* factory. */
     entrypoint: string;
+    /**
+     * Rebuild a fresh agent wrapper per request for concurrency isolation
+     * (ADR-0010). Defaults at runtime to true for `build_*` factory entrypoints,
+     * false for bare instances. Set false to force one shared object.
+     */
+    build_per_call?: boolean;
   };
 }
 

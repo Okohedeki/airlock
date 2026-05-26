@@ -25,6 +25,14 @@ export interface UpOptions {
   noPayment?: boolean;
   /** Run the agent locally but don't open a public tunnel. */
   noTunnel?: boolean;
+  /** Max agent runs in flight at once before callers queue (AIRLOCK_MAX_CONCURRENCY). */
+  maxConcurrency?: number;
+  /** Max callers waiting beyond the running set before new ones get 429 (AIRLOCK_MAX_QUEUE). */
+  maxQueue?: number;
+  /** Seconds a caller waits in the queue before a 429 (AIRLOCK_QUEUE_TIMEOUT_S). */
+  queueTimeout?: number;
+  /** Force per-call agent rebuild on/off (AIRLOCK_BUILD_PER_CALL); default inferred at runtime. */
+  buildPerCall?: boolean;
   /** Injectables for tests. */
   spawnImpl?: typeof spawn;
   startTunnelImpl?: typeof startTunnel;
@@ -66,6 +74,14 @@ export function resolveUpPlan(config: AirlockConfig, opts: UpOptions = {}): UpPl
     env.PAYMENT_NETWORK = p.network;
     if (p.mode === 'flat') env.PRICE_USDC = p.priceUsdc;
   }
+
+  // Concurrency knobs — only set when given, so the runtime keeps its own
+  // defaults otherwise. A bare `AIRLOCK_MAX_CONCURRENCY=N airlock up` also works
+  // because the spawned process inherits process.env.
+  if (opts.maxConcurrency !== undefined) env.AIRLOCK_MAX_CONCURRENCY = String(opts.maxConcurrency);
+  if (opts.maxQueue !== undefined) env.AIRLOCK_MAX_QUEUE = String(opts.maxQueue);
+  if (opts.queueTimeout !== undefined) env.AIRLOCK_QUEUE_TIMEOUT_S = String(opts.queueTimeout);
+  if (opts.buildPerCall !== undefined) env.AIRLOCK_BUILD_PER_CALL = opts.buildPerCall ? '1' : '0';
 
   return {
     python: opts.python ?? process.env.AIRLOCK_PYTHON ?? 'python3',

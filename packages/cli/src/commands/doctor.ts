@@ -101,6 +101,24 @@ export async function runDoctor(cwd: string): Promise<DoctorReport> {
       });
     } else {
       findings.push({ level: 'ok', message: `agent: ${harness} → ${entrypoint}` });
+      const leaf = entrypoint.split(':')[1]?.split('.').pop() ?? '';
+      const isFactory = /^(build_|make_|create_|get_)/.test(leaf);
+      const perCall = config.agent.build_per_call ?? isFactory;
+      if (perCall) {
+        findings.push({
+          level: 'ok',
+          message:
+            'concurrency: per-call rebuild on (fresh agent per request, isolated). ' +
+            'Keep the model out-of-process (a model server / remote API) so rebuild is cheap and parallel.',
+        });
+      } else {
+        findings.push({
+          level: 'warn',
+          message:
+            'concurrency: per-call rebuild off (one shared agent). Stateful harnesses clamp to 1 ' +
+            'in-flight run unless AIRLOCK_ALLOW_UNSAFE_PARALLEL=1; expose a build_* factory to parallelize.',
+        });
+      }
     }
   }
 

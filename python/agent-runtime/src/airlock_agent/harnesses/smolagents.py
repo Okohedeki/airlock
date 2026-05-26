@@ -1,6 +1,8 @@
 """Driver for a smolagents agent (e.g. CodeAgent). Operates on a pre-built agent
-(build-once), runs its full native loop with reset=True for statelessness, and
-counts usage as a per-call delta (the monitor accumulates across runs).
+and runs its full native loop. Usage is read from THIS run's result
+(`RunResult.token_usage`, summed over the run's own steps) rather than a delta on
+the agent's cumulative `monitor` — the old delta raced under concurrency and
+mis-billed. See ADR-0010.
 """
 
 from __future__ import annotations
@@ -8,15 +10,6 @@ from __future__ import annotations
 from typing import Any
 
 from ..adapter import AgentRunResult, messages_to_task
-
-
-def _token_total(agent: Any) -> int:
-    m = getattr(agent, "monitor", None)
-    if m is None:
-        return 0
-    return int(getattr(m, "total_input_token_count", 0) or 0) + int(
-        getattr(m, "total_output_token_count", 0) or 0
-    )
 
 
 def _steps(agent: Any) -> int:
@@ -27,12 +20,24 @@ def _steps(agent: Any) -> int:
 
 
 def drive(agent: Any, messages: list[dict[str, Any]]) -> AgentRunResult:
-    before = _token_total(agent)
+    task = messages_to_task(messages)
+    # smolagents >= ~1.10: return_full_result yields a RunResult whose token_usage
+    # is summed over THIS run's steps — no shared cumulative counter.
     try:
-        answer = agent.run(messages_to_task(messages), reset=True)
+        result = agent.run(task, reset=True, return_full_result=True)
     except TypeError:
-        answer = agent.run(messages_to_task(messages))
-    delta = _token_total(agent) - before
-    if delta > 0:
-        return AgentRunResult(content=str(answer), units=delta, unit_label="tokens")
-    return AgentRunResult(content=str(answer), units=_steps(agent), unit_label="steps")
+        # Older smolagents (no return_full_result / no reset kwarg).
+        try:
+            answer = agent.run(task, reset=True)
+        except TypeError:
+            answer = agent.run(task)
+        return AgentRunResult(content=str(answer), units=_steps(agent), unit_label="steps")
+
+    output = getattr(result, "output", result)
+    tu = getattr(result, "token_usage", None)
+    total = int(getattr(tu, "total_tokens", 0) or 0) if tu is not None else 0
+    if total > 0:
+        return AgentRunResult(content=str(output), units=total, unit_label="tokens")
+    # token_usage is None when a step lacks usage (some local models); bill by steps.
+    n = len(getattr(result, "steps", []) or []) or _steps(agent)
+    return AgentRunResult(content=str(output), units=n, unit_label="steps")

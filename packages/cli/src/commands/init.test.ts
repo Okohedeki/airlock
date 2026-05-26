@@ -90,6 +90,27 @@ describe('runInit', () => {
     expect(raw).toContain('min_machines_running = 1');
   });
 
+  it('emits a per-machine concurrency block + horizontal autoscale in the fly recipe', async () => {
+    const result = await runInit({ cwd, name: 'scaler', target: 'fly' });
+    if (!result.recipePath) throw new Error('recipePath missing');
+    const raw = await readFile(result.recipePath, 'utf8');
+    expect(raw).toContain('[http_service.concurrency]');
+    expect(raw).toContain('soft_limit');
+    expect(raw).toContain('hard_limit');
+    expect(raw).toContain('max_machines_running');
+  });
+
+  it('keeps the runtime Dockerfile on a single-worker CMD (scale via machines)', async () => {
+    const { writeFile: wf } = await import('node:fs/promises');
+    await wf(join(cwd, 'requirements.txt'), 'langgraph>=0.2\n');
+    await wf(join(cwd, 'agents.py'), 'def build_agent():\n    return object()\n');
+    await runInit({ cwd, name: 'single', target: 'fly', detect: true });
+    const docker = await readFile(join(cwd, 'Dockerfile'), 'utf8');
+    expect(docker).toContain('CMD ["python", "-m", "airlock_agent"]');
+    expect(docker).not.toContain('--workers');
+    expect(docker).toContain('AIRLOCK_MAX_CONCURRENCY');
+  });
+
   it('scaffolds a harness-backed agentic service with --agent', async () => {
     const result = await runInit({ cwd, name: 'my-analyst', target: 'fly', harness: 'langgraph' });
     expect(result.agentPaths?.length).toBeGreaterThan(0);

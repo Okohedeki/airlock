@@ -1,32 +1,61 @@
 """`python -m airlock_agent` — the container entry point.
 
-Reads `.airlock/config.toml [agent]`, imports the developer's agent once, selects
-the built-in driver for `harness`, and serves the OpenAI-compatible surface. The
+Reads `.airlock/config.toml [agent]`, imports the developer's agent, selects the
+built-in driver for `harness`, and serves the OpenAI-compatible surface. The
 developer writes no app.py and no adapter — just the `[agent]` config block.
+
+Isolation under concurrency comes from PER-CALL REBUILD (ADR-0010): for a factory
+entrypoint the runtime constructs a fresh agent wrapper each request around the
+one shared (out-of-process) model, so concurrent requests never share state. If
+the entrypoint is a bare instance, or its build is slow enough to look like it
+loads weights in-process, we fall back to a single shared object governed by the
+per-driver reentrancy policy.
 """
 
 from __future__ import annotations
 
+import logging
 import os
+import time
 from typing import Any
 
 from .adapter import AgentRunResult
+from .concurrency import (
+    read_build_per_call,
+    read_max_concurrency,
+    read_max_queue,
+    read_queue_timeout,
+    resolve_policy,
+)
 from .config import read_agent_config
-from .harnesses import Driver, get_driver
-from .loader import resolve_entrypoint
+from .harnesses import Driver, get_driver, is_reentrant
+from .loader import Builder, resolve_builder
 from .serve import config_from_env
 from .surface import create_app
 
+log = logging.getLogger("airlock_agent")
+
+# A startup build slower than this looks like in-process weight loading; per-call
+# rebuild would reload it every request, so we disable per-call rebuild and warn.
+SLOW_BUILD_SECONDS = 1.5
+
 
 class _DriverAdapter:
-    """Wraps a (driver, agent-object) pair as a HarnessAdapter for the surface."""
+    """Wraps a (driver, Builder) pair as a HarnessAdapter for the surface.
 
-    def __init__(self, driver: Driver, obj: Any) -> None:
+    With `build_per_call`, `run` builds a fresh object each request (isolation);
+    otherwise it reuses the single object built at startup.
+    """
+
+    def __init__(self, driver: Driver, builder: Builder, sample: Any, build_per_call: bool) -> None:
         self._driver = driver
-        self._obj = obj
+        self._builder = builder
+        self._sample = sample
+        self._build_per_call = build_per_call
 
     def run(self, messages: list[dict[str, Any]]) -> AgentRunResult:
-        return self._driver(self._obj, messages)
+        obj = self._builder.build() if self._build_per_call else self._sample
+        return self._driver(obj, messages)
 
 
 def build_app(cwd: str | None = None):
@@ -38,9 +67,40 @@ def build_app(cwd: str | None = None):
             "no [agent] block in .airlock/config.toml — need `harness` and `entrypoint`. "
             "Run `airlock init` to detect and write it."
         )
-    obj = resolve_entrypoint(entrypoint, harness)  # build-once
-    adapter = _DriverAdapter(get_driver(harness), obj)
-    return create_app(adapter, name=str(harness), payment_config=config_from_env())
+    harness = str(harness)
+    builder = resolve_builder(str(entrypoint), harness)
+
+    # Build once at startup: validates the entrypoint and times the build.
+    t0 = time.monotonic()
+    sample = builder.build()
+    build_secs = time.monotonic() - t0
+
+    build_per_call = read_build_per_call(is_factory=builder.is_factory)
+    if build_per_call and builder.is_factory and build_secs > SLOW_BUILD_SECONDS:
+        log.warning(
+            "airlock: agent build took %.1fs — looks like the model loads in-process; "
+            "disabling per-call rebuild (would reload it every request). Run your model "
+            "as a server (e.g. llama-server --parallel) to enable parallel isolation.",
+            build_secs,
+        )
+        build_per_call = False
+
+    if build_per_call:
+        # Fresh object per request → every harness is isolated → uniform cap.
+        max_concurrency = read_max_concurrency()
+    else:
+        # One shared object → fall back to the per-driver reentrancy policy.
+        max_concurrency = resolve_policy(reentrant=is_reentrant(harness)).effective
+
+    adapter = _DriverAdapter(get_driver(harness), builder, sample, build_per_call)
+    return create_app(
+        adapter,
+        name=harness,
+        payment_config=config_from_env(),
+        max_concurrency=max_concurrency,
+        max_queue=read_max_queue(),
+        queue_timeout_s=read_queue_timeout(),
+    )
 
 
 def main() -> None:

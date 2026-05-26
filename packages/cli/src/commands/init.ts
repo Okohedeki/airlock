@@ -49,6 +49,11 @@ ENV PORT=3000
 EXPOSE 3000
 # Config-driven: reads .airlock/config.toml [agent] and drives your harness.
 # Model is publisher-supplied — set OPENAI_API_BASE / OPENAI_API_KEY (ADR-0008).
+# Concurrency: AIRLOCK_MAX_CONCURRENCY caps parallel runs (default 4); callers
+# beyond it queue, beyond AIRLOCK_MAX_QUEUE they get 429. For real parallelism
+# keep the model OUT OF PROCESS (a model server / remote API), not loaded in the
+# factory — the runtime rebuilds a fresh agent per request for isolation (ADR-0010).
+# Scale out via Fly machines (see fly.toml), not extra uvicorn worker processes.
 CMD ["python", "-m", "airlock_agent"]
 `;
 
@@ -114,6 +119,16 @@ primary_region = "iad"
   # Keep one machine warm to avoid cold-start latency on the first paid call.
   # Set to 0 to scale to zero (cheaper, but adds cold-start latency).
   min_machines_running = 1
+  # Horizontal scale: start more machines when a machine passes soft_limit.
+  max_machines_running = 5
+
+  # Per-machine request concurrency. Keep soft_limit ~= AIRLOCK_MAX_CONCURRENCY
+  # (the in-process parallel-run cap); requests past it spill to another machine,
+  # and hard_limit leaves headroom for the in-process queue before Fly sheds load.
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 4
+    hard_limit = 20
 `;
 
 const PAYMENT_SCAFFOLD = {

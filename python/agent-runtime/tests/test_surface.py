@@ -72,3 +72,61 @@ def test_payment_on_gates_chat_but_health_and_info_stay_free():
     # health + info + discovery exempt
     assert c.get("/healthz").status_code == 200
     assert c.get("/").status_code == 200
+
+
+# ---- concurrency: gate caps parallel runs, queues the rest, sheds overflow ----
+import asyncio  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+import httpx  # noqa: E402
+
+
+class SlowAdapter:
+    """Records the peak number of runs executing at the same instant."""
+
+    def __init__(self, sleep_s=0.15):
+        self.sleep_s = sleep_s
+        self.live = 0
+        self.peak = 0
+        self._lock = threading.Lock()
+
+    def run(self, messages):
+        with self._lock:
+            self.live += 1
+            self.peak = max(self.peak, self.live)
+        time.sleep(self.sleep_s)  # offloaded to the threadpool by run_in_threadpool
+        with self._lock:
+            self.live -= 1
+        return AgentRunResult(content="ok", units=1)
+
+
+def _fire(app, n):
+    async def go():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+            tasks = [
+                client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "x"}]})
+                for _ in range(n)
+            ]
+            return await asyncio.gather(*tasks)
+
+    return asyncio.run(go())
+
+
+def test_runs_overlap_up_to_cap_and_queue_the_rest():
+    adapter = SlowAdapter()
+    app = create_app(adapter, name="t", max_concurrency=2, max_queue=50, queue_timeout_s=10)
+    resps = _fire(app, 5)
+    assert all(r.status_code == 200 for r in resps)  # all served (queued, not dropped)
+    assert adapter.peak == 2  # never more than the cap in flight at once
+
+
+def test_flood_beyond_queue_is_shed_with_429():
+    adapter = SlowAdapter(sleep_s=0.2)
+    app = create_app(adapter, name="t", max_concurrency=1, max_queue=1, queue_timeout_s=5)
+    resps = _fire(app, 5)
+    codes = [r.status_code for r in resps]
+    assert codes.count(200) == 2  # 1 running + 1 queued
+    assert codes.count(429) == 3  # the rest shed immediately
+    assert all(r.json().get("error") for r in resps if r.status_code == 429)

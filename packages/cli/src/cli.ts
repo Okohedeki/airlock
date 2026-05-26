@@ -360,13 +360,35 @@ async function main() {
     .option('--python <bin>', 'python executable for `-m airlock_agent` (respects an active venv)')
     .option('--no-payment', 'run the agent with payment enforcement disabled')
     .option('--no-tunnel', 'run the agent locally without opening a public tunnel')
+    .option('--max-concurrency <n>', 'max agent runs in flight before callers queue')
+    .option('--max-queue <n>', 'max callers waiting beyond the running set before 429')
+    .option('--queue-timeout <s>', 'seconds a caller waits in the queue before 429')
+    .option('--no-build-per-call', 'reuse one shared agent object instead of rebuilding per request')
     .action(
-      async (opts: { port: string; python?: string; payment: boolean; tunnel: boolean }) => {
+      async (opts: {
+        port: string;
+        python?: string;
+        payment: boolean;
+        tunnel: boolean;
+        maxConcurrency?: string;
+        maxQueue?: string;
+        queueTimeout?: string;
+        buildPerCall: boolean;
+      }) => {
         const port = Number.parseInt(opts.port, 10);
         if (!Number.isFinite(port) || port <= 0) {
           console.error(`error: invalid --port "${opts.port}"`);
           process.exit(2);
         }
+        const numOpt = (raw: string | undefined, flag: string): number | undefined => {
+          if (raw === undefined) return undefined;
+          const n = Number(raw);
+          if (!Number.isFinite(n) || n < 0) {
+            console.error(`error: invalid ${flag} "${raw}"`);
+            process.exit(2);
+          }
+          return n;
+        };
         try {
           const handle = await runUp({
             cwd: process.cwd(),
@@ -374,6 +396,11 @@ async function main() {
             python: opts.python,
             noPayment: !opts.payment,
             noTunnel: !opts.tunnel,
+            maxConcurrency: numOpt(opts.maxConcurrency, '--max-concurrency'),
+            maxQueue: numOpt(opts.maxQueue, '--max-queue'),
+            queueTimeout: numOpt(opts.queueTimeout, '--queue-timeout'),
+            // commander sets buildPerCall=false only when --no-build-per-call is passed
+            buildPerCall: opts.buildPerCall === false ? false : undefined,
           });
           const shutdown = async () => {
             await handle.stop();
