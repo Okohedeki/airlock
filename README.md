@@ -157,15 +157,17 @@ See the [full CLI reference](./docs/cli.md).
 
 **It isn't:** a hosted inference runtime ([ADR-0008](./docs/adr/0008-airlock-never-hosts-inference.md) — the model is always yours, local or remote); a custodian (USDC settles wallet-to-wallet). When you self-host, airlock only operates the tunnel and stays out of your request path; airlock-hosted runs the agent loop for you but never the model. Wallet creation/funding lives in a separate repo, `airlock-crypto` ([ADR-0006](./docs/adr/0006-wallets-in-airlock-crypto.md)).
 
-## Roadmap
+## Roadmap & To-Do
 
-What's shipped today: self-host (`airlock up`) with a public Cloudflare tunnel, config-driven harness binding for all five harnesses, and in-process payment. What's next, grouped. Items marked **(operator prereq)** need an airlock-owned account/credential before they can ship.
+**Shipped:** self-host (`airlock up`) with a public Cloudflare tunnel · config-driven harness binding for all five harnesses · in-process x402 payment · capped-parallel concurrency via per-call isolation + a bounded queue ([ADR-0010](./docs/adr/0010-per-call-agent-isolation.md), `scripts/concurrency-check.sh`).
 
-**Concurrency & scale**
-- [ ] Capped-parallel request handling for one agent via **per-call isolation** (a fresh, cheap agent wrapper per request around one shared out-of-process model) — `O(N)` RAM, not one agent per caller.
-- [ ] Bounded FIFO queue (sheds load with `429` past a limit); `AIRLOCK_MAX_CONCURRENCY` cap.
-- [ ] Fix per-call state mixing in the stateful harness drivers (smolagents token accounting, crewai memory).
-- [ ] Fly `[http_service.concurrency]` + horizontal autoscale; document "run your model as a server" for true parallelism.
+What's left, grouped. Items marked **(operator prereq)** need an airlock-owned account/credential before they can ship.
+
+**`airlock-crypto` — the transactions package**
+- [ ] Build the sister `airlock-crypto` package that implements the `WalletProvider` seam (`payment-core/src/crypto.ts`, today a throwing stub): wallet create / fund / transfer, on-chain USDC settlement, prepaid Credit Balance, and per-token billing. Keeps custody and key handling out of the core repo ([ADR-0006](./docs/adr/0006-wallets-in-airlock-crypto.md)).
+
+**`airlock-directory` — searchable agent registry ("DNS for agents")**
+- [ ] A central index a publisher opts into with a flag (e.g. `airlock up --list` / `directory.searchable = true`) so their deployed agent becomes discoverable and searchable by capability, price, and region. Composes with [`airlock-config`](https://github.com/Okohedeki/airlock-config) — the per-agent bundle is the record, the directory is the searchable index across them. **Opt-in only — private by default.**
 
 **Durable self-host URL** — stable `<name>.airlock.dev` instead of the ephemeral `*.trycloudflare.com`
 - [ ] Cloudflare named-tunnel provisioner (`server/cloudflare.ts`), `POST/DELETE /api/self-host/tunnel`, `tunnel.ts` `named(token)` path, `up.ts` minted-token fetch. **(operator prereq: airlock Cloudflare account + domain + API token)**
@@ -175,14 +177,11 @@ What's shipped today: self-host (`airlock up`) with a public Cloudflare tunnel, 
 - [ ] `server/fly.ts`, `POST /api/hosted-deploy`, env-aware `exec.ts` spawner, cost guards. **(operator prereq: airlock Fly org token)**
 
 **Shared plumbing**
-- [ ] `db.ts` `mode` + per-mode columns (drop the `target` CHECK → zod validation), mode-aware `doctor`.
+- [ ] `db.ts` per-mode columns (drop the `target` CHECK → zod validation), mode-aware `doctor`.
 - [ ] ADR-0009 (dual-deploy, narrows ADR-0001) + CONTEXT / ADR-0002 / ADR-0003 updates.
 
 **Enterprise seams (interfaces only)**
 - [ ] `payment-core/auth.ts` `CallerAuthStrategy`; nullable `org_id`/`owner_kind` + stub `orgs`; extend `InspectCallSchema` (shape/request_id/settlement_tx/event_version); doc the `exec.ts` Target switch as the 3rd-Target extension point.
-
-**Payments / crypto** (with the `airlock-crypto` repo)
-- [ ] On-chain settlement, prepaid Credit Balance, per-token billing, response streaming.
 
 **Polish & packaging**
 - [ ] Tunnel region pinning + SIGTERM cleanup (cloudflared orphans on `SIGTERM`).
