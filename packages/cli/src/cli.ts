@@ -10,6 +10,7 @@ import { runLogin } from './commands/login.js';
 import { startServe } from './commands/serve.js';
 import { runStatus } from './commands/status.js';
 import { runSync } from './commands/sync.js';
+import { runUp } from './commands/up.js';
 import { NotLoggedInError, runWhoami } from './commands/whoami.js';
 import { readConfig } from './config-file.js';
 import {
@@ -90,10 +91,11 @@ async function main() {
     .option('--with-agent', 'also scaffold a runnable starter agent (entry point, Dockerfile, deps)')
     .option('--agent <harness>', 'scaffold a harness-backed agentic service: smolagents | langgraph | crewai (Fly-only)')
     .option('--detect', 'scan THIS repo, detect the harness + entrypoint, and wire it via [agent] (Fly-only)')
+    .option('--self-host', 'self-host on your own hardware (run via `airlock up`; no cloud Recipe)')
     .action(
       async (
         name: string,
-        opts: { target: string; recipe: boolean; withAgent?: boolean; agent?: string; detect?: boolean },
+        opts: { target: string; recipe: boolean; withAgent?: boolean; agent?: string; detect?: boolean; selfHost?: boolean },
       ) => {
         if (opts.target !== 'workers' && opts.target !== 'fly') {
           console.error(`error: --target must be "workers" or "fly", got "${opts.target}"`);
@@ -119,6 +121,7 @@ async function main() {
           withAgent: opts.withAgent,
           harness: opts.agent as AgentHarness | undefined,
           detect: opts.detect,
+          mode: opts.selfHost ? 'self-hosted' : undefined,
         });
         console.log(`✓ wrote ${result.configPath}`);
         if (result.recipePath) console.log(`✓ wrote ${result.recipePath}`);
@@ -130,7 +133,11 @@ async function main() {
           console.log('\nnext steps:');
           console.log('  1. Confirm [agent] harness + entrypoint in .airlock/config.toml');
           console.log('  2. `pip install -r requirements.txt`');
-          console.log('  3. `python -m airlock_agent` to run locally, then `airlock deploy`');
+          if (opts.selfHost) {
+            console.log('  3. `airlock up` — run the agent here + front it with a public URL');
+          } else {
+            console.log('  3. `python -m airlock_agent` to run locally, then `airlock deploy`');
+          }
           return;
         }
         console.log('\nnext steps:');
@@ -339,6 +346,42 @@ async function main() {
             await handle.close();
             process.exit(0);
           });
+        } catch (err) {
+          console.error(`error: ${(err as Error).message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  program
+    .command('up')
+    .description('Self-host: run your config-bound agent here + front it with a public URL')
+    .option('-p, --port <port>', 'port the agent listens on', '3000')
+    .option('--python <bin>', 'python executable for `-m airlock_agent` (respects an active venv)')
+    .option('--no-payment', 'run the agent with payment enforcement disabled')
+    .option('--no-tunnel', 'run the agent locally without opening a public tunnel')
+    .action(
+      async (opts: { port: string; python?: string; payment: boolean; tunnel: boolean }) => {
+        const port = Number.parseInt(opts.port, 10);
+        if (!Number.isFinite(port) || port <= 0) {
+          console.error(`error: invalid --port "${opts.port}"`);
+          process.exit(2);
+        }
+        try {
+          const handle = await runUp({
+            cwd: process.cwd(),
+            port,
+            python: opts.python,
+            noPayment: !opts.payment,
+            noTunnel: !opts.tunnel,
+          });
+          const shutdown = async () => {
+            await handle.stop();
+            process.exit(0);
+          };
+          process.on('SIGINT', shutdown);
+          process.on('SIGTERM', shutdown);
+          process.exit(await handle.done);
         } catch (err) {
           console.error(`error: ${(err as Error).message}`);
           process.exit(1);

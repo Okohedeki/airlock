@@ -15,37 +15,67 @@
   </a>
 </p>
 
-<p align="center"><strong>Deploy any AI agent to a paid web URL.</strong> Take an agent built in any framework, expose it behind a standard OpenAI-compatible endpoint with a USDC paywall, and ship it to your own cloud — you keep the model, the money, and the keys.</p>
+<p align="center"><strong>Run any AI agent behind a paid, OpenAI-compatible URL — on your own hardware, or handed to airlock.</strong> Take an agent built in any framework, expose it at <code>POST /v1/chat/completions</code> with a USDC paywall — you keep the model, the money, and the keys.</p>
 
 ---
 
-airlock turns an **agentic process** — a real agent with its harness, tools, and multi-step loop — into a deployed service anyone can call with a stock OpenAI client. The agent answers `POST /v1/chat/completions`, runs its full native loop server-side, and returns the result. Payment settles on-chain from caller to your wallet; airlock never sits in the production request path and never hosts inference.
+airlock turns an **agentic process** — a real agent with its harness, tools, and multi-step loop — into a service anyone can call with a stock OpenAI client, **either self-hosted on your own box or hosted by airlock**. The agent answers `POST /v1/chat/completions`, runs its full native loop, and returns the result. Payment settles on-chain from caller to your wallet; airlock **never hosts inference** (the model is always yours), and when you self-host it only operates the tunnel — never your request path.
 
-- **Harness-agnostic:** wrap **smolagents, LangGraph, CrewAI, the OpenAI Agents SDK, or the Claude Agent SDK** behind one shared surface. A new framework is a ~30-line adapter.
-- **OpenAI-compatible:** the deployed agent speaks `/v1/chat/completions`, so any existing chat client or SDK works unchanged — the multi-step run's final answer is the completion.
-- **You own the model:** the model is a dependency you supply via `OPENAI_API_BASE` (self-hosted vLLM/llama.cpp, a fast OS-model provider, or Anthropic for Claude). airlock never hosts inference — pick fast providers for speed; the same open weights, far cheaper than self-hosting.
+- **Two ways to host:** **self-host** on your own hardware (a local model, fully offline if you like) or go **airlock-hosted** (we run a per-agent microVM; you bring a remote model key). No cloud account required either way.
+- **Harness-agnostic:** **smolagents, LangGraph, CrewAI, the OpenAI Agents SDK, or the Claude Agent SDK** all run behind one shared `airlock-agent` runtime — `airlock init --detect` wires yours with no adapter to write.
+- **OpenAI-compatible:** the agent speaks `/v1/chat/completions`, so any existing chat client or SDK works unchanged — the multi-step run's final answer is the completion.
+- **You own the model:** a local gguf/vLLM on your box, or a remote `OPENAI_API_BASE`. airlock never hosts inference.
 - **Direct settlement:** USDC goes caller-wallet → your wallet on Base. No custody, no KYC, no revenue cut.
-- **Open source, day one:** Apache-2.0. Run a fully open stack with zero airlock-operated infrastructure.
+- **Open source, day one:** Apache-2.0.
 
-## Getting Started
+## Two ways to host
+
+| Mode | Compute | Model | Public URL | Cloud account |
+| --- | --- | --- | --- | --- |
+| **Self-host** | your hardware (Mac mini / server) | local **or** remote | airlock tunnel | none |
+| **airlock-hosted** | airlock's Fly microVM | remote (your key) | `<app>.fly.dev` | none |
+
+Both run the same `python -m airlock_agent` runtime with payment in-process. You never need a cloud account: self-host runs on your box; airlock-hosted provisions on airlock's infra with a token the backend mints for you.
+
+## Self-host: run your agent on your own machine
+
+Your harness (smolagents, LangGraph, CrewAI, …) runs where you run it; airlock fronts it with a public URL. Example with a **smolagents** harness and a **local** model:
 
 ```bash
-# 1. Scaffold an agentic service for your framework (Fly target)
-npx -y @airlockhq/cli init my-analyst --target=fly --agent=langgraph
+# 1. Install the CLI
+npm i -g @airlockhq/cli
 
-# 2. Drop your agent into adapter.py (run its full loop), point at a model
+# 2. Detect your harness + wire it (writes .airlock/config.toml, mode=self-hosted)
+airlock init my-agent --self-host --detect
+#   → detected smolagents; wired smol_harness.agent:build_agent — confirm or edit
+
+# 3. Install your deps + the airlock runtime (vendored locally until it's on PyPI)
 pip install -r requirements.txt
-export OPENAI_API_BASE=http://localhost:8080/v1   # local llama in dev
+pip install ./.airlock/vendor/payment-fly ./.airlock/vendor/agent-runtime
 
-# 3. Run it — any OpenAI client can now call it
-python app.py
-curl -s localhost:3000/v1/chat/completions -H 'content-type: application/json' \
-  -d '{"messages":[{"role":"user","content":"analyze TSLA"}]}'
+# 4. Point at your model — a local gguf …
+export SMOL_HARNESS_MODEL=./models/Llama-3.2-1B-Instruct-Q4_K_M.gguf
+#   … or a remote endpoint instead:  export OPENAI_API_BASE=…  OPENAI_API_KEY=…
+
+# 5. Go live — runs the agent + opens a public URL
+airlock up
+#   ✓ live at https://<name>.trycloudflare.com
 ```
+
+Any OpenAI client can now call it from anywhere:
+
+```bash
+curl -s https://<name>.trycloudflare.com/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"messages":[{"role":"user","content":"what is 23 times 19?"}]}'
+# → {"choices":[{"message":{"role":"assistant","content":"437"}}], ...}
+```
+
+No Fly account, no Docker, no `fly auth login` — **your hardware, your model, your keys.** (`airlock up` currently uses an ephemeral `*.trycloudflare.com` URL; a stable `<name>.airlock.dev` for signed-in users is in progress.)
 
 ### Supported harnesses
 
-| `--agent=` | Framework | Example |
+| Harness | Framework | Example |
 | --- | --- | --- |
 | `smolagents` | Hugging Face smolagents (code agents) | [`examples/smolagent-local`](./examples/smolagent-local/) |
 | `langgraph` | LangGraph | [`examples/langgraph-agent`](./examples/langgraph-agent/) |
@@ -53,21 +83,21 @@ curl -s localhost:3000/v1/chat/completions -H 'content-type: application/json' \
 | `openai-agents` | OpenAI Agents SDK | [`examples/openai-agents-agent`](./examples/openai-agents-agent/) |
 | `claude` | Claude Agent SDK | [`examples/claude-agent`](./examples/claude-agent/) |
 
-Each example is a complete, forkable reference: the adapter binds the harness to the shared `airlock-agent` surface, mounts payment in-process, and serves an [`airlock-config`](https://github.com/Okohedeki/airlock-config) discovery bundle if present.
+Each example is a complete, forkable reference — just an `agent.py` plus an `[agent]` config block (no adapter to write). `airlock init --detect` reads your deps + imports to pick the harness and locate the entrypoint; the shared `airlock-agent` runtime drives its native loop, mounts payment in-process, and serves an [`airlock-config`](https://github.com/Okohedeki/airlock-config) discovery bundle if present.
 
-### Deploy
+## airlock-hosted: let airlock run it (managed)
 
-```bash
-npx -y @airlockhq/cli secret set OPENAI_API_BASE=… OPENAI_API_KEY=…   # → fly secrets
-npx -y @airlockhq/cli doctor          # validate
-npx -y @airlockhq/cli deploy          # wraps `fly deploy` → https://<app>.fly.dev
-```
+Don't want to keep a box running? airlock provisions a per-agent microVM on its **own** Fly org and hands you a `<app>.fly.dev` URL — you bring a remote model key (`OPENAI_API_BASE`), airlock never hosts inference. Same `[agent]` config, `mode=airlock-hosted`; the backend mints a short-lived, app-scoped deploy token so **you still need no Fly account**.
 
-Your agent now lives at a public URL on **your** Fly account. airlock only ran `fly deploy` — it never touches your traffic.
+> Status: self-host (`airlock up`) is the path you can run today; the airlock-hosted managed prong is being built behind the same config + token-minting pattern.
+
+### Power option: deploy to a cloud you own
+
+Prefer to own the infra? `airlock deploy` still ships to **your** Fly/Cloudflare account (you run `fly auth login` once); airlock only wraps `fly deploy` / `wrangler deploy` and never touches your traffic.
 
 ### Just wrapping a model? (dev convenience)
 
-If you only want to put a paywall in front of a local OpenAI-compatible model, `serve` is a dev-only proxy:
+To put a paywall in front of a bare OpenAI-compatible model (no agent loop), `serve` is a dev-only proxy:
 
 ```bash
 airlock serve --upstream http://localhost:8080 --no-payment --tunnel   # bundled cloudflared → public URL
@@ -76,13 +106,14 @@ airlock serve --upstream http://localhost:8080 --no-payment --tunnel   # bundled
 ## CLI
 
 ```bash
-airlock init my-agent --target=fly --agent=langgraph   # scaffold an agentic service
-airlock serve --upstream http://localhost:8080 --tunnel # DEV-ONLY proxy for a local model
-airlock dev -p 3000                                     # public Cloudflare tunnel to a local agent
-airlock doctor                                          # validate config + report discovery bundle
-airlock deploy                                          # wraps `fly deploy` / `wrangler deploy`
-airlock secret set OPENAI_API_KEY=…                     # → fly/wrangler secrets
-airlock login / sync / whoami                           # dashboard auth + project registration
+airlock init my-agent --self-host --detect   # detect harness, wire [agent], self-host mode
+airlock up                                    # SELF-HOST: run your agent here + public URL
+airlock serve --upstream http://localhost:8080 --tunnel  # DEV-ONLY proxy for a bare model
+airlock dev -p 3000                           # public Cloudflare tunnel to an already-running agent
+airlock doctor                                # validate config + report discovery bundle
+airlock deploy                                # ship to a cloud you own (wraps fly/wrangler deploy)
+airlock secret set OPENAI_API_KEY=…           # secrets on the target
+airlock login / sync / whoami                 # dashboard auth + project registration
 ```
 
 See the [full CLI reference](./docs/cli.md).
@@ -99,9 +130,9 @@ See the [full CLI reference](./docs/cli.md).
 
 ## What airlock is, what it isn't
 
-**It is:** a way to deploy an agent (any harness) behind an OpenAI-compatible, paywalled URL on your own cloud; a shared runtime (`airlock-agent`) + per-harness adapters; payment middleware (Workers, Node/Fly, FastAPI); a CLI that wraps `flyctl` / `wrangler`; a dashboard for paid calls and revenue.
+**It is:** a way to run an agent (any harness) behind an OpenAI-compatible, paywalled URL — self-hosted on your hardware or hosted by airlock; a shared runtime (`airlock-agent`) + config-driven harness binding; payment middleware (Workers, Node/Fly, FastAPI); a CLI (`airlock up` for self-host, plus `deploy` wrapping `flyctl`/`wrangler`); a dashboard for paid calls and revenue.
 
-**It isn't:** a hosted inference runtime ([ADR-0008](./docs/adr/0008-airlock-never-hosts-inference.md) — the model is yours); a custodian (USDC settles wallet-to-wallet); a thing in your prod request path ([ADR-0001](./docs/adr/0001-we-operate-the-hosted-dev-tunnel.md)). Wallet creation/funding lives in a separate repo, `airlock-crypto` ([ADR-0006](./docs/adr/0006-wallets-in-airlock-crypto.md)).
+**It isn't:** a hosted inference runtime ([ADR-0008](./docs/adr/0008-airlock-never-hosts-inference.md) — the model is always yours, local or remote); a custodian (USDC settles wallet-to-wallet). When you self-host, airlock only operates the tunnel and stays out of your request path; airlock-hosted runs the agent loop for you but never the model. Wallet creation/funding lives in a separate repo, `airlock-crypto` ([ADR-0006](./docs/adr/0006-wallets-in-airlock-crypto.md)).
 
 ## Discovery — composes with `airlock-config`
 
@@ -110,7 +141,7 @@ See the [full CLI reference](./docs/cli.md).
 ## Development
 
 ```
-packages/cli            the `airlock` CLI (init/serve/dev/deploy/doctor/login/sync)
+packages/cli            the `airlock` CLI (init/up/serve/dev/deploy/doctor/login/sync)
 packages/server         dashboard backend (GitHub OAuth, projects, inspect store)
 packages/payment-core   shared x402 + usage units + Wallet/Sandbox seams
 packages/payment-*      Payment Middleware (Workers, Node/Fly)

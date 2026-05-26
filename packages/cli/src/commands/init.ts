@@ -1,7 +1,7 @@
 import { cp, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type AirlockConfig, type Target, writeConfig } from '../config-file.js';
+import { type AirlockConfig, type DeployMode, type Target, writeConfig } from '../config-file.js';
 import { scanRepo } from '../scan.js';
 import { type AgentHarness, flyAgentStarter } from '../templates/fly-agent.js';
 import { flyNodeStarter } from '../templates/fly-node.js';
@@ -19,6 +19,8 @@ export interface InitOptions {
   harness?: AgentHarness;
   /** Scan an existing repo, detect the harness + entrypoint, and write [agent]. */
   detect?: boolean;
+  /** Deploy mode. `self-hosted` runs on the publisher's own hardware via `airlock up`. */
+  mode?: DeployMode;
 }
 
 export interface InitResult {
@@ -130,6 +132,7 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
     project: { name: opts.name, target: opts.target, schemaVersion: 1 },
     payment: PAYMENT_SCAFFOLD,
   };
+  if (opts.mode) config.project.mode = opts.mode;
 
   // Detect mode: scan an existing repo and bind its harness via the [agent] block.
   let detected: InitResult['detected'];
@@ -173,7 +176,10 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
   const configPath = await writeConfig(opts.cwd, config);
 
   let recipePath: string | undefined;
-  if (opts.scaffoldRecipe !== false) {
+  // Self-host (hardware) runs via `airlock up`, not a cloud deploy — so it needs
+  // no wrangler.toml/fly.toml Recipe. The cloud self-host variant uses `--target`
+  // without `--self-host` and keeps the Recipe.
+  if (opts.scaffoldRecipe !== false && opts.mode !== 'self-hosted') {
     const recipeName = opts.target === 'workers' ? 'wrangler.toml' : 'fly.toml';
     recipePath = resolve(opts.cwd, recipeName);
     const recipeContent =

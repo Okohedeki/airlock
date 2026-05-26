@@ -135,6 +135,17 @@ describe('runInit', () => {
     ).resolves.toContain('name = "airlock-payment"');
   });
 
+  it('--self-host writes mode=self-hosted and skips the cloud Recipe', async () => {
+    const result = await runInit({ cwd, name: 'box-agent', target: 'fly', mode: 'self-hosted' });
+    expect(result.recipePath).toBeUndefined();
+    const parsed = parse(await readFile(result.configPath, 'utf8')) as {
+      project: { mode?: string };
+    };
+    expect(parsed.project.mode).toBe('self-hosted');
+    // No fly.toml for the hardware self-host path.
+    await expect(readFile(join(cwd, 'fly.toml'), 'utf8')).rejects.toThrow();
+  });
+
   it('--detect strips an unresolvable bare airlock-agent line from requirements', async () => {
     const { writeFile: wf } = await import('node:fs/promises');
     await wf(join(cwd, 'requirements.txt'), 'smolagents==1.25.*\nairlock-agent\nairlock-payment\n');
