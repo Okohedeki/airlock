@@ -85,6 +85,29 @@ No Fly account, no Docker, no `fly auth login` — **your hardware, your model, 
 
 Each example is a complete, forkable reference — just an `agent.py` plus an `[agent]` config block (no adapter to write). `airlock init --detect` reads your deps + imports to pick the harness and locate the entrypoint; the shared `airlock-agent` runtime drives its native loop, mounts payment in-process, and serves an [`airlock-config`](https://github.com/Okohedeki/airlock-config) discovery bundle if present.
 
+## It runs a real agent loop (not one LLM call)
+
+A request to `/v1/chat/completions` runs the harness's **full native loop** server-side — decompose → call a tool → observe → re-plan → answer — and you can watch the steps stream in the agent's logs. Verified multi-step tool-chaining (smolagents harness, local model):
+
+| Prompt | Tools chained across steps | Result |
+| --- | --- | --- |
+| multiply 23×19, raise to the power 2, then what % 5000 is of that | `multiply` → `power` → `percentage` | `2.618…%` |
+| write `note.txt`, read it back, count the words | `write_file` → `read_file` → `word_count` (leaves a real file) | `5` |
+| search the web for Python's release year, then % of 2000 | `web_search` → `percentage` | searched value flows into the math tool |
+
+The tell that it's genuinely agentic (not a canned reply): the final number is **arithmetically derived from an earlier step's tool output** — the percentage exactly equals `value / 2000 × 100` for the value the web step retrieved. A single LLM call can't manufacture that cross-step linkage.
+
+## Tips for a reliable agentic harness
+
+Hard-won from wiring real harnesses behind airlock:
+
+- **Authorize the code sandbox's imports.** A smolagents `CodeAgent` runs model-written Python under an import allowlist — if the model reaches for `bs4`/`json`/etc. and it isn't allowed, the step hard-fails with `Forbidden function evaluation`. Pass `additional_authorized_imports=[…]` for the safe libs your tools' outputs invite.
+- **Tell the model the truth about tool outputs — and don't over-specify.** `visit_webpage` returns **markdown text to read**, not HTML to parse. A too-precise hint like "the heading starts with `#`" backfires (markdownify underlines headings with `=`), sending weaker models on multi-step regex dead-ends. Say "read the returned text and answer," not "extract tag X."
+- **Model capability dominates.** A 1B handles a single tool step (`multiply` → 437) but flails at multi-step orchestration (search → read → extract); a 7B+ chains reliably. If the loop is correct but answers are wrong, upgrade the model — not the harness.
+- **Keep skills as small, well-described tool bundles** with guidance on *when* to use each — the model selects tools from their descriptions.
+- **It's stateless per call.** The conversation resets each request (clean multi-caller isolation + per-call billing); resend history client-side for multi-turn.
+- **Restart to reload.** The agent is built **once** at startup, so config/code/model changes only take effect on the next `airlock up`.
+
 ## airlock-hosted: let airlock run it (managed)
 
 Don't want to keep a box running? airlock provisions a per-agent microVM on its **own** Fly org and hands you a `<app>.fly.dev` URL — you bring a remote model key (`OPENAI_API_BASE`), airlock never hosts inference. Same `[agent]` config, `mode=airlock-hosted`; the backend mints a short-lived, app-scoped deploy token so **you still need no Fly account**.
