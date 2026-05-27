@@ -155,7 +155,18 @@ See the [full CLI reference](./docs/cli.md).
 
 **It is:** a way to run an agent (any harness) behind an OpenAI-compatible, paywalled URL — self-hosted on your hardware or hosted by airlock; a shared runtime (`airlock-agent`) + config-driven harness binding; payment middleware (Workers, Node/Fly, FastAPI); a CLI (`airlock up` for self-host, plus `deploy` wrapping `flyctl`/`wrangler`); a dashboard for paid calls and revenue.
 
-**It isn't:** a hosted inference runtime ([ADR-0008](./docs/adr/0008-airlock-never-hosts-inference.md) — the model is always yours, local or remote); a custodian (USDC settles wallet-to-wallet). When you self-host, airlock only operates the tunnel and stays out of your request path; airlock-hosted runs the agent loop for you but never the model. Wallet creation/funding lives in a separate repo, `airlock-crypto` ([ADR-0006](./docs/adr/0006-wallets-in-airlock-crypto.md)).
+**It isn't:** a hosted inference runtime ([ADR-0008](./docs/adr/0008-airlock-never-hosts-inference.md) — the model is always yours, local or remote); a custodian (USDC settles wallet-to-wallet). When you self-host, airlock only operates the tunnel and stays out of your request path; airlock-hosted runs the agent loop for you but never the model. The payer side — agent wallets that buy *and* sell over x402 — lives in the sister repo [`airlock-crypto`](https://github.com/Okohedeki/airlock-crypto) ([ADR-0006](./docs/adr/0006-wallets-in-airlock-crypto.md)); airlock itself still holds no keys.
+
+## The airlock ecosystem
+
+airlock is the deploy/host core of a small family of repos, split by concern. Each is optional and composes with the rest:
+
+| Repo | What it does |
+| --- | --- |
+| **airlock** (this repo) | Run an agent behind a paid, OpenAI-compatible x402 URL — self-hosted or airlock-hosted. The **host + sell** side. |
+| [**airlock-config**](https://github.com/Okohedeki/airlock-config) | Declare an agent's skills, pricing, region, and compliance → a static `/.well-known` bundle airlock serves. The **describe + discover** side. |
+| [**airlock-crypto**](https://github.com/Okohedeki/airlock-crypto) | Self-custody agent wallets that **buy** (autopay another agent's x402 paywall) and **sell** (flip on this repo's receiver). The **pay** side; wired here as the optional `airlock-agent[crypto]` buy tool. |
+| **airlock-directory** *(planned)* | A searchable registry agents opt into to be discoverable by capability/price/region. The **find** side; indexes airlock-config bundles. |
 
 ## Roadmap & To-Do
 
