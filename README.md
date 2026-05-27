@@ -169,7 +169,7 @@ airlock is the deploy/host core of a small family of repos, split by concern. Ea
 
 **Shipped:** self-host (`airlock up`) with a public Cloudflare tunnel · **durable self-host URL** — a stable hostname on your **own** Cloudflare account via `airlock up --durable` ([durable hosting](./docs/durable-hosting.md)) · config-driven harness binding for all five harnesses · in-process x402 payment · capped-parallel concurrency via per-call isolation + a bounded queue ([ADR-0010](./docs/adr/0010-per-call-agent-isolation.md), `scripts/concurrency-check.sh`) · **scale & latency** — latency-aware admission (`429` + `Retry-After`), SSE streaming, connector tuning + supervision, and `/metrics` ([scaling on Cloudflare](./docs/scaling-cloudflare.md), [ADR-0011](./docs/adr/0011-scaling-on-cloudflare-named-tunnel-replicas.md)) · **`airlock-crypto` v1** — a Python-first x402 transaction layer so an agent can buy *and* sell from other agents (self-custody wallet + autopay + spend cap; [ADR-0006](./docs/adr/0006-wallets-in-airlock-crypto.md)).
 
-What's left, grouped. Everything runs on accounts **you** own — airlock operates no hosting infrastructure on your behalf. (Engineer's snapshot + next steps: [`MEMORY.md`](./MEMORY.md).)
+What's left, grouped. Everything runs on accounts **you** own — airlock operates no hosting infrastructure on your behalf.
 
 **`airlock-crypto` — next**
 - [ ] Publish `airlock-crypto` to PyPI + its own repo; wire the optional `airlock-agent[crypto]` buy tool into the harness adapters so a model can call `buy(url)`.
