@@ -167,7 +167,7 @@ airlock is the deploy/host core of a small family of repos, split by concern. Ea
 
 ## Roadmap & To-Do
 
-**Shipped:** self-host (`airlock up`) with a public Cloudflare tunnel · **durable self-host URL** — a stable hostname on your **own** Cloudflare account via `airlock up --durable` ([durable hosting](./docs/durable-hosting.md)) · config-driven harness binding for all five harnesses · in-process x402 payment · capped-parallel concurrency via per-call isolation + a bounded queue ([ADR-0010](./docs/adr/0010-per-call-agent-isolation.md), `scripts/concurrency-check.sh`) · **`airlock-crypto` v1** — a Python-first x402 transaction layer so an agent can buy *and* sell from other agents (self-custody wallet + autopay + spend cap; [ADR-0006](./docs/adr/0006-wallets-in-airlock-crypto.md)).
+**Shipped:** self-host (`airlock up`) with a public Cloudflare tunnel · **durable self-host URL** — a stable hostname on your **own** Cloudflare account via `airlock up --durable` ([durable hosting](./docs/durable-hosting.md)) · config-driven harness binding for all five harnesses · in-process x402 payment · capped-parallel concurrency via per-call isolation + a bounded queue ([ADR-0010](./docs/adr/0010-per-call-agent-isolation.md), `scripts/concurrency-check.sh`) · **scale & latency** — latency-aware admission (`429` + `Retry-After`), SSE streaming, connector tuning + supervision, and `/metrics` ([scaling on Cloudflare](./docs/scaling-cloudflare.md), [ADR-0011](./docs/adr/0011-scaling-on-cloudflare-named-tunnel-replicas.md)) · **`airlock-crypto` v1** — a Python-first x402 transaction layer so an agent can buy *and* sell from other agents (self-custody wallet + autopay + spend cap; [ADR-0006](./docs/adr/0006-wallets-in-airlock-crypto.md)).
 
 What's left, grouped. Everything runs on accounts **you** own — airlock operates no hosting infrastructure on your behalf. (Engineer's snapshot + next steps: [`MEMORY.md`](./MEMORY.md).)
 
@@ -182,6 +182,15 @@ What's left, grouped. Everything runs on accounts **you** own — airlock operat
 - [x] **Shipped (bring-your-own Cloudflare):** `tunnel.ts` `startNamedTunnel(token)`, a `[tunnel]` config block, `airlock up --durable`, and `airlock doctor` credential checks. The publisher supplies their own Cloudflare account + domain + connector token (`AIRLOCK_CF_TUNNEL_TOKEN`); airlock holds no keys. See [durable hosting](./docs/durable-hosting.md).
 - [ ] *Optional convenience:* automate tunnel + DNS-route creation via the publisher's Cloudflare **API** token so they can skip the dashboard setup.
 
+**Scale & latency** — handle many concurrent requests at low latency ([scaling on Cloudflare](./docs/scaling-cloudflare.md), [ADR-0011](./docs/adr/0011-scaling-on-cloudflare-named-tunnel-replicas.md)). *Short-term is shipped; the long-term model/cluster layer is open.*
+- [x] **Per-box, shipped:** latency-aware admission (run-time EWMA + `AIRLOCK_MAX_WAIT_S` budget → `429` + `Retry-After`, no more blind timeout); SSE streaming Tier A (heartbeat — every harness, TTFB ~0) + per-token streamed billing; `AIRLOCK_MAX_CONCURRENCY` = the model's real parallel capacity; `/metrics` + live gate stats.
+- [x] **Tunnel, shipped:** connector tuning (`--cf-protocol`/`--cf-region`/`--cf-metrics` + `[tunnel]` keys) and **supervision** (reconnect with backoff on unexpected exit). Multi-box fan-out = N connector replicas on one token (Cloudflare balances across them).
+- [ ] **Per-harness real streaming (Tier B):** wire smolagents/langgraph/claude into the shipped `run_stream` interface — needs a live model to verify the step→delta mapping (the generic mechanism is done).
+- [ ] **Adaptive concurrency:** auto-tune the effective cap from observed latency (AIMD) so a mis-set `AIRLOCK_MAX_CONCURRENCY` can't over-subscribe the model.
+- [ ] **Verify + automate multi-box:** prove N replicas on one token against real Cloudflare; add the **Cloudflare Load Balancing** on-ramp (health pools / regional steering / failover), optionally via the CF API token.
+- [ ] **Model-layer scale (the true ceiling):** a single non-batching/in-process model still serializes — detect it and guide to vLLM / `llama-server --parallel` / a fast remote provider; ship a recommended batching-server recipe.
+- [ ] **Robustness:** cancel the in-flight run on client disconnect (today the slot frees but the run continues); cluster-wide metrics + backpressure beyond per-box `429`.
+
 **Fly deploy — bring-your-own (experimental / unproven)**
 - [ ] **Prove `airlock deploy` off-box** against a real (publisher-owned) Fly account — scaffolding exists (`fly.toml`/Dockerfile, `airlock deploy` wraps `fly deploy`) but no end-to-end deploy has been verified. `airlock doctor` flags this today.
 - [ ] Automate the local-GGUF Dockerfile (build toolchain + memory sizing) so a self-contained-model deploy doesn't need hand-editing.
@@ -194,7 +203,8 @@ What's left, grouped. Everything runs on accounts **you** own — airlock operat
 - [ ] `payment-core/auth.ts` `CallerAuthStrategy`; nullable `org_id`/`owner_kind` + stub `orgs`; extend `InspectCallSchema` (shape/request_id/settlement_tx/event_version); doc the `exec.ts` Target switch as the 3rd-Target extension point.
 
 **Polish & packaging**
-- [ ] Tunnel region pinning + SIGTERM cleanup (cloudflared orphans on `SIGTERM`).
+- [x] Tunnel region pinning (`--cf-region` / `[tunnel].region`) + connector supervision.
+- [ ] SIGTERM cleanup (cloudflared orphans on `SIGTERM`).
 - [ ] Docs: `payment.md`, `cli.md`, `llama-cpp-on-fly.md`, reconcile CONTEXT "v1 does not scaffold".
 - [ ] **npm-publish caveat**: `--detect` vendoring reads repo-root `./python` (not in npm `files`) → bundle the Python sources or switch to a git-install before shipping `@airlockhq/cli`.
 - [ ] Live-verify langgraph/crewai/openai/claude against a capable model; E2B sandbox behind `SandboxProvider`; Python starter template.
