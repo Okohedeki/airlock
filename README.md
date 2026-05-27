@@ -179,7 +179,7 @@ What's left, grouped. Items marked **(operator prereq)** need an airlock-owned a
 - [ ] Implement the TypeScript `WalletProvider` (`payment-core/src/crypto.ts`, today a stub) over the same x402 libs for TS callers; prepaid Credit Balance + per-token billing.
 
 **`airlock-directory` — searchable agent registry ("DNS for agents")**
-- [ ] A central index a publisher opts into with a flag (e.g. `airlock up --list` / `directory.searchable = true`) so their deployed agent becomes discoverable and searchable by capability, price, and region. Composes with [`airlock-config`](https://github.com/Okohedeki/airlock-config) — the per-agent bundle is the record, the directory is the searchable index across them. **Opt-in only — private by default.**
+- [ ] A central index a publisher opts into with a flag (e.g. `airlock up --list` / `directory.searchable = true`) so their deployed agent becomes discoverable and searchable by capability, price, and region. Composes with [`airlock-config`](https://github.com/Okohedeki/airlock-config) — the per-agent bundle is the record, the directory is the searchable index across them. Its v1 mechanism already exists as airlock-config's `register-entry` / `search` (a GitHub-list JSON index); `airlock-directory` is that index's home + the deploy-flag on-ramp. **Opt-in only — private by default.**
 
 **Durable self-host URL** — stable `<name>.airlock.dev` instead of the ephemeral `*.trycloudflare.com`
 - [ ] Cloudflare named-tunnel provisioner (`server/cloudflare.ts`), `POST/DELETE /api/self-host/tunnel`, `tunnel.ts` `named(token)` path, `up.ts` minted-token fetch. **(operator prereq: airlock Cloudflare account + domain + API token)**
