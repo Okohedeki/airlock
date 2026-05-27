@@ -25,7 +25,7 @@ import {
   type SecretAction,
   TargetBinaryMissingError,
 } from './exec.js';
-import { type AgentHarness, AGENT_HARNESSES } from './templates/fly-agent.js';
+import { AGENT_HARNESSES, type AgentHarness } from './templates/fly-agent.js';
 import { startTunnel } from './tunnel.js';
 
 async function readPackageVersion(): Promise<string> {
@@ -88,14 +88,30 @@ async function main() {
     .argument('<name>', 'project name (used in recipe configs)')
     .option('-t, --target <target>', 'deploy Target: workers | fly', 'fly')
     .option('--no-recipe', 'skip writing the Recipe config (wrangler.toml / fly.toml)')
-    .option('--with-agent', 'also scaffold a runnable starter agent (entry point, Dockerfile, deps)')
-    .option('--agent <harness>', 'scaffold a harness-backed agentic service: smolagents | langgraph | crewai (Fly-only)')
-    .option('--detect', 'scan THIS repo, detect the harness + entrypoint, and wire it via [agent] (Fly-only)')
+    .option(
+      '--with-agent',
+      'also scaffold a runnable starter agent (entry point, Dockerfile, deps)',
+    )
+    .option(
+      '--agent <harness>',
+      'scaffold a harness-backed agentic service: smolagents | langgraph | crewai (Fly-only)',
+    )
+    .option(
+      '--detect',
+      'scan THIS repo, detect the harness + entrypoint, and wire it via [agent] (Fly-only)',
+    )
     .option('--self-host', 'self-host on your own hardware (run via `airlock up`; no cloud Recipe)')
     .action(
       async (
         name: string,
-        opts: { target: string; recipe: boolean; withAgent?: boolean; agent?: string; detect?: boolean; selfHost?: boolean },
+        opts: {
+          target: string;
+          recipe: boolean;
+          withAgent?: boolean;
+          agent?: string;
+          detect?: boolean;
+          selfHost?: boolean;
+        },
       ) => {
         if (opts.target !== 'workers' && opts.target !== 'fly') {
           console.error(`error: --target must be "workers" or "fly", got "${opts.target}"`);
@@ -106,7 +122,9 @@ async function main() {
           process.exit(2);
         }
         if (opts.agent && opts.target !== 'fly') {
-          console.error(`error: --agent=${opts.agent} requires --target=fly (Python harnesses run on Fly)`);
+          console.error(
+            `error: --agent=${opts.agent} requires --target=fly (Python harnesses run on Fly)`,
+          );
           process.exit(2);
         }
         if (opts.detect && opts.target !== 'fly') {
@@ -143,8 +161,12 @@ async function main() {
         console.log('\nnext steps:');
         if (opts.agent) {
           console.log('  1. `pip install -r requirements.txt`');
-          console.log('  2. Edit adapter.py — run your harness (see examples/' + `${opts.agent}-agent` + ')');
-          console.log('  3. Point the model: OPENAI_API_BASE / OPENAI_API_KEY (airlock secret set …)');
+          console.log(
+            '  2. Edit adapter.py — run your harness (see examples/' + `${opts.agent}-agent` + ')',
+          );
+          console.log(
+            '  3. Point the model: OPENAI_API_BASE / OPENAI_API_KEY (airlock secret set …)',
+          );
           console.log('  4. `airlock doctor`, then `airlock deploy`');
         } else if (result.agentPaths?.length) {
           console.log('  1. `npm install` (or pnpm/yarn) in the project');
@@ -301,11 +323,7 @@ async function main() {
       'local agent/LLM URL (OpenAI-compatible /v1/chat/completions by default)',
       'http://localhost:8080',
     )
-    .option(
-      '--upstream-path <path>',
-      'path on the upstream to forward to',
-      '/v1/chat/completions',
-    )
+    .option('--upstream-path <path>', 'path on the upstream to forward to', '/v1/chat/completions')
     .option('-p, --port <port>', 'port for the wrapper to listen on', '3000')
     .option('--wallet <addr>', 'override payment.wallet (skip config.toml)')
     .option('--price <usdc>', 'override per-call price in USDC (flat mode)')
@@ -360,20 +378,34 @@ async function main() {
     .option('--python <bin>', 'python executable for `-m airlock_agent` (respects an active venv)')
     .option('--no-payment', 'run the agent with payment enforcement disabled')
     .option('--no-tunnel', 'run the agent locally without opening a public tunnel')
+    .option(
+      '--durable',
+      'use a stable named tunnel on YOUR Cloudflare account (needs AIRLOCK_CF_TUNNEL_TOKEN + [tunnel].hostname; see docs/durable-hosting.md)',
+    )
     .option('--max-concurrency <n>', 'max agent runs in flight before callers queue')
     .option('--max-queue <n>', 'max callers waiting beyond the running set before 429')
     .option('--queue-timeout <s>', 'seconds a caller waits in the queue before 429')
-    .option('--no-build-per-call', 'reuse one shared agent object instead of rebuilding per request')
+    .option(
+      '--no-build-per-call',
+      'reuse one shared agent object instead of rebuilding per request',
+    )
+    .option('--cf-protocol <proto>', 'cloudflared edge protocol: quic | http2 | auto')
+    .option('--cf-region <region>', 'pin the cloudflared connector to a Cloudflare region (e.g. us)')
+    .option('--cf-metrics <addr>', "expose cloudflared's metrics server on host:port")
     .action(
       async (opts: {
         port: string;
         python?: string;
         payment: boolean;
         tunnel: boolean;
+        durable?: boolean;
         maxConcurrency?: string;
         maxQueue?: string;
         queueTimeout?: string;
         buildPerCall: boolean;
+        cfProtocol?: 'quic' | 'http2' | 'auto';
+        cfRegion?: string;
+        cfMetrics?: string;
       }) => {
         const port = Number.parseInt(opts.port, 10);
         if (!Number.isFinite(port) || port <= 0) {
@@ -396,11 +428,15 @@ async function main() {
             python: opts.python,
             noPayment: !opts.payment,
             noTunnel: !opts.tunnel,
+            durable: opts.durable,
             maxConcurrency: numOpt(opts.maxConcurrency, '--max-concurrency'),
             maxQueue: numOpt(opts.maxQueue, '--max-queue'),
             queueTimeout: numOpt(opts.queueTimeout, '--queue-timeout'),
             // commander sets buildPerCall=false only when --no-build-per-call is passed
             buildPerCall: opts.buildPerCall === false ? false : undefined,
+            cfProtocol: opts.cfProtocol,
+            cfRegion: opts.cfRegion,
+            cfMetrics: opts.cfMetrics,
           });
           const shutdown = async () => {
             await handle.stop();

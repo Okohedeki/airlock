@@ -9,6 +9,7 @@ All commands are accessible via `npx -y @airlockhq/cli <command>` or a local ins
 | `init <name>` | Write `.airlock/config.toml` + a starter Recipe config | — |
 | `doctor` | Validate the local config | — |
 | `status` | Print the current project config (JSON) | — |
+| `up` | Self-host: run your config-bound agent + front it with a public URL | `cloudflared tunnel` |
 | `serve` | Wrap a local LLM HTTP endpoint with x402 + dashboard reporting | — |
 | `dev` | Open a public Tunnel via cloudflared | `cloudflared tunnel` |
 | `deploy` | Push the Agent to the Target | `wrangler deploy` / `fly deploy` |
@@ -90,6 +91,38 @@ Exposes:
 - `GET /healthz`
 
 Streams are forwarded as-is and force-enable `stream_options.include_usage` so per-token billing has a `total_tokens` to debit.
+
+## `up`
+
+Self-host: run your config-bound agent (`python -m airlock_agent`) on your own hardware and front it
+with a public URL. Payment is enforced in-process; airlock only operates the tunnel.
+
+```
+airlock up [-p|--port PORT] [--python BIN] [--no-payment] [--no-tunnel] [--durable]
+           [--max-concurrency N] [--max-queue N] [--queue-timeout S] [--no-build-per-call]
+           [--cf-protocol quic|http2|auto] [--cf-region REGION] [--cf-metrics HOST:PORT]
+```
+
+- `--port` — port the agent listens on (and we tunnel to). Default `3000`.
+- `--no-tunnel` — run the agent locally without opening any public tunnel.
+- `--durable` — instead of the default ephemeral `*.trycloudflare.com` quick tunnel, run a **stable
+  named tunnel on your OWN Cloudflare account**. Requires a `[tunnel]` block (`hostname`) plus the
+  `AIRLOCK_CF_TUNNEL_TOKEN` env var. See **[durable hosting](./durable-hosting.md)**. (You can also
+  set `durable = true` in `[tunnel]` to make it the default without the flag.)
+- `--max-concurrency N` — how many runs the **model** can serve in parallel (`AIRLOCK_MAX_CONCURRENCY`).
+  Set it to the model's real capacity; higher just over-subscribes it.
+- `--cf-protocol` / `--cf-region` / `--cf-metrics` — tune the durable connector (also `[tunnel]` keys).
+
+Concurrency/latency env (read by the agent runtime):
+
+- `AIRLOCK_MAX_WAIT_S` — the wait **budget**: callers whose *estimated* wait (observed run-time EWMA ×
+  queue depth) exceeds it are shed with `429` + `Retry-After`; the rest queue. Default `120`.
+  (`AIRLOCK_QUEUE_TIMEOUT_S` is a deprecated alias.)
+- The agent exposes `GET /metrics` (run-gate saturation) and live stats on `GET /`.
+
+By default the URL is ephemeral and changes each run; use `--durable` for a stable hostname you own.
+For streaming, send `{"stream": true}` — responses come back as OpenAI SSE `chat.completion.chunk`s.
+For scaling beyond one box, see **[scaling on Cloudflare](./scaling-cloudflare.md)**.
 
 ## `dev`
 

@@ -22,6 +22,11 @@ class AgentRunResult:
     """Billable units consumed by the run — tokens summed across all steps, or
     a step count. 0 = nothing to bill (fine when payment is off / flat)."""
     unit_label: str = "tokens"
+    prompt_tokens: int = 0
+    """Input tokens, when the harness reports the split — for the `usage` block
+    and cost/latency observability. 0 = unknown (left out of `usage`)."""
+    completion_tokens: int = 0
+    """Output tokens, when the harness reports the split (see `prompt_tokens`)."""
     steps: list[Any] | None = None
     """Optional trace (deferred from the v1 response; kept for future verbose mode)."""
 

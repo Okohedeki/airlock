@@ -24,7 +24,7 @@ from .concurrency import (
     read_build_per_call,
     read_max_concurrency,
     read_max_queue,
-    read_queue_timeout,
+    read_max_wait,
     resolve_policy,
 )
 from .config import read_agent_config
@@ -93,13 +93,17 @@ def build_app(cwd: str | None = None):
         max_concurrency = resolve_policy(reentrant=is_reentrant(harness)).effective
 
     adapter = _DriverAdapter(get_driver(harness), builder, sample, build_per_call)
+    # The wait budget doubles as the hard ceiling on how long an admitted caller
+    # blocks, so admission and the await agree on one number.
+    budget = read_max_wait()
     return create_app(
         adapter,
         name=harness,
         payment_config=config_from_env(),
         max_concurrency=max_concurrency,
         max_queue=read_max_queue(),
-        queue_timeout_s=read_queue_timeout(),
+        queue_timeout_s=budget,
+        max_wait_s=budget,
     )
 
 

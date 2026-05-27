@@ -5,15 +5,28 @@
  * and airlock only operates the tunnel that exposes it — never the compute,
  * never the model (which may be local or a remote OPENAI_API_BASE).
  *
- * Step 1a uses the bundled Cloudflare quick tunnel (ephemeral URL). The durable
- * `<name>.airlock.dev` named-tunnel path (step 1b) layers on top via a token the
- * backend mints; see startNamedTunnel.
+ * By default the public URL is an ephemeral *.trycloudflare.com quick tunnel
+ * (no account needed). Pass `--durable` to instead run a stable named tunnel on
+ * the publisher's OWN Cloudflare account (bring-your-own connector token +
+ * hostname; see startNamedTunnel and docs/durable-hosting.md). airlock holds no
+ * Cloudflare keys either way.
  */
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { PaymentConfigSchema } from '@airlockhq/payment-core';
-import { type AirlockConfig, readConfig } from '../config-file.js';
-import { startTunnel, type TunnelHandle } from '../tunnel.js';
+import { ZodError } from 'zod';
+import {
+  type AirlockConfig,
+  CF_TUNNEL_TOKEN_ENV,
+  readConfig,
+  validateTunnel,
+} from '../config-file.js';
+import {
+  startNamedTunnel,
+  startTunnel,
+  type TunnelHandle,
+  type TunnelTuning,
+} from '../tunnel.js';
 
 export interface UpOptions {
   cwd?: string;
@@ -25,6 +38,8 @@ export interface UpOptions {
   noPayment?: boolean;
   /** Run the agent locally but don't open a public tunnel. */
   noTunnel?: boolean;
+  /** Use a durable named tunnel on the publisher's own Cloudflare account (vs. ephemeral quick tunnel). */
+  durable?: boolean;
   /** Max agent runs in flight at once before callers queue (AIRLOCK_MAX_CONCURRENCY). */
   maxConcurrency?: number;
   /** Max callers waiting beyond the running set before new ones get 429 (AIRLOCK_MAX_QUEUE). */
@@ -33,9 +48,16 @@ export interface UpOptions {
   queueTimeout?: number;
   /** Force per-call agent rebuild on/off (AIRLOCK_BUILD_PER_CALL); default inferred at runtime. */
   buildPerCall?: boolean;
+  /** cloudflared edge protocol (quic/http2/auto); overrides [tunnel].protocol. */
+  cfProtocol?: TunnelTuning['protocol'];
+  /** Pin the connector to a Cloudflare region; overrides [tunnel].region. */
+  cfRegion?: string;
+  /** Expose cloudflared metrics on host:port; overrides [tunnel].metrics. */
+  cfMetrics?: string;
   /** Injectables for tests. */
   spawnImpl?: typeof spawn;
   startTunnelImpl?: typeof startTunnel;
+  startNamedTunnelImpl?: typeof startNamedTunnel;
   fetchImpl?: typeof fetch;
 }
 
@@ -91,6 +113,70 @@ export function resolveUpPlan(config: AirlockConfig, opts: UpOptions = {}): UpPl
   };
 }
 
+/**
+ * Resolve durable-tunnel settings from `--durable` / `[tunnel].durable`. Returns
+ * the publisher's bring-your-own Cloudflare token + hostname, or null when durable
+ * mode isn't requested (the ephemeral quick tunnel is used instead). Throws an
+ * actionable error when durable is requested but the BYO credentials are missing.
+ */
+export function resolveDurableTunnel(
+  config: AirlockConfig,
+  opts: UpOptions = {},
+  env: NodeJS.ProcessEnv = process.env,
+): { token: string; hostname: string } | null {
+  let tcfg: ReturnType<typeof validateTunnel>;
+  try {
+    tcfg = validateTunnel(config);
+  } catch (err) {
+    if (err instanceof ZodError) {
+      throw new Error(
+        `invalid [tunnel] config: ${err.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+      );
+    }
+    throw err;
+  }
+
+  const durable = opts.durable ?? tcfg?.durable ?? false;
+  if (!durable) return null;
+
+  const token = env[CF_TUNNEL_TOKEN_ENV];
+  const hostname = tcfg?.hostname;
+  const missing: string[] = [];
+  if (!token)
+    missing.push(`export ${CF_TUNNEL_TOKEN_ENV}=<your Cloudflare Tunnel connector token>`);
+  if (!hostname)
+    missing.push('set [tunnel].hostname in .airlock/config.toml to the hostname you routed');
+  if (!token || !hostname) {
+    throw new Error(
+      'durable tunnel requested but your bring-your-own Cloudflare setup is incomplete:\n' +
+        missing.map((m) => `  • ${m}`).join('\n') +
+        '\nCreate the tunnel + Public Hostname in YOUR Cloudflare Zero Trust dashboard first — ' +
+        'see docs/durable-hosting.md. airlock holds no Cloudflare keys.',
+    );
+  }
+  return { token, hostname };
+}
+
+/**
+ * Merge connector tuning from the `[tunnel]` config block with CLI/option
+ * overrides (options win). Returns undefined when nothing is set, so cloudflared
+ * keeps its own defaults.
+ */
+export function resolveTunnelTuning(
+  config: AirlockConfig,
+  opts: UpOptions = {},
+): TunnelTuning | undefined {
+  const tcfg = validateTunnel(config);
+  const tuning: TunnelTuning = {};
+  const protocol = opts.cfProtocol ?? tcfg?.protocol;
+  const region = opts.cfRegion ?? tcfg?.region;
+  const metrics = opts.cfMetrics ?? tcfg?.metrics;
+  if (protocol) tuning.protocol = protocol;
+  if (region) tuning.region = region;
+  if (metrics) tuning.metrics = metrics;
+  return Object.keys(tuning).length > 0 ? tuning : undefined;
+}
+
 export interface UpHandle {
   /** The public URL, if a tunnel was opened. */
   url?: string;
@@ -120,7 +206,9 @@ async function waitForHealth(
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  throw new Error(`agent did not become healthy on :${port} within ${Math.round(timeoutMs / 1000)}s`);
+  throw new Error(
+    `agent did not become healthy on :${port} within ${Math.round(timeoutMs / 1000)}s`,
+  );
 }
 
 /**
@@ -135,10 +223,17 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
   const plan = resolveUpPlan(config, opts);
   const spawnFn = opts.spawnImpl ?? spawn;
   const startTunnelFn = opts.startTunnelImpl ?? startTunnel;
+  const startNamedTunnelFn = opts.startNamedTunnelImpl ?? startNamedTunnel;
   const fetchFn = opts.fetchImpl ?? fetch;
 
+  // Validate durable-tunnel BYO credentials up front (before spawning the agent),
+  // so a misconfigured `--durable` fails fast with actionable guidance.
+  const durable = opts.noTunnel ? null : resolveDurableTunnel(config, opts);
+
   console.log(`airlock up  →  starting agent: ${plan.python} -m airlock_agent (:${plan.port})`);
-  console.log(`  payment:  ${plan.env.PAYMENT_ENABLED === '1' ? `ON (wallet=${plan.env.PUBLISHER_WALLET})` : 'OFF'}`);
+  console.log(
+    `  payment:  ${plan.env.PAYMENT_ENABLED === '1' ? `ON (wallet=${plan.env.PUBLISHER_WALLET})` : 'OFF'}`,
+  );
 
   const child = spawnFn(plan.python, plan.args, {
     cwd,
@@ -159,14 +254,23 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
   }
 
   if (!opts.noTunnel) {
-    console.log('  opening public tunnel…');
-    tunnel = await startTunnelFn(plan.port);
-    console.log(`\n✓ live at  ${tunnel.url}`);
+    const tuning = resolveTunnelTuning(config, opts);
+    if (durable) {
+      console.log('  opening durable named tunnel on your Cloudflare account…');
+      tunnel = await startNamedTunnelFn(plan.port, { ...durable, tuning });
+      console.log(`\n✓ live (durable) at  ${tunnel.url}`);
+    } else {
+      console.log('  opening public tunnel…');
+      tunnel = await startTunnelFn(plan.port, { tuning });
+      console.log(`\n✓ live at  ${tunnel.url}`);
+    }
     console.log(`  callers POST to:  ${tunnel.url}/v1/chat/completions`);
   } else {
     console.log(`\n✓ agent live on 0.0.0.0:${plan.port} (no tunnel)`);
     console.log(`  local:        http://localhost:${plan.port}/v1/chat/completions`);
-    console.log(`  public host:  http://<this-server-ip>:${plan.port}/v1/chat/completions  (open the port / front with your own proxy)`);
+    console.log(
+      `  public host:  http://<this-server-ip>:${plan.port}/v1/chat/completions  (open the port / front with your own proxy)`,
+    );
   }
   console.log('  press Ctrl-C to stop');
 

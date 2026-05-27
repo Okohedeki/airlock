@@ -43,6 +43,30 @@ def default_usage_extractor(response: Response) -> Optional[int]:
     return None
 
 
+def _is_event_stream(response: Response) -> bool:
+    return response.headers.get("content-type", "").startswith("text/event-stream")
+
+
+def _usage_tokens_from_sse_line(line: str) -> Optional[int]:
+    """Pull `usage.total_tokens` out of one SSE `data:` frame, if present.
+
+    A streamed response can't carry the units header (it's unknown until the run
+    finishes), so per-token billing reads the final `usage` frame instead — the
+    same shape the Node forwarder scans for. See `serve.ts` pipeAndParseSse."""
+    line = line.strip()
+    if not line.startswith("data:"):
+        return None
+    payload = line[5:].strip()
+    if not payload or payload == "[DONE]":
+        return None
+    try:
+        usage = json.loads(payload).get("usage") or {}
+    except Exception:
+        return None
+    total = usage.get("total_tokens")
+    return total if isinstance(total, int) and total > 0 else None
+
+
 def _decode_payment_header(header: str) -> dict:
     decoded = base64.b64decode(header).decode("utf-8")
     return json.loads(decoded)
@@ -285,20 +309,48 @@ class PaymentMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
-        tokens = self.usage_extractor(response) or 0
-        if tokens > 0:
-            cost = _multiply_usdc(self.config.price_per_token_usdc, tokens)
-            try:
-                await self.ledger.debit(caller, cost)
-            except InsufficientBalanceError:
-                # Overdraft tolerated: drain remaining balance and return response.
-                try:
-                    await self.ledger.debit(caller, balance)
-                except InsufficientBalanceError:
-                    pass
-
         issued = session_header or await self.ledger.issue_session(caller)
         response.headers[SESSION_HEADER] = issued
         if settle_dict:
             response.headers[PAYMENT_RESPONSE_HEADER] = _encode_payment_response_header(settle_dict)
+
+        if _is_event_stream(response):
+            # Units arrive only in the stream's final `usage` frame, so tee the
+            # SSE through to the caller and debit once it ends — headers are
+            # already set above (they flush before the body streams).
+            response.body_iterator = self._meter_stream(response.body_iterator, caller, balance)
+            return response
+
+        await self._debit_tokens(caller, self.usage_extractor(response) or 0, balance)
         return response
+
+    async def _debit_tokens(self, caller: str, tokens: int, balance: str) -> None:
+        if tokens <= 0:
+            return
+        cost = _multiply_usdc(self.config.price_per_token_usdc, tokens)
+        try:
+            await self.ledger.debit(caller, cost)
+        except InsufficientBalanceError:
+            # Overdraft tolerated: drain remaining balance and move on.
+            try:
+                await self.ledger.debit(caller, balance)
+            except InsufficientBalanceError:
+                pass
+
+    async def _meter_stream(self, body_iterator: Any, caller: str, balance: str) -> Any:
+        """Pass SSE chunks straight through while scanning for the `usage` frame,
+        then debit once the stream ends (overdraft-tolerant)."""
+        tokens = 0
+        buf = ""
+        async for chunk in body_iterator:
+            yield chunk
+            try:
+                buf += chunk.decode("utf-8") if isinstance(chunk, (bytes, bytearray)) else str(chunk)
+            except Exception:
+                continue
+            while "\n" in buf:
+                line, buf = buf.split("\n", 1)
+                found = _usage_tokens_from_sse_line(line)
+                if found is not None:
+                    tokens = found
+        await self._debit_tokens(caller, tokens, balance)

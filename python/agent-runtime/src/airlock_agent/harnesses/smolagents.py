@@ -37,7 +37,15 @@ def drive(agent: Any, messages: list[dict[str, Any]]) -> AgentRunResult:
     tu = getattr(result, "token_usage", None)
     total = int(getattr(tu, "total_tokens", 0) or 0) if tu is not None else 0
     if total > 0:
-        return AgentRunResult(content=str(output), units=total, unit_label="tokens")
+        prompt = int(getattr(tu, "input_tokens", 0) or 0)
+        completion = int(getattr(tu, "output_tokens", 0) or 0)
+        return AgentRunResult(
+            content=str(output),
+            units=total,
+            unit_label="tokens",
+            prompt_tokens=prompt,
+            completion_tokens=completion,
+        )
     # token_usage is None when a step lacks usage (some local models); bill by steps.
     n = len(getattr(result, "steps", []) or []) or _steps(agent)
     return AgentRunResult(content=str(output), units=n, unit_label="steps")

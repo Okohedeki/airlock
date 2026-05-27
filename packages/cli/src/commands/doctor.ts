@@ -1,5 +1,11 @@
 import { ZodError } from 'zod';
-import { type AirlockConfig, readConfig, validatePayment } from '../config-file.js';
+import {
+  type AirlockConfig,
+  CF_TUNNEL_TOKEN_ENV,
+  readConfig,
+  validatePayment,
+  validateTunnel,
+} from '../config-file.js';
 
 export interface DoctorReport {
   ok: boolean;
@@ -43,6 +49,16 @@ export async function runDoctor(cwd: string): Promise<DoctorReport> {
     });
   }
 
+  if (config.project?.target === 'fly') {
+    findings.push({
+      level: 'warn',
+      message:
+        'target=fly is bring-your-own and currently UNPROVEN end-to-end (no off-box deploy verified yet). ' +
+        'You must provide: flyctl installed + `fly auth login`, and model secrets via `airlock secret set`. ' +
+        'airlock only wraps `fly deploy` — it operates no Fly infra. See docs/durable-hosting.md (Fly section).',
+    });
+  }
+
   if (!config.payment) {
     findings.push({ level: 'warn', message: 'no [payment] section — Agent will be free to call' });
   } else {
@@ -75,6 +91,63 @@ export async function runDoctor(cwd: string): Promise<DoctorReport> {
         findings.push({
           level: 'error',
           message: `payment config invalid: ${(err as Error).message}`,
+        });
+      }
+    }
+  }
+
+  // Durable public URL (bring-your-own Cloudflare). Spell out exactly which keys
+  // the publisher must provide — this is the headline of the durable-hosting flow.
+  if (config.tunnel) {
+    try {
+      const t = validateTunnel(config);
+      if (t?.durable) {
+        const tokenSet = !!process.env[CF_TUNNEL_TOKEN_ENV];
+        if (t.provider !== 'cloudflare') {
+          findings.push({
+            level: 'error',
+            message: `tunnel.provider must be "cloudflare", got "${t.provider}"`,
+          });
+        }
+        if (!t.hostname) {
+          findings.push({
+            level: 'error',
+            message:
+              'tunnel.durable=true but tunnel.hostname is unset — set it to the Public Hostname you routed in your Cloudflare Zero Trust dashboard',
+          });
+        }
+        if (!tokenSet) {
+          findings.push({
+            level: 'error',
+            message:
+              `tunnel.durable=true but ${CF_TUNNEL_TOKEN_ENV} is not set — export your own Cloudflare Tunnel connector token ` +
+              '(Zero Trust → Networks → Tunnels → your tunnel → token). airlock holds no Cloudflare keys.',
+          });
+        }
+        if (t.hostname && tokenSet) {
+          findings.push({
+            level: 'ok',
+            message: `durable tunnel ready: https://${t.hostname} via your Cloudflare account (${CF_TUNNEL_TOKEN_ENV} set)`,
+          });
+        }
+      } else {
+        findings.push({
+          level: 'ok',
+          message: 'tunnel: ephemeral quick tunnel (durable=false) — no Cloudflare account needed',
+        });
+      }
+    } catch (err) {
+      if (err instanceof ZodError) {
+        for (const issue of err.issues) {
+          findings.push({
+            level: 'error',
+            message: `tunnel.${issue.path.join('.')}: ${issue.message}`,
+          });
+        }
+      } else {
+        findings.push({
+          level: 'error',
+          message: `tunnel config invalid: ${(err as Error).message}`,
         });
       }
     }

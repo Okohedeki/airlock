@@ -96,4 +96,78 @@ describe('runDoctor', () => {
     expect(report.ok).toBe(true);
     expect(report.findings.some((f) => f.level === 'warn')).toBe(true);
   });
+
+  it('warns that target=fly is bring-your-own and unproven', async () => {
+    await writeConfig(cwd, { project: { name: 'a', target: 'fly', schemaVersion: 1 } });
+    const report = await runDoctor(cwd);
+    expect(
+      report.findings.some(
+        (f) => f.level === 'warn' && /fly.*(unproven|bring-your-own)/i.test(f.message),
+      ),
+    ).toBe(true);
+  });
+
+  describe('durable tunnel credential clarity', () => {
+    const TOKEN_ENV = 'AIRLOCK_CF_TUNNEL_TOKEN';
+    let prevToken: string | undefined;
+
+    beforeEach(() => {
+      prevToken = process.env[TOKEN_ENV];
+      delete process.env[TOKEN_ENV];
+    });
+    afterEach(() => {
+      if (prevToken === undefined) delete process.env[TOKEN_ENV];
+      else process.env[TOKEN_ENV] = prevToken;
+    });
+
+    it('errors and names the missing token when durable=true but env unset', async () => {
+      await writeConfig(cwd, {
+        project: { name: 'a', target: 'workers', schemaVersion: 1 },
+        tunnel: { durable: true, hostname: 'agent.example.com' },
+      });
+      const report = await runDoctor(cwd);
+      expect(report.ok).toBe(false);
+      expect(
+        report.findings.some((f) => f.level === 'error' && f.message.includes(TOKEN_ENV)),
+      ).toBe(true);
+    });
+
+    it('errors when durable=true but hostname is unset', async () => {
+      process.env[TOKEN_ENV] = 'tok';
+      await writeConfig(cwd, {
+        project: { name: 'a', target: 'workers', schemaVersion: 1 },
+        tunnel: { durable: true },
+      });
+      const report = await runDoctor(cwd);
+      expect(report.ok).toBe(false);
+      expect(report.findings.some((f) => f.level === 'error' && /hostname/i.test(f.message))).toBe(
+        true,
+      );
+    });
+
+    it('reports ready when both the token env and hostname are present', async () => {
+      process.env[TOKEN_ENV] = 'tok';
+      await writeConfig(cwd, {
+        project: { name: 'a', target: 'workers', schemaVersion: 1 },
+        tunnel: { durable: true, hostname: 'agent.example.com' },
+      });
+      const report = await runDoctor(cwd);
+      expect(report.ok).toBe(true);
+      expect(
+        report.findings.some((f) => f.level === 'ok' && /durable tunnel ready/i.test(f.message)),
+      ).toBe(true);
+    });
+
+    it('notes the ephemeral quick tunnel when durable=false', async () => {
+      await writeConfig(cwd, {
+        project: { name: 'a', target: 'workers', schemaVersion: 1 },
+        tunnel: { durable: false },
+      });
+      const report = await runDoctor(cwd);
+      expect(report.ok).toBe(true);
+      expect(report.findings.some((f) => f.level === 'ok' && /quick tunnel/i.test(f.message))).toBe(
+        true,
+      );
+    });
+  });
 });

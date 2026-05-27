@@ -1,3 +1,5 @@
+import json
+
 from airlock_agent import AgentRunResult, create_app
 from airlock_payment import parse_payment_config
 from fastapi.testclient import TestClient
@@ -130,3 +132,74 @@ def test_flood_beyond_queue_is_shed_with_429():
     assert codes.count(200) == 2  # 1 running + 1 queued
     assert codes.count(429) == 3  # the rest shed immediately
     assert all(r.json().get("error") for r in resps if r.status_code == 429)
+
+
+# ---- streaming (SSE) ----
+def _parse_sse(text):
+    """Return the list of parsed `data:` JSON frames (skipping comments/[DONE])."""
+    frames = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload and payload != "[DONE]":
+            frames.append(json.loads(payload))
+    return frames
+
+
+def test_stream_tier_a_buffered_adapter_emits_role_content_usage():
+    # FakeAdapter has no run_stream → Tier A (role frame, final content, usage).
+    r = _client().post(
+        "/v1/chat/completions",
+        json={"messages": [{"role": "user", "content": "hi"}], "stream": True},
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+    assert r.text.rstrip().endswith("[DONE]")
+    frames = _parse_sse(r.text)
+    assert frames[0]["choices"][0]["delta"] == {"role": "assistant"}
+    contents = "".join(
+        f["choices"][0]["delta"].get("content", "") for f in frames
+    )
+    assert contents == "answer: hi"
+    usage = next(f["usage"] for f in frames if "usage" in f)
+    assert usage["total_tokens"] == 42
+
+
+class StreamingAdapter:
+    """Exposes run_stream → exercises the Tier B native path (real deltas)."""
+
+    def run(self, messages):
+        return AgentRunResult(content="Hello world", units=9, prompt_tokens=4, completion_tokens=5)
+
+    def run_stream(self, messages):
+        for piece in ["Hello", " ", "world"]:
+            yield piece
+        yield AgentRunResult(content="Hello world", units=9, prompt_tokens=4, completion_tokens=5)
+
+
+def test_stream_tier_b_native_emits_incremental_deltas():
+    app = create_app(StreamingAdapter(), name="t")
+    import httpx
+
+    async def go():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+            async with client.stream(
+                "POST",
+                "/v1/chat/completions",
+                json={"messages": [{"role": "user", "content": "x"}], "stream": True},
+            ) as resp:
+                assert resp.status_code == 200
+                text = ""
+                async for chunk in resp.aiter_text():
+                    text += chunk
+                return text
+
+    text = asyncio.run(go())
+    frames = _parse_sse(text)
+    deltas = [f["choices"][0]["delta"].get("content") for f in frames if f["choices"][0]["delta"].get("content")]
+    assert deltas == ["Hello", " ", "world"]  # three separate incremental frames
+    usage = next(f["usage"] for f in frames if "usage" in f)
+    assert usage["total_tokens"] == 9
