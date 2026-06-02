@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "airlock-agent"
-version = "0.0.0"
+version = "0.1.0"
 description = "Deploy an agentic process (LangGraph/CrewAI/smolagents/custom) behind an OpenAI-compatible API with in-process x402 payment and airlock-config discovery."
 readme = "README.md"
 requires-python = ">=3.9"

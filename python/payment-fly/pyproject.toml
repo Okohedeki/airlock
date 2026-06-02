@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "airlock-payment"
-version = "0.0.0"
+version = "0.1.0"
 description = "x402 Payment Middleware for Python ASGI apps (FastAPI / Starlette) on the Fly Recipe."
 readme = "README.md"
 requires-python = ">=3.9"

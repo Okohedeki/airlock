@@ -30,7 +30,7 @@ export async function runDoctor(cwd: string): Promise<DoctorReport> {
   } catch (err) {
     findings.push({
       level: 'error',
-      message: `no .airlock/config.toml — run \`airlock init <name> --target=workers|fly\`. (${(err as Error).message})`,
+      message: `no .airlock/config.toml — run \`airlock init <name>\`. (${(err as Error).message})`,
     });
     return { ok: false, findings };
   }
@@ -42,20 +42,10 @@ export async function runDoctor(cwd: string): Promise<DoctorReport> {
     });
   }
 
-  if (config.project?.target !== 'workers' && config.project?.target !== 'fly') {
+  if (config.project?.target !== 'workers') {
     findings.push({
       level: 'error',
-      message: `project.target must be "workers" or "fly", got "${config.project?.target}"`,
-    });
-  }
-
-  if (config.project?.target === 'fly') {
-    findings.push({
-      level: 'warn',
-      message:
-        'target=fly is bring-your-own and currently UNPROVEN end-to-end (no off-box deploy verified yet). ' +
-        'You must provide: flyctl installed + `fly auth login`, and model secrets via `airlock secret set`. ' +
-        'airlock only wraps `fly deploy` — it operates no Fly infra. See docs/durable-hosting.md (Fly section).',
+      message: `project.target must be "workers", got "${config.project?.target}"`,
     });
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "@airlockhq/payment-workers",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "x402 Payment Middleware for Cloudflare Workers — wraps a fetch handler, enforces payment per call.",
   "type": "module",

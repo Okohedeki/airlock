@@ -35,7 +35,7 @@ export type TunnelConfig = z.infer<typeof TunnelConfigSchema>;
 /**
  * Who runs the agent's compute. `self-hosted` = the publisher's own hardware
  * (Mac mini / server / a cloud they own), fronted by an airlock tunnel.
- * `airlock-hosted` = airlock runs a per-agent microVM on its own Fly org.
+ * `airlock-hosted` = airlock runs a per-agent microVM on its own org.
  * Optional for back-compat; absent ≈ self-hosted-on-your-own-cloud (the
  * original `target`-driven deploy).
  */

@@ -27,7 +27,7 @@ describe('runDoctor', () => {
 
   it('passes on a valid config with a real wallet and payment disabled', async () => {
     await writeConfig(cwd, {
-      project: { name: 'a', target: 'fly', schemaVersion: 1 },
+      project: { name: 'a', target: 'workers', schemaVersion: 1 },
       payment: {
         enabled: false,
         wallet: REAL_WALLET,
@@ -44,7 +44,7 @@ describe('runDoctor', () => {
 
   it('flags the placeholder wallet as an error when payment is enabled', async () => {
     await writeConfig(cwd, {
-      project: { name: 'a', target: 'fly', schemaVersion: 1 },
+      project: { name: 'a', target: 'workers', schemaVersion: 1 },
       payment: {
         enabled: true,
         wallet: '0x0000000000000000000000000000000000000001',
@@ -64,7 +64,7 @@ describe('runDoctor', () => {
 
   it('reports Zod errors for invalid payment config', async () => {
     await writeConfig(cwd, {
-      project: { name: 'a', target: 'fly', schemaVersion: 1 },
+      project: { name: 'a', target: 'workers', schemaVersion: 1 },
       payment: {
         enabled: true,
         wallet: 'not-an-address',
@@ -91,18 +91,19 @@ describe('runDoctor', () => {
   });
 
   it('warns (not errors) when payment section is absent', async () => {
-    await writeConfig(cwd, { project: { name: 'a', target: 'fly', schemaVersion: 1 } });
+    await writeConfig(cwd, { project: { name: 'a', target: 'workers', schemaVersion: 1 } });
     const report = await runDoctor(cwd);
     expect(report.ok).toBe(true);
     expect(report.findings.some((f) => f.level === 'warn')).toBe(true);
   });
 
-  it('warns that target=fly is bring-your-own and unproven', async () => {
-    await writeConfig(cwd, { project: { name: 'a', target: 'fly', schemaVersion: 1 } });
+  it('rejects legacy target=fly with a clear error', async () => {
+    await writeConfig(cwd, { project: { name: 'a', target: 'fly' as 'workers', schemaVersion: 1 } });
     const report = await runDoctor(cwd);
+    expect(report.ok).toBe(false);
     expect(
       report.findings.some(
-        (f) => f.level === 'warn' && /fly.*(unproven|bring-your-own)/i.test(f.message),
+        (f) => f.level === 'error' && /target.*workers/i.test(f.message),
       ),
     ).toBe(true);
   });

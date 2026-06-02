@@ -1,6 +1,6 @@
 {
   "name": "@airlockhq/server",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "airlock backend — GitHub OAuth (web + device flow), dashboard, SQLite-backed projects/inspect store. Runs on :8787 in dev.",
   "type": "module",

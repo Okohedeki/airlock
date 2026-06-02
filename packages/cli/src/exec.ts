@@ -24,21 +24,26 @@ export class TargetBinaryMissingError extends Error {
   }
 }
 
+/** Throw a clear error for legacy `target='fly'` configs — Fly deploy is no longer supported. */
+function assertWorkers(target: Target): void {
+  if (target !== 'workers') {
+    throw new Error(
+      `project.target must be "workers" (got "${target}"). Fly deploy is no longer supported; ` +
+        `update .airlock/config.toml or self-host via \`airlock up\`.`,
+    );
+  }
+}
+
 /** Map a Target to the publisher's CLI binary name. */
 export function targetBinary(target: Target): string {
-  switch (target) {
-    case 'workers':
-      return 'wrangler';
-    case 'fly':
-      return 'fly';
-  }
+  assertWorkers(target);
+  return 'wrangler';
 }
 
 /** Install-hint URL printed when the target binary is missing. */
 export function installUrlFor(target: Target): string {
-  return target === 'workers'
-    ? 'https://developers.cloudflare.com/workers/wrangler/install-and-update/'
-    : 'https://fly.io/docs/flyctl/install/';
+  assertWorkers(target);
+  return 'https://developers.cloudflare.com/workers/wrangler/install-and-update/';
 }
 
 export interface CommandBuild {
@@ -48,23 +53,20 @@ export interface CommandBuild {
 
 /** `airlock deploy` — pushes the project to its Target. */
 export function buildDeploy(config: AirlockConfig): CommandBuild {
-  const target = config.project.target;
-  if (target === 'workers') return { binary: 'wrangler', args: ['deploy'] };
-  return { binary: 'fly', args: ['deploy', '--app', config.project.name] };
+  assertWorkers(config.project.target);
+  return { binary: 'wrangler', args: ['deploy'] };
 }
 
 /** `airlock delete` — tears down the deployment. */
 export function buildDelete(config: AirlockConfig): CommandBuild {
-  const target = config.project.target;
-  if (target === 'workers') return { binary: 'wrangler', args: ['delete'] };
-  return { binary: 'fly', args: ['apps', 'destroy', config.project.name, '--yes'] };
+  assertWorkers(config.project.target);
+  return { binary: 'wrangler', args: ['delete'] };
 }
 
 /** `airlock logs` — stream live logs from the deployment. */
 export function buildLogs(config: AirlockConfig): CommandBuild {
-  const target = config.project.target;
-  if (target === 'workers') return { binary: 'wrangler', args: ['tail'] };
-  return { binary: 'fly', args: ['logs', '--app', config.project.name] };
+  assertWorkers(config.project.target);
+  return { binary: 'wrangler', args: ['tail'] };
 }
 
 export type SecretAction = 'set' | 'list' | 'rm';
@@ -75,29 +77,15 @@ export function buildSecret(
   action: SecretAction,
   arg?: string,
 ): CommandBuild {
-  const target = config.project.target;
-  if (target === 'workers') {
-    if (action === 'set') {
-      const name = (arg ?? '').split('=', 1)[0];
-      if (!name) throw new Error('secret set requires NAME=VALUE');
-      return { binary: 'wrangler', args: ['secret', 'put', name] };
-    }
-    if (action === 'list') return { binary: 'wrangler', args: ['secret', 'list'] };
-    if (action === 'rm') {
-      if (!arg) throw new Error('secret rm requires a NAME');
-      return { binary: 'wrangler', args: ['secret', 'delete', arg] };
-    }
-  }
-  // fly
+  assertWorkers(config.project.target);
   if (action === 'set') {
-    if (!arg?.includes('=')) throw new Error('secret set requires NAME=VALUE');
-    return { binary: 'fly', args: ['secrets', 'set', arg, '--app', config.project.name] };
+    const name = (arg ?? '').split('=', 1)[0];
+    if (!name) throw new Error('secret set requires NAME=VALUE');
+    return { binary: 'wrangler', args: ['secret', 'put', name] };
   }
-  if (action === 'list') {
-    return { binary: 'fly', args: ['secrets', 'list', '--app', config.project.name] };
-  }
+  if (action === 'list') return { binary: 'wrangler', args: ['secret', 'list'] };
   if (!arg) throw new Error('secret rm requires a NAME');
-  return { binary: 'fly', args: ['secrets', 'unset', arg, '--app', config.project.name] };
+  return { binary: 'wrangler', args: ['secret', 'delete', arg] };
 }
 
 export type DomainAction = 'add' | 'rm';
@@ -108,19 +96,10 @@ export function buildDomain(
   action: DomainAction,
   hostname: string,
 ): CommandBuild {
+  assertWorkers(config.project.target);
   if (!hostname) throw new Error('domain command requires a HOSTNAME');
-  const target = config.project.target;
-  if (target === 'workers') {
-    return {
-      binary: 'wrangler',
-      args: action === 'add' ? ['domains', 'add', hostname] : ['domains', 'remove', hostname],
-    };
-  }
   return {
-    binary: 'fly',
-    args:
-      action === 'add'
-        ? ['certs', 'add', hostname, '--app', config.project.name]
-        : ['certs', 'remove', hostname, '--app', config.project.name],
+    binary: 'wrangler',
+    args: action === 'add' ? ['domains', 'add', hostname] : ['domains', 'remove', hostname],
   };
 }

@@ -207,7 +207,7 @@ async function main() {
 
   program
     .command('deploy')
-    .description('Ship the Agent to the Target (wraps wrangler/fly deploy)')
+    .description('Ship the Agent to the Target (wraps `wrangler deploy`)')
     .action(async () => process.exit(await runWithConfig(buildDeploy)));
 
   program
@@ -223,7 +223,7 @@ async function main() {
   const secret = program.command('secret').description('Manage secrets on the Target');
   secret
     .command('set <name=value>')
-    .description('Set a secret (workers prompts, fly takes NAME=VALUE)')
+    .description('Set a secret (wrangler prompts for the value via stdin)')
     .action(async (arg: string) =>
       process.exit(await runWithConfig((c) => buildSecret(c, 'set' as SecretAction, arg))),
     );

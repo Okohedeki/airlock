@@ -1,6 +1,6 @@
 {
   "name": "@airlockhq/payment-fly-node",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "x402 Payment Middleware for Node.js / Express on the Fly Recipe — wraps an async handler, enforces payment per call.",
   "type": "module",
