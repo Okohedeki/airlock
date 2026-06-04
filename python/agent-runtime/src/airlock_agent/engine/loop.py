@@ -59,6 +59,8 @@ class RunContext:
     dispatch_wrapper: Callable[[Callable[..., Any], str, dict], Any] | None = None  # 04/06
     on_step: Callable[[StepEvent], None] | None = None  # epic 05
     snapshot: Callable[[int, list[StepEvent]], None] | None = None  # epic 04
+    replay: dict[int, dict] | None = None  # epic 04 resume/fork: idx -> recorded {tool, output}
+    prices: dict[str, float] | None = None  # epic 05: binding name -> USD per 1k tokens
 
     def emit(self, ev: StepEvent) -> None:
         if self.on_step is not None:
@@ -155,32 +157,48 @@ def _run_own(binding: Binding, messages: list[dict[str, Any]], ctx: RunContext) 
 
         if isinstance(action, ModelCall):
             t0 = time.monotonic()
+            binding_name = _resolve_binding_name(ctx, action)
             caller = _resolve_caller(ctx, action)
             mr = caller(action.messages or messages)
+            price = (ctx.prices or {}).get(binding_name, 0.0)
             ev = StepEvent(
                 index=idx, type=StepType.MODEL, input=action.messages or messages,
                 output=(mr.data if mr.data is not None else mr.content),
                 tokens=mr.total, prompt_tokens=mr.prompt_tokens,
                 completion_tokens=mr.completion_tokens,
                 duration_ms=(time.monotonic() - t0) * 1000,
-                model=(_resolve_binding_name(ctx, action)),
+                cost_usd=mr.total / 1000.0 * price,
+                model=binding_name,
             )
             total_tokens += mr.total
             pt += mr.prompt_tokens
             ct += mr.completion_tokens
 
         elif isinstance(action, ToolCall):
+            # Resume/fork (epic 04): re-feed a recorded tool result instead of dispatching,
+            # so an already-executed (possibly side-effecting) tool never fires twice.
+            recorded = ctx.replay.get(idx) if ctx.replay else None
+            if recorded is not None and recorded.get("tool") == action.name:
+                ev = StepEvent(index=idx, type=StepType.TOOL_RESULT, tool=action.name,
+                               input=action.args, output=recorded.get("output"),
+                               status=StepStatus.OK, error="replayed")
+                history.append(ev)
+                ctx.emit(ev)
+                idx += 1
+                continue
             # Guard the pending tool call BEFORE dispatch (epic 02 — WRAP-ok seam).
             sig: ControlSignal = ctx.control_source.gate(action)
             if sig.action == "kill":
                 ev = StepEvent(index=idx, type=StepType.TOOL_CALL, tool=action.name,
                                input=action.args, status=StepStatus.KILLED, error=sig.reason)
-                history.append(ev); ctx.emit(ev)
+                history.append(ev)
+                ctx.emit(ev)
                 return _finish(history, "", total_tokens, pt, ct, StepStatus.KILLED)
             if sig.action == "pause":
                 ev = StepEvent(index=idx, type=StepType.TOOL_CALL, tool=action.name,
                                input=action.args, status=StepStatus.BLOCKED, error=sig.reason)
-                history.append(ev); ctx.emit(ev)
+                history.append(ev)
+                ctx.emit(ev)
                 if ctx.snapshot:
                     ctx.snapshot(idx, history)
                 return _finish(history, "", total_tokens, pt, ct, StepStatus.BLOCKED)
@@ -204,7 +222,8 @@ def _run_own(binding: Binding, messages: list[dict[str, Any]], ctx: RunContext) 
             total_tokens += action.tokens
             pt += action.prompt_tokens
             ct += action.completion_tokens
-            history.append(ev); ctx.emit(ev)
+            history.append(ev)
+            ctx.emit(ev)
             if ctx.snapshot:
                 ctx.snapshot(idx, history)
             return _finish(history, action.content, total_tokens, pt, ct, StepStatus.OK)

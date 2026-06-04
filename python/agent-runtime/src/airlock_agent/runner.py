@@ -95,6 +95,16 @@ class EngineRunner:
         default = self.pricing.get("default") or self.pricing.get("models", {}).get("default") or {}
         return float(default.get("per_1k") or default.get("usd_per_1k") or 0.0)
 
+    def _prices(self) -> dict[str, float]:
+        """binding name -> USD per 1k tokens, from `pricing` (epic 05 per-step cost).
+        Accepts `pricing.models.<name>.per_1k` or `pricing.<name>.per_1k`."""
+        out: dict[str, float] = {}
+        models = self.pricing.get("models") if isinstance(self.pricing.get("models"), dict) else {}
+        for name, cfg in {**self.pricing, **models}.items():
+            if isinstance(cfg, dict) and ("per_1k" in cfg or "usd_per_1k" in cfg):
+                out[name] = float(cfg.get("per_1k") or cfg.get("usd_per_1k") or 0.0)
+        return out
+
     def _dispatch_wrapper(self, scoped, session: str) -> Callable | None:
         """Compose: tool-result cache (04) → sandbox (06) → tool-fallback (03).
         Cache is outermost so a hit short-circuits before any sandbox spawn (C3)."""
@@ -134,6 +144,7 @@ class EngineRunner:
         session: str = "default",
         run_id: str | None = None,
         on_step: Callable[[StepEvent], None] | None = None,
+        replay: dict[int, dict] | None = None,
     ) -> AgentRunResult:
         # Input guard (epic 13) — before any model call.
         shaping.guard_input(messages, self.io_cfg.get("input_guards"))
@@ -170,6 +181,8 @@ class EngineRunner:
             dispatch_wrapper=self._dispatch_wrapper(scoped, session),
             on_step=step_sink,
             snapshot=snapshot,
+            replay=replay,
+            prices=self._prices(),
         )
         result = run_loop(binding, messages, ctx)
 
@@ -195,9 +208,52 @@ class EngineRunner:
         scoped.set(f"_runs/{run_id}", {
             "run_id": run_id, "session": session, "tenant": tenant, "status": status,
             "tokens": result.units, "content": result.content, "steps": steps,
-            "started": _now(), "n_steps": len(steps),
+            "messages": messages, "started": _now(), "n_steps": len(steps),
         })
         return result
+
+    # ---- resume / fork (epic 04) ------------------------------------------
+    def _load_run(self, run_id: str, tenant: str) -> dict[str, Any]:
+        entry = self.store.scoped(tenant).get(f"_runs/{run_id}")
+        if not entry:
+            raise KeyError(f"no such run '{run_id}'")
+        return entry
+
+    @staticmethod
+    def _replay_from(steps: list[dict], up_to: int | None = None) -> dict[int, dict]:
+        """Build the index→recorded map from a run's tool_result steps (OK only).
+        `up_to` (fork) keeps only steps with index < up_to."""
+        out: dict[int, dict] = {}
+        for s in steps:
+            if s.get("type") == "tool_result" and s.get("status") == "ok":
+                i = int(s.get("index", -1))
+                if up_to is None or i < up_to:
+                    out[i] = {"tool": s.get("tool"), "output": s.get("output")}
+        return out
+
+    def resume(self, run_id: str, *, tenant: str = "default", session: str | None = None,
+               on_step: Callable[[StepEvent], None] | None = None) -> AgentRunResult:
+        """Re-run from the recorded run, re-feeding every recorded tool result so a
+        side-effecting tool never fires twice; model calls re-run live."""
+        entry = self._load_run(run_id, tenant)
+        replay = self._replay_from(entry.get("steps") or [])
+        return self.run(entry.get("messages") or [], tenant=tenant,
+                        session=session or entry.get("session", "default"),
+                        run_id=f"{run_id}-resume", on_step=on_step, replay=replay)
+
+    def fork(self, run_id: str, at_step: int, *, tenant: str = "default",
+             session: str | None = None, append: str | None = None,
+             on_step: Callable[[StepEvent], None] | None = None) -> AgentRunResult:
+        """Replay only steps before `at_step`, then continue live — so the run diverges
+        only after step N. `append` injects one change (an extra user message)."""
+        entry = self._load_run(run_id, tenant)
+        replay = self._replay_from(entry.get("steps") or [], up_to=at_step)
+        messages = list(entry.get("messages") or [])
+        if append:
+            messages = messages + [{"role": "user", "content": append}]
+        return self.run(messages, tenant=tenant,
+                        session=session or entry.get("session", "default"),
+                        run_id=f"{run_id}-fork{at_step}", on_step=on_step, replay=replay)
 
 
 def _tool_hash(name: str, args: dict) -> str:

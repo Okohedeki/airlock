@@ -378,6 +378,42 @@ def create_app(
 
     app.add_api_route("/v1/runs/{run_id}/decision", decide, methods=["POST"])
 
+    # ---- resume / fork (epic 04) --------------------------------------------
+    async def resume(request: Request, run_id: str):
+        if not hasattr(runner, "resume"):
+            return JSONResponse({"error": "resume not supported"}, status_code=400)
+        tenant = request.query_params.get("tenant", "default")
+        gate = _ensure_gate()
+        await gate.acquire()
+        try:
+            res = await run_in_threadpool(lambda: runner.resume(run_id, tenant=tenant))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        finally:
+            gate.release()
+        return JSONResponse({"resumed": run_id, "content": res.content, "units": res.units})
+
+    async def fork(request: Request, run_id: str):
+        if not hasattr(runner, "fork"):
+            return JSONResponse({"error": "fork not supported"}, status_code=400)
+        body = await request.json()
+        at_step = int(body.get("at_step", 0))
+        tenant = request.query_params.get("tenant", "default")
+        gate = _ensure_gate()
+        await gate.acquire()
+        try:
+            res = await run_in_threadpool(
+                lambda: runner.fork(run_id, at_step, tenant=tenant, append=body.get("append"))
+            )
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        finally:
+            gate.release()
+        return JSONResponse({"forked": run_id, "at_step": at_step, "content": res.content})
+
+    app.add_api_route("/v1/runs/{run_id}/resume", resume, methods=["POST"])
+    app.add_api_route("/v1/runs/{run_id}/fork", fork, methods=["POST"])
+
     # ---- console read APIs (epic 05 / operator console) ---------------------
     @app.get("/v1/manifest")
     def manifest_view():

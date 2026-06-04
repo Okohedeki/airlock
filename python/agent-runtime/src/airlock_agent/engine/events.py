@@ -38,6 +38,7 @@ class StepEvent:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     duration_ms: float = 0.0
+    cost_usd: float = 0.0  # per-step $ for MODEL steps (epic 05; 0 when no price/unknown)
     status: StepStatus = StepStatus.OK
     tool: str | None = None  # tool name when type is TOOL_*
     model: str | None = None  # binding name when type is MODEL (epic 03)
@@ -53,6 +54,7 @@ class StepEvent:
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "duration_ms": round(self.duration_ms, 3),
+            "cost_usd": round(self.cost_usd, 6),
             "status": self.status.value,
             "tool": self.tool,
             "model": self.model,

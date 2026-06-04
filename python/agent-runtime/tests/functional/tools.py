@@ -20,3 +20,21 @@ def slow(seconds: float = 30.0, **kw):
 
 def boom(**kw):
     raise RuntimeError("tool failed on purpose")
+
+
+# A side-effecting tool with a call counter — used to prove resume/fork don't re-run
+# already-executed tools.
+_CALLS = {"bump": 0}
+
+
+def bump(**kw):
+    _CALLS["bump"] += 1
+    return {"calls": _CALLS["bump"]}
+
+
+def bump_count() -> int:
+    return _CALLS["bump"]
+
+
+def reset_bump() -> None:
+    _CALLS["bump"] = 0

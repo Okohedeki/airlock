@@ -141,7 +141,8 @@ function stepCard(s) {
   const cls = ['step', s.type, 's-'+(s.status||'ok')].join(' ');
   const out = s.output!=null ? `<div class="out">${esc(typeof s.output==='object'?JSON.stringify(s.output):s.output).slice(0,400)}</div>` : '';
   const meta = [s.model&&('model='+s.model), s.tool&&('tool='+s.tool),
-                s.tokens?(s.tokens+' tok'):null, s.duration_ms?(Math.round(s.duration_ms)+'ms'):null,
+                s.tokens?(s.tokens+' tok'):null, s.cost_usd?('$'+Number(s.cost_usd).toFixed(4)):null,
+                s.duration_ms?(Math.round(s.duration_ms)+'ms'):null,
                 s.stop_reason].filter(Boolean).join(' · ');
   return `<div class="${cls}"><div class="idx">#${s.index}</div><div class="body">
      <span class="ty">${esc(s.type)}</span> <span class="badge ${s.status}">${esc(s.status||'ok')}</span>
