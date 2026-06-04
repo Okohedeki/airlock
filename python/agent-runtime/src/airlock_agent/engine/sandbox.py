@@ -26,6 +26,15 @@ class SandboxViolation(RuntimeError):
 
 
 def _child(conn, tool: Callable, args: dict, limits: dict) -> None:  # pragma: no cover - subprocess
+    # Reset inherited signal handlers (the parent may be uvicorn, which installs its own
+    # SIGTERM/SIGINT handlers — otherwise a terminate() wouldn't actually kill us).
+    try:
+        import signal
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, signal.SIG_DFL)
+    except Exception:
+        pass
     try:
         import resource
 
@@ -70,7 +79,7 @@ def run_sandboxed(tool: Callable, args: dict, limits: dict) -> Any:
     child.close()
     proc.join(lim["wall_s"])
     if proc.is_alive():
-        proc.terminate()
+        proc.kill()  # SIGKILL — uncatchable, so an inherited SIGTERM handler can't keep it alive
         proc.join()
         raise SandboxViolation(f"tool exceeded wall_s={lim['wall_s']}s")
     if proc.exitcode and proc.exitcode < 0:  # killed by a signal (SIGXCPU/SIGKILL/OOM)

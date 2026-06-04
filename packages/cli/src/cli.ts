@@ -399,6 +399,7 @@ async function main() {
     .option('--mount', 'dev: mount the project into the base image instead of a built image')
     .option('--env-file <path>', 'pass an env file to the container (--docker)')
     .option('--profile <name>', 'run a worker.yaml variant/profile (e.g. internal | external)')
+    .option('--hostname <host>', 'durable-tunnel hostname (with --durable + AIRLOCK_CF_TUNNEL_TOKEN)')
     .action(
       async (opts: {
         port: string;
@@ -417,6 +418,7 @@ async function main() {
         mount?: boolean;
         envFile?: string;
         profile?: string;
+        hostname?: string;
       }) => {
         const port = Number.parseInt(opts.port, 10);
         if (!Number.isFinite(port) || port <= 0) {
@@ -452,6 +454,7 @@ async function main() {
             mount: opts.mount,
             envFile: opts.envFile,
             profile: opts.profile,
+            hostname: opts.hostname,
           });
           const shutdown = async () => {
             await handle.stop();

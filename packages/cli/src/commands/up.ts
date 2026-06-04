@@ -65,6 +65,8 @@ export interface UpOptions {
   envFile?: string;
   /** Variant/profile to run (sets AIRLOCK_PROFILE) — e.g. internal | external. */
   profile?: string;
+  /** Durable-tunnel hostname (bring-your-own Cloudflare) for worker.yaml projects. */
+  hostname?: string;
   /** Injectables for tests. */
   spawnImpl?: typeof spawn;
   startTunnelImpl?: typeof startTunnel;
@@ -142,12 +144,13 @@ export function resolveDurableTunnel(
   if (!durable) return null;
 
   const token = env[CF_TUNNEL_TOKEN_ENV];
-  const hostname = tcfg?.hostname;
+  // hostname from --hostname (worker.yaml projects), else legacy [tunnel].hostname.
+  const hostname = opts.hostname ?? tcfg?.hostname;
   const missing: string[] = [];
   if (!token)
     missing.push(`export ${CF_TUNNEL_TOKEN_ENV}=<your Cloudflare Tunnel connector token>`);
   if (!hostname)
-    missing.push('set [tunnel].hostname in .airlock/config.toml to the hostname you routed');
+    missing.push('pass --hostname <the hostname you routed> (or set [tunnel].hostname)');
   if (!token || !hostname) {
     throw new Error(
       'durable tunnel requested but your bring-your-own Cloudflare setup is incomplete:\n' +

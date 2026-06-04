@@ -32,6 +32,7 @@ class ModelResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     data: Any = None  # structured payload (e.g. OpenAI tool_calls) the planner reads back
+    model: str | None = None  # the actual model that served (for the StepEvent trace)
 
     @property
     def total(self) -> int:
@@ -168,7 +169,7 @@ def _run_own(binding: Binding, messages: list[dict[str, Any]], ctx: RunContext) 
                 completion_tokens=mr.completion_tokens,
                 duration_ms=(time.monotonic() - t0) * 1000,
                 cost_usd=mr.total / 1000.0 * price,
-                model=binding_name,
+                model=(mr.model or binding_name),
             )
             total_tokens += mr.total
             pt += mr.prompt_tokens
@@ -308,7 +309,8 @@ def _last_text(history: list[StepEvent]) -> str:
 
 def _finish(history: list[StepEvent], content: str, total: int, pt: int, ct: int,
             status: StepStatus, reason: str | None = None) -> AgentRunResult:
-    return AgentRunResult(
-        content=content, units=total, prompt_tokens=pt, completion_tokens=ct,
-        steps=[ev.to_dict() | ({"stop_reason": reason} if reason else {}) for ev in history],
-    )
+    # The stop reason belongs to the boundary (last) step only — not every step.
+    steps = [ev.to_dict() for ev in history]
+    if reason and steps:
+        steps[-1]["stop_reason"] = reason
+    return AgentRunResult(content=content, units=total, prompt_tokens=pt, completion_tokens=ct, steps=steps)

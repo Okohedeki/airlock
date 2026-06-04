@@ -45,8 +45,9 @@ def test_model_switching_routes_per_step(client_factory, mock_model_url):
     r = c.post("/v1/chat/completions", json={
         "messages": [{"role": "user", "content": "hi"}], "include_steps": True})
     model_steps = [s for s in r.json()["steps"] if s["type"] == "model"]
-    assert model_steps and model_steps[0]["model"] == "default"
-    # The model output echoes the model NAME the endpoint received ("m-smart").
+    # The step trace records the ACTUAL model that served (not the binding name) so
+    # model switching is visible in observability.
+    assert model_steps and model_steps[0]["model"] == "m-smart"
     assert "m-smart" in str(model_steps[0]["output"])
 
 

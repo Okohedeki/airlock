@@ -46,6 +46,7 @@ def http_model_caller(endpoint: str, model: str, env_key: str = "OPENAI_API_KEY"
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
             data=msg,  # the full assistant message (content + tool_calls)
+            model=data.get("model") or model,  # what actually served (for the trace)
         )
 
     return call
