@@ -26,6 +26,23 @@ airlock up --docker --mount   # mounts the project into the base image
   the host path does (the tunnel stays host-side — no creds in the image). `--image <ref>`
   runs a specific image; `--env-file` passes secrets.
 
+### Persistent (non-ephemeral) public URL — bring your own Cloudflare
+
+The default `*.trycloudflare.com` URL is **ephemeral** (it changes each run and dies with the
+process). For a **stable** URL on your own domain, use a durable named tunnel with your own
+Cloudflare account:
+
+```bash
+# one-time in your Cloudflare Zero Trust dashboard: create a Tunnel, copy its connector token,
+# and route a Public Hostname (e.g. agent.yourdomain.com) to http://localhost:<port>
+export AIRLOCK_CF_TUNNEL_TOKEN=<your connector token>
+airlock up --docker --durable --hostname agent.yourdomain.com
+```
+
+airlock holds no Cloudflare keys — the token is yours and stays on your machine. Without
+`--durable` you get the throwaway quick tunnel. (The same `--durable`/`--hostname` flags work
+on the host path too.)
+
 ## The control plane is unchanged
 
 Containerizing changes *packaging*, not *control*. All 13 features stay driven by the same
