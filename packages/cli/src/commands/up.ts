@@ -13,6 +13,8 @@
  */
 
 import { type ChildProcess, spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { ZodError } from 'zod';
 import {
   type AirlockConfig,
@@ -71,10 +73,15 @@ export interface UpPlan {
  * Throws if there's no `[agent]` block — `up` runs a config-bound harness.
  */
 export function resolveUpPlan(config: AirlockConfig, opts: UpOptions = {}): UpPlan {
-  if (!config.agent?.entrypoint) {
+  // The redesign runtime boots from worker.yaml (epic 07): if one is present, `up`
+  // just spawns it — the worker.yaml supplies harness/entrypoint/tools/models. The
+  // legacy [agent] block is still accepted during the deprecation window.
+  const cwd = opts.cwd ?? process.cwd();
+  const hasWorkerYaml = existsSync(resolve(cwd, 'worker.yaml'));
+  if (!config.agent?.entrypoint && !hasWorkerYaml) {
     throw new Error(
-      'airlock up runs a config-bound agent, but no [agent] block was found in ' +
-        '.airlock/config.toml. Run `airlock init --detect` to wire one.',
+      'airlock up needs a worker.yaml (run `airlock init` or `airlock migrate`), ' +
+        'or a legacy [agent] block in .airlock/config.toml (`airlock init --detect`).',
     );
   }
   const port = opts.port ?? 3000;
@@ -202,7 +209,15 @@ async function waitForHealth(
  */
 export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
   const cwd = opts.cwd ?? process.cwd();
-  const config = await readConfig(cwd);
+  // worker.yaml-only projects have no .airlock/config.toml — tolerate its absence
+  // and fall back to a minimal config (the runtime reads worker.yaml itself).
+  let config: AirlockConfig;
+  try {
+    config = await readConfig(cwd);
+  } catch (err) {
+    if (!existsSync(resolve(cwd, 'worker.yaml'))) throw err;
+    config = { project: { name: 'worker' } } as AirlockConfig;
+  }
   const plan = resolveUpPlan(config, opts);
   const spawnFn = opts.spawnImpl ?? spawn;
   const startTunnelFn = opts.startTunnelImpl ?? startTunnel;

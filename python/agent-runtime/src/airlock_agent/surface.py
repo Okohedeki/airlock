@@ -267,6 +267,54 @@ def create_app(
 
     app.add_api_route("/skills/{skill_id}", skill, methods=["POST"])
 
+    # ---- webhook triggers (epic 11) -----------------------------------------
+    # A signed POST to /hooks/<path> starts a run — a trigger is just another
+    # request source. Declared in worker.yaml `triggers.webhook`.
+    import os as _os
+
+    from .triggers import map_event_input, verify_hmac_sha256
+
+    manifest = getattr(runner, "m", None)
+    webhooks = (manifest.block("triggers").get("webhook") if manifest else None) or []
+    for hook in webhooks:
+        path = hook.get("path")
+        if not path:
+            continue
+
+        def make_handler(hook_cfg):
+            secret_env = hook_cfg.get("secret_env")
+            mapping = hook_cfg.get("input")
+            if isinstance(mapping, str):  # `input: issue.title` shorthand
+                mapping = {"input": mapping}
+
+            async def webhook(request: Request):
+                raw = await request.body()
+                if secret_env:
+                    sig = request.headers.get("X-Hub-Signature-256") or request.headers.get("X-Signature", "")
+                    secret = _os.environ.get(secret_env, "")
+                    if not secret or not verify_hmac_sha256(secret, raw, sig):
+                        return JSONResponse({"error": "bad signature"}, status_code=401)
+                try:
+                    payload = json.loads(raw or b"{}")
+                except json.JSONDecodeError:
+                    payload = {"body": raw.decode("utf-8", "replace")}
+                text = map_event_input(payload, mapping)
+                tenant = "default"
+                gate = _ensure_gate()
+                await gate.acquire()
+                try:
+                    result = await run_in_threadpool(
+                        _run_call([{"role": "user", "content": text}], tenant, "default"),
+                        [{"role": "user", "content": text}], None,
+                    )
+                finally:
+                    gate.release()
+                return JSONResponse({"trigger": "webhook", "output": result.content})
+
+            return webhook
+
+        app.add_api_route(f"/hooks/{path}", make_handler(hook), methods=["POST"])
+
     # ---- approval / held-run routes (epic 02) -------------------------------
     @app.get("/v1/runs/held")
     def held(request: Request):

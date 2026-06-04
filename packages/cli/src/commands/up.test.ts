@@ -8,9 +8,9 @@ const base: AirlockConfig = {
 };
 
 describe('resolveUpPlan', () => {
-  it('throws when there is no [agent] block', () => {
+  it('throws when there is neither a worker.yaml nor an [agent] block', () => {
     const cfg = { ...base, agent: undefined };
-    expect(() => resolveUpPlan(cfg)).toThrow(/no \[agent\] block|config-bound agent/i);
+    expect(() => resolveUpPlan(cfg)).toThrow(/worker\.yaml|\[agent\] block|config-bound agent/i);
   });
 
   it('maps the port and runtime args', () => {

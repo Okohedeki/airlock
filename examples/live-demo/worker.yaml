@@ -1,0 +1,72 @@
+# Live-demo Worker — exercises most of the control surface over a PUBLIC URL.
+#
+# Uses the deterministic `stub` harness so you can drive every step by hand with
+# plain curl (no model or API key needed). The user message is a tiny script:
+#   say: <text>          -> a model step emitting <text>
+#   tool: <name> <json>  -> dispatch a tool with JSON args
+#   final: <text>        -> finish
+#
+# Boot + expose publicly:   airlock up        (opens https://<rand>.trycloudflare.com)
+# Then follow docs/redesign/LIVE-TEST.md against that public URL.
+
+worker:
+  name: live-demo
+  version: 0.1.0
+
+harness: stub
+
+tools:
+  echo: tools:echo
+  add: tools:add
+  send: tools:send
+  slow: tools:slow
+
+# epic 02 — loop guards + mid-run approval
+controls:
+  max_steps: 12
+  budget:
+    tokens: 40            # a short script blows this → BUDGET_TOKENS stop
+  tool_gates:
+    - tool: echo
+      when: { text: { contains: "rm -rf" } }
+      action: deny        # gate a dangerous argument
+  approvals:
+    - tool: send          # hold every `send` for human approval
+
+# epic 13 — input guard + output redaction (shared with epic 05 traces)
+io:
+  input_guards:
+    - {}                  # built-in prompt-injection denylist
+  output:
+    redact: [email]
+
+# epic 04 — state store + tool-result cache (the `add` tool is cacheable)
+state:
+  backend: sqlite
+  cache:
+    tools: [add]
+
+# epic 06 — sandbox every tool in a subprocess with a wall-clock limit
+sandbox:
+  enabled: true
+  defaults:
+    wall_s: 2
+
+# epic 10 — caller auth + per-tenant isolation (required:false so simple curls work;
+# flip to required:true to see unauthenticated calls rejected with 401)
+auth:
+  scheme: api_key
+  required: false
+tenancy:
+  keys:
+    key-acme: acme
+    key-globex: globex
+
+# epic 11 — a signed webhook that starts a run (set HOOK_SECRET in the env)
+triggers:
+  webhook:
+    - path: github
+      secret_env: HOOK_SECRET
+      input: issue.title
+
+expose: public
