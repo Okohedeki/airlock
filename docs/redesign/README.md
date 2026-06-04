@@ -60,7 +60,7 @@ contract I/O, trace privacy, etc.).
 
 | # | Epic | Brief group | Depends on | Status |
 |---|------|-------------|-----------|--------|
-| [00](./plans/00-foundations-strip-crypto-config-reset.md) | Foundations: strip crypto + airlock-config descriptor reset + `worker.yaml` migration | (cleanup) | — | Planned |
+| [00](./plans/00-foundations-strip-crypto-config-reset.md) | Foundations: strip crypto + airlock-config descriptor reset + `worker.yaml` migration | (cleanup) | — | ✅ **Done** (branch `redesign/epic-00-foundations`) |
 | [01](./plans/01-airlock-loop-engine.md) | **Airlock Loop Engine** (keystone) | Control the loop | 00 | Planned |
 | [02](./plans/02-loop-control-and-guards.md) | Loop control & guards (+ mid-run intervention) | Control the loop | 01, 04, 05 | Planned |
 | [03](./plans/03-midrun-routing-and-fallback.md) | Mid-run routing & fallback | Control the loop | 01, 07 | Planned |
@@ -75,9 +75,27 @@ contract I/O, trace privacy, etc.).
 | [12](./plans/12-agentic-sharding.md) | Agentic sharding | Deploy & expose | 09 | Planned |
 | [13](./plans/13-contract-shaping-input-output.md) | Contract shaping: controlled input/output | Shape the contract | 07, 01, 00 | Planned |
 
-**Sequencing:** 00 → {07 manifest, 01 engine} → {02, 03, 05, 06, 13} on the engine; 04 alongside
-01; 09 (Docker/router/expose) → {08, 10, 11, 12}. Precedence leads with **control the loop**
-(01–06) as the differentiator; 00 is prerequisite-but-subordinate.
+**Dependency order:** 00 → {07 manifest, 01 engine} → {02, 03, 05, 06, 13} on the engine; 04
+alongside 01; 09 (Docker/router/expose) → {08, 10, 11, 12}. "Control the loop" (01–06) is the
+differentiator.
+
+## Execution strategy (2026-06-03): plan + build ALL epics together
+
+Epic 00 is **done**. The remaining epics (01–13) are **not** executed one-at-a-time (not 01, then
+decide, then 02). The next phase is:
+
+1. **One comprehensive planning pass over all 13 remaining epics** — detailed, build-ready
+   implementation plans for 01–13 produced together, as a set.
+2. **A coordinated full build-out** — implement them in one push, parallelized across the
+   dependency graph above (independent epics built concurrently, e.g. via subagents/workflows),
+   rather than ship-one-and-wait.
+
+The dependency graph still orders the **build** (you can't build 02 before 01, or 08 before 09),
+but **planning is all-at-once** and execution is a single coordinated effort. Do not pause after a
+single epic to re-scope the program — the program is this document.
+
+Testing follows the same all-at-once intent: see [`../testing-e2e.md`](../testing-e2e.md) for the
+layered suite and which scenarios are automatable via Claude + subagents.
 
 ## Brief feature → epic map
 
