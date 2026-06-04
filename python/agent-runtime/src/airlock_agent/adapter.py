@@ -19,8 +19,8 @@ class AgentRunResult:
     content: str
     """The agent run's final answer (becomes the chat completion content)."""
     units: int = 0
-    """Billable units consumed by the run — tokens summed across all steps, or
-    a step count. 0 = nothing to bill (fine when payment is off / flat)."""
+    """Usage units consumed by the run — tokens summed across all steps, or a
+    step count. 0 = unknown/not reported (surfaced for observability)."""
     unit_label: str = "tokens"
     prompt_tokens: int = 0
     """Input tokens, when the harness reports the split — for the `usage` block

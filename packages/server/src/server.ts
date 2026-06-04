@@ -227,8 +227,6 @@ export function buildApp(options: ServerOptions = {}): BuildAppResult {
     request_body: z.string().nullable().optional(),
     response_body: z.string().nullable().optional(),
     tokens_used: z.number().int().nullable().optional(),
-    amount_usdc: z.string().nullable().optional(),
-    payment_settled: z.boolean().optional(),
   });
 
   app.post('/api/inspect', (req, res) => {
@@ -255,8 +253,6 @@ export function buildApp(options: ServerOptions = {}): BuildAppResult {
       request_body: parsed.data.request_body ?? null,
       response_body: parsed.data.response_body ?? null,
       tokens_used: parsed.data.tokens_used ?? null,
-      amount_usdc: parsed.data.amount_usdc ?? null,
-      payment_settled: parsed.data.payment_settled ? 1 : 0,
     });
     res.json({ ok: true });
   });

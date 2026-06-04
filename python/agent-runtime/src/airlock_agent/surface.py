@@ -1,9 +1,9 @@
 """The OpenAI-compatible chat surface — written ONCE, reused by every Harness.
 
 `POST /v1/chat/completions` → run the adapter (the Harness's full native loop)
-→ return a standard chat completion. Payment middleware is mounted in-process
-(free by default); the airlock-config Bundle is served if present. Adding a new
-Harness means writing a small adapter, not touching this file. See ADR-0007.
+→ return a standard chat completion. The airlock-config Bundle is served if
+present. Adding a new Harness means writing a small adapter, not touching this
+file. See ADR-0007.
 """
 
 from __future__ import annotations
@@ -204,16 +204,12 @@ def create_app(
     adapter: HarnessAdapter,
     *,
     name: str = "airlock-agent",
-    payment_config: Any | None = None,
-    payment_kwargs: dict[str, Any] | None = None,
     dist_dir: str = "dist",
     max_concurrency: int = 1,
     max_queue: int = 0,
     queue_timeout_s: float = 30.0,
     max_wait_s: float | None = None,
 ) -> FastAPI:
-    from airlock_payment import USAGE_UNITS_HEADER
-
     app = FastAPI(title=name)
     metadata = read_contract_metadata(dist_dir)
 
@@ -245,7 +241,6 @@ def create_app(
             "name": name,
             "shape": "openai",
             "endpoints": ["POST /v1/chat/completions"],
-            "payment": {"enabled": bool(payment_config and payment_config.enabled)},
             "concurrency": concurrency,
             "discovery": "/.well-known/airlock-config.yaml" if metadata is not None else None,
             "contract": metadata,
@@ -306,7 +301,8 @@ def create_app(
             gate.release()
         headers: dict[str, str] = {}
         if result.units and result.units > 0:
-            headers[USAGE_UNITS_HEADER] = str(result.units)
+            # Token-usage accounting header (observability only).
+            headers["X-Airlock-Units"] = str(result.units)
         return JSONResponse(to_chat_completion(result, model), headers=headers)
 
     app.add_api_route("/v1/chat/completions", chat, methods=["POST"])
@@ -314,16 +310,5 @@ def create_app(
 
     # Discovery: serve the Bundle's well-known files if the Publisher built one.
     mount_wellknown(app, dist_dir)
-
-    # Payment wraps the chat route; health/info/discovery stay free.
-    if payment_config is not None:
-        from airlock_payment import PaymentMiddleware
-
-        app.add_middleware(
-            PaymentMiddleware,
-            config=payment_config,
-            exempt_paths=["/", "/healthz", "/metrics", "/.well-known"],
-            **(payment_kwargs or {}),
-        )
 
     return app

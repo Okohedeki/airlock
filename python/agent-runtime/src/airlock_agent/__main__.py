@@ -30,7 +30,6 @@ from .concurrency import (
 from .config import read_agent_config
 from .harnesses import Driver, get_driver, is_reentrant
 from .loader import Builder, resolve_builder
-from .serve import config_from_env
 from .surface import create_app
 
 log = logging.getLogger("airlock_agent")
@@ -99,7 +98,6 @@ def build_app(cwd: str | None = None):
     return create_app(
         adapter,
         name=harness,
-        payment_config=config_from_env(),
         max_concurrency=max_concurrency,
         max_queue=read_max_queue(),
         queue_timeout_s=budget,

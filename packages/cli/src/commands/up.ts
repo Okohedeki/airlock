@@ -1,9 +1,9 @@
 /**
  * `airlock up` — run a self-hosted agent on the publisher's OWN hardware and
  * front it with a public URL. This is the self-host production path: the agent
- * loop (`python -m airlock_agent`) runs here, payment is enforced in-process,
- * and airlock only operates the tunnel that exposes it — never the compute,
- * never the model (which may be local or a remote OPENAI_API_BASE).
+ * loop (`python -m airlock_agent`) runs here, and airlock only operates the
+ * tunnel that exposes it — never the compute, never the model (which may be
+ * local or a remote OPENAI_API_BASE).
  *
  * By default the public URL is an ephemeral *.trycloudflare.com quick tunnel
  * (no account needed). Pass `--durable` to instead run a stable named tunnel on
@@ -13,7 +13,6 @@
  */
 
 import { type ChildProcess, spawn } from 'node:child_process';
-import { PaymentConfigSchema } from '@airlockhq/payment-core';
 import { ZodError } from 'zod';
 import {
   type AirlockConfig,
@@ -34,8 +33,6 @@ export interface UpOptions {
   port?: number;
   /** Python executable to run `-m airlock_agent` with (respects an active venv). */
   python?: string;
-  /** Disable payment enforcement on the agent. */
-  noPayment?: boolean;
   /** Run the agent locally but don't open a public tunnel. */
   noTunnel?: boolean;
   /** Use a durable named tunnel on the publisher's own Cloudflare account (vs. ephemeral quick tunnel). */
@@ -70,32 +67,18 @@ export interface UpPlan {
 }
 
 /**
- * Translate config + options into a concrete launch plan. Pure + testable:
- * maps the `[payment]` block into the env vars `python -m airlock_agent` reads
- * (PAYMENT_ENABLED / PUBLISHER_WALLET / PAYMENT_NETWORK / PRICE_USDC, see the
- * runtime's serve.config_from_env). Throws if there's no `[agent]` block — `up`
- * runs a config-bound harness; to wrap a bare model, use `airlock serve`.
+ * Translate config + options into a concrete launch plan. Pure + testable.
+ * Throws if there's no `[agent]` block — `up` runs a config-bound harness.
  */
 export function resolveUpPlan(config: AirlockConfig, opts: UpOptions = {}): UpPlan {
   if (!config.agent?.entrypoint) {
     throw new Error(
       'airlock up runs a config-bound agent, but no [agent] block was found in ' +
-        '.airlock/config.toml. Run `airlock init --detect` to wire one, or use ' +
-        '`airlock serve` to wrap a bare model endpoint.',
+        '.airlock/config.toml. Run `airlock init --detect` to wire one.',
     );
   }
   const port = opts.port ?? 3000;
   const env: Record<string, string> = { PORT: String(port) };
-
-  if (opts.noPayment || !config.payment) {
-    env.PAYMENT_ENABLED = '0';
-  } else {
-    const p = PaymentConfigSchema.parse(config.payment);
-    env.PAYMENT_ENABLED = p.enabled ? '1' : '0';
-    env.PUBLISHER_WALLET = p.wallet;
-    env.PAYMENT_NETWORK = p.network;
-    if (p.mode === 'flat') env.PRICE_USDC = p.priceUsdc;
-  }
 
   // Concurrency knobs — only set when given, so the runtime keeps its own
   // defaults otherwise. A bare `AIRLOCK_MAX_CONCURRENCY=N airlock up` also works
@@ -231,9 +214,6 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
   const durable = opts.noTunnel ? null : resolveDurableTunnel(config, opts);
 
   console.log(`airlock up  →  starting agent: ${plan.python} -m airlock_agent (:${plan.port})`);
-  console.log(
-    `  payment:  ${plan.env.PAYMENT_ENABLED === '1' ? `ON (wallet=${plan.env.PUBLISHER_WALLET})` : 'OFF'}`,
-  );
 
   const child = spawnFn(plan.python, plan.args, {
     cwd,

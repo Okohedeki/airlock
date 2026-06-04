@@ -3,9 +3,10 @@ import {
   type AirlockConfig,
   CF_TUNNEL_TOKEN_ENV,
   readConfig,
-  validatePayment,
   validateTunnel,
 } from '../config-file.js';
+
+const KNOWN_TARGETS = ['workers', 'fly'] as const;
 
 export interface DoctorReport {
   ok: boolean;
@@ -42,48 +43,11 @@ export async function runDoctor(cwd: string): Promise<DoctorReport> {
     });
   }
 
-  if (config.project?.target !== 'workers') {
+  if (!KNOWN_TARGETS.includes(config.project?.target as (typeof KNOWN_TARGETS)[number])) {
     findings.push({
       level: 'error',
-      message: `project.target must be "workers", got "${config.project?.target}"`,
+      message: `project.target must be one of ${KNOWN_TARGETS.join(' | ')}, got "${config.project?.target}"`,
     });
-  }
-
-  if (!config.payment) {
-    findings.push({ level: 'warn', message: 'no [payment] section — Agent will be free to call' });
-  } else {
-    try {
-      const parsed = validatePayment(config);
-      if (parsed?.enabled) {
-        findings.push({
-          level: 'ok',
-          message: `payment enabled (mode=${parsed.mode}, network=${parsed.network}, wallet=${parsed.wallet})`,
-        });
-        if (parsed.wallet === '0x0000000000000000000000000000000000000001') {
-          findings.push({
-            level: 'error',
-            message:
-              'payment.wallet is still the placeholder — set it to your wallet before enabling payment',
-          });
-        }
-      } else if (parsed) {
-        findings.push({ level: 'warn', message: 'payment configured but enabled=false' });
-      }
-    } catch (err) {
-      if (err instanceof ZodError) {
-        for (const issue of err.issues) {
-          findings.push({
-            level: 'error',
-            message: `payment.${issue.path.join('.')}: ${issue.message}`,
-          });
-        }
-      } else {
-        findings.push({
-          level: 'error',
-          message: `payment config invalid: ${(err as Error).message}`,
-        });
-      }
-    }
   }
 
   // Durable public URL (bring-your-own Cloudflare). Spell out exactly which keys

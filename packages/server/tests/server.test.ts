@@ -181,7 +181,6 @@ describe('api', () => {
         status: 200,
         request_url: 'http://agent.test/chat',
         tokens_used: 1234,
-        payment_settled: true,
       });
     expect(res.status).toBe(200);
 
@@ -192,17 +191,16 @@ describe('api', () => {
       caller: '0xabc',
       status: 200,
       tokens_used: 1234,
-      payment_settled: 1,
     });
   });
 
-  it('/api/projects/:id/stats aggregates calls + revenue + tokens + unique callers', async () => {
+  it('/api/projects/:id/stats aggregates calls + tokens + unique callers', async () => {
     const { app, handle } = fixture();
     const user = handle.upsertUser({ id: 7, login: 'x' });
     const token = mintCliToken(handle, user.id);
     const project = handle.upsertProject(user.id, 'my-agent', 'fly');
 
-    // Two paid (different callers), one unpaid 402.
+    // Two callers, one anonymous.
     handle.recordInspectCall(project.id, {
       timestamp: Date.now(),
       caller: '0xa',
@@ -211,8 +209,6 @@ describe('api', () => {
       request_body: null,
       response_body: null,
       tokens_used: 100,
-      amount_usdc: '0.10',
-      payment_settled: 1,
     });
     handle.recordInspectCall(project.id, {
       timestamp: Date.now(),
@@ -222,19 +218,15 @@ describe('api', () => {
       request_body: null,
       response_body: null,
       tokens_used: 200,
-      amount_usdc: '0.25',
-      payment_settled: 1,
     });
     handle.recordInspectCall(project.id, {
       timestamp: Date.now(),
       caller: null,
-      status: 402,
+      status: 500,
       request_url: 'http://x',
       request_body: null,
       response_body: null,
       tokens_used: null,
-      amount_usdc: null,
-      payment_settled: 0,
     });
 
     const res = await request(app)
@@ -244,8 +236,6 @@ describe('api', () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       total_calls: 3,
-      paid_calls: 2,
-      total_revenue_usdc: '0.35',
       unique_callers: 2, // COUNT(DISTINCT caller) skips NULLs
       total_tokens: 300,
     });
@@ -557,8 +547,6 @@ describe('call detail', () => {
       request_body: '{"prompt":"hi"}',
       response_body: '{"text":"hello"}',
       tokens_used: 42,
-      amount_usdc: '0.001',
-      payment_settled: 1,
     });
     const call = handle.listInspectCalls(project.id)[0];
 
@@ -570,7 +558,6 @@ describe('call detail', () => {
       request_body: '{"prompt":"hi"}',
       response_body: '{"text":"hello"}',
       tokens_used: 42,
-      payment_settled: 1,
     });
   });
 
@@ -588,8 +575,6 @@ describe('call detail', () => {
       request_body: null,
       response_body: null,
       tokens_used: null,
-      amount_usdc: null,
-      payment_settled: 0,
     });
     const call = handle.listInspectCalls(projectA.id)[0];
 
