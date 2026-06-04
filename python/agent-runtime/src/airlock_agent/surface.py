@@ -344,5 +344,65 @@ def create_app(
 
     app.add_api_route("/v1/runs/{run_id}/decision", decide, methods=["POST"])
 
+    # ---- console read APIs (epic 05 / operator console) ---------------------
+    @app.get("/v1/manifest")
+    def manifest_view():
+        m = getattr(runner, "m", None)
+        if m is None:
+            return JSONResponse({"name": name})
+        controls = m.controls()
+        tenancy = m.tenancy()
+        return JSONResponse({
+            "name": m.worker_name(), "version": m.worker_version(), "harness": m.harness(),
+            "expose": m.expose(),
+            "models": list(m.models_config().keys()),
+            "tools": list((m.raw().get("tools") or {}).keys()),
+            "controls": {
+                "max_steps": controls.get("max_steps"),
+                "budget": controls.get("budget"),
+                "tool_gates": controls.get("tool_gates"),
+                "approvals": [a.get("tool") for a in controls.get("approvals", [])],
+            },
+            "routing": m.routing(),
+            "tenants": list((tenancy.get("keys") or {}).values()),  # names only, not keys
+            "auth": (m.auth().get("scheme") if m.auth() else None),
+        })
+
+    def _runs_for(tenant: str) -> list[dict]:
+        if store is None:
+            return []
+        scoped = store.scoped(tenant)
+        out = []
+        for key in scoped.list_prefix("_runs/"):
+            v = scoped.get(key)
+            if isinstance(v, dict):
+                out.append(v)
+        out.sort(key=lambda r: r.get("started", 0), reverse=True)
+        return out
+
+    @app.get("/v1/runs")
+    def list_runs(request: Request):
+        tenant = request.query_params.get("tenant", "default")
+        limit = int(request.query_params.get("limit", "50"))
+        runs = _runs_for(tenant)[:limit]
+        summary = [{k: r.get(k) for k in ("run_id", "session", "status", "tokens", "n_steps", "started")}
+                   for r in runs]
+        return JSONResponse({"runs": summary})
+
+    @app.get("/v1/runs/{run_id}")
+    def run_detail(run_id: str, request: Request):
+        tenant = request.query_params.get("tenant", "default")
+        if store is None:
+            return JSONResponse({"error": "no state store"}, status_code=404)
+        v = store.scoped(tenant).get(f"_runs/{run_id}")
+        if not v:
+            return JSONResponse({"error": "no such run"}, status_code=404)
+        return JSONResponse(v)
+
+    # ---- the operator console (static, no build) ----------------------------
+    from .console import mount_console
+
+    mount_console(app)
+
     mount_wellknown(app, dist_dir)
     return app

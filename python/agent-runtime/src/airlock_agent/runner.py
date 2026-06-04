@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import uuid
 from typing import Any, Callable
 
@@ -153,9 +154,27 @@ class EngineRunner:
             )
             content, ok = shaping.enforce_output(repaired.content, self.io_cfg)
         result.content = content
+
+        # Run index (epic 05 / console): a listable per-run summary with its trace.
+        steps = result.steps or []
+        status = "ok"
+        for s in steps:
+            if s.get("status") == "blocked" or s.get("stop_reason", "").startswith("AWAIT"):
+                status = "blocked"
+            elif s.get("status") == "killed" or s.get("stop_reason"):
+                status = status if status == "blocked" else "stopped"
+        scoped.set(f"_runs/{run_id}", {
+            "run_id": run_id, "session": session, "tenant": tenant, "status": status,
+            "tokens": result.units, "content": result.content, "steps": steps,
+            "started": _now(), "n_steps": len(steps),
+        })
         return result
 
 
 def _tool_hash(name: str, args: dict) -> str:
     blob = json.dumps({"n": name, "a": args}, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+def _now() -> float:
+    return time.time()
