@@ -223,8 +223,53 @@ async function main() {
 
   program
     .command('deploy')
-    .description('Ship the Agent to the Target (wraps `wrangler deploy`)')
-    .action(async () => process.exit(await runWithConfig(buildDeploy)));
+    .description('Deploy a multi-container fleet: N worker containers behind the router')
+    .option('-r, --replicas <n>', 'number of worker replicas', '2')
+    .option('-p, --port <port>', 'router (public) port', '8080')
+    .option('--canary <image@pct>', 'add a canary version at pct% of new sessions')
+    .option('--expose', 'open a public tunnel at the router')
+    .option('--no-build', 'use the already-built image (skip docker build)')
+    .action(async (opts: { replicas: string; port: string; canary?: string; expose?: boolean; build: boolean }) => {
+      const { runDeploy } = await import('./commands/deploy.js');
+      try {
+        const handle = await runDeploy({
+          cwd: process.cwd(),
+          replicas: Number.parseInt(opts.replicas, 10),
+          port: Number.parseInt(opts.port, 10),
+          canary: opts.canary,
+          expose: opts.expose,
+          noBuild: opts.build === false,
+        });
+        const shutdown = async () => { await handle.stop(); process.exit(0); };
+        process.on('SIGINT', shutdown);
+        process.on('SIGTERM', shutdown);
+        console.log('  press Ctrl-C to tear down the fleet');
+        await new Promise(() => {});
+      } catch (err) {
+        console.error(`error: ${(err as Error).message}`);
+        process.exit(1);
+      }
+    });
+
+  const control = async (port: string, path: string, body: unknown) => {
+    const res = await fetch(`http://127.0.0.1:${port}/_control/${path}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}),
+    });
+    console.log(JSON.stringify(await res.json()));
+  };
+
+  program
+    .command('promote')
+    .description('Promote a version to 100% of traffic (epic 08)')
+    .requiredOption('--version <ver>', 'the version to promote')
+    .option('-p, --port <port>', 'router control port', '8080')
+    .action(async (opts: { version: string; port: string }) => control(opts.port, 'promote', { version: opts.version }));
+
+  program
+    .command('rollback')
+    .description('Instantly drop the canary; stable wins (epic 08)')
+    .option('-p, --port <port>', 'router control port', '8080')
+    .action(async (opts: { port: string }) => control(opts.port, 'rollback', {}));
 
   program
     .command('delete')

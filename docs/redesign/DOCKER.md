@@ -67,9 +67,47 @@ langchain-openai>=0.2,<1
 (`airlockhq/airlock`) ships only the engine + stub/openai bindings; frameworks come from
 your per-project layer, so the base stays small and your image is fully pinned.
 
-## What's not here yet (fleet)
+## Multi-container fleet (epics 09 / 08 / 12)
 
-Multi-container deploy — the registry, the fleet router as a live service, canary across
-images (epics 08/12 + multi-container 09) — is a separate effort. This page is the
-single-worker reproducible run. The router logic + demo already exist in
-`packages/cli/src/router`.
+`airlock deploy` runs **N worker containers behind the live fleet router** (the router is a
+real HTTP service that runs the frozen routing pipeline, then reverse-proxies to the chosen
+container — control stays inside each worker):
+
+```bash
+cd examples/live-demo
+airlock deploy --replicas 2 --port 8090        # build + 2 containers + router on :8090
+# callers POST to http://localhost:8090/v1/chat/completions
+curl http://localhost:8090/_control/status      # registry: workers, ports, health, rollout
+airlock deploy --replicas 2 --canary airlock/live-demo:NEWTAG@10   # 10% of new sessions → canary
+airlock promote --version NEWTAG                 # 100% → NEWTAG
+airlock rollback                                 # drop the canary; stable wins
+airlock deploy --replicas 2 --expose             # also open a public URL at the router
+```
+
+- **Load-balancing + sticky:** anonymous requests round-robin across healthy replicas; a
+  session (`X-Airlock-Session`) pins to one replica (so resume/fork land where the state is).
+- **Canary/rollback (08):** `--canary <image>@<pct>` registers a canary version; **stickiness
+  wins over canary** — a live session never flips version. `promote`/`rollback` hit the
+  router's control API.
+- **Sharding (12):** a request's `X-Airlock-Capability` routes to a variant that declares it
+  (capability hard-filter → cost → latency).
+- v1 registry is in-memory in the `airlock deploy` process; a durable `_system/workers`
+  registry in the State Store is the next step.
+
+## Composition: skills on/off + variants/profiles
+
+One `worker.yaml` can express **multiple agents** and **internal-vs-external** configs:
+
+```yaml
+skills:
+  search: { tool: web_search, enabled: true }
+  delete: { tool: rm, enabled: false }      # off — dropped from the loop; /skills/delete → 403
+variants:
+  internal: { expose: internal, auth: { scheme: none } }
+  external: { expose: public,   auth: { scheme: api_key, required: true } }
+  coder:    { capabilities: [code], models: { default: { model: gpt-4o } } }
+```
+
+- Pick a variant **per request** with `X-Airlock-Variant: external`, or **at deploy** with
+  `airlock up --profile external`. Auth follows the active variant.
+- A disabled skill's tool is removed from the loop and `/skills/<id>` returns 403 (404 unknown).
