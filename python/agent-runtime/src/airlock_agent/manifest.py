@@ -62,9 +62,40 @@ class Manifest:
             out[name] = load_entrypoint(str(spec))
         return out
 
-    def skills(self) -> dict[str, str]:
-        """`skills:` map skill id -> tool name (skills = tools)."""
-        return dict(self._d.get("skills") or {})
+    def skills(self) -> dict[str, dict[str, Any]]:
+        """`skills:` normalized to id -> {tool, enabled}. A value may be a bare tool
+        name (enabled) or an object {tool, enabled}. Skills = tools (epic 07)."""
+        out: dict[str, dict[str, Any]] = {}
+        for sid, spec in (self._d.get("skills") or {}).items():
+            if isinstance(spec, dict):
+                out[sid] = {"tool": spec.get("tool", sid), "enabled": spec.get("enabled", True)}
+            else:
+                out[sid] = {"tool": str(spec), "enabled": True}
+        return out
+
+    def enabled_tools(self) -> set[str] | None:
+        """The tool names backing ENABLED skills, or None if no skills are declared
+        (None = all tools available — back-compat). Disabling a skill removes its tool."""
+        skills = self.skills()
+        if not skills:
+            return None
+        return {s["tool"] for s in skills.values() if s.get("enabled", True)}
+
+    def variant_names(self) -> list[str]:
+        return list((self._d.get("variants") or {}).keys())
+
+    def with_variant(self, name: str | None) -> "Manifest":
+        """Return a new Manifest with `variants[name]` deep-merged over the base
+        (the `variants` key itself is dropped from the result)."""
+        if not name:
+            return self
+        overlay = (self._d.get("variants") or {}).get(name)
+        if overlay is None:
+            raise ValueError(f"unknown variant '{name}' (have: {', '.join(self.variant_names()) or 'none'})")
+        base = {k: v for k, v in self._d.items() if k != "variants"}
+        merged = _deep_merge(base, {k: v for k, v in overlay.items()
+                                    if k not in ("capabilities", "cost_estimate")})
+        return Manifest(merged, cwd=self._cwd)
 
     def models_config(self) -> dict[str, dict[str, Any]]:
         return dict(self._d.get("models") or {})
@@ -124,3 +155,14 @@ class Manifest:
 
     def raw(self) -> dict[str, Any]:
         return self._d
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge `overlay` over `base` (dicts merge; everything else replaces)."""
+    out = dict(base)
+    for k, v in overlay.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out

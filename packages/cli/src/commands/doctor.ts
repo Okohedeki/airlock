@@ -29,6 +29,20 @@ function checkWorkerYaml(cwd: string, findings: Finding[]): boolean {
   } else {
     const w = (manifest.worker ?? {}) as { name?: string };
     findings.push({ level: 'ok', message: `worker.yaml valid (worker=${w.name ?? '<unnamed>'})` });
+    const variants = Object.keys((manifest.variants ?? {}) as Record<string, unknown>);
+    if (variants.length) {
+      findings.push({
+        level: 'ok',
+        message: `variants: ${variants.join(', ')} — run one with \`airlock up --profile <name>\` or header X-Airlock-Variant`,
+      });
+    }
+    const skills = (manifest.skills ?? {}) as Record<string, unknown>;
+    const disabled = Object.entries(skills)
+      .filter(([, v]) => typeof v === 'object' && v !== null && (v as { enabled?: boolean }).enabled === false)
+      .map(([id]) => id);
+    if (disabled.length) {
+      findings.push({ level: 'warn', message: `skills disabled: ${disabled.join(', ')}` });
+    }
   }
   // Docker note: a host-run model on 127.0.0.1 is unreachable from inside a container.
   const models = (manifest.models ?? {}) as Record<string, { endpoint?: string }>;

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import time
 import uuid
 from typing import Any, AsyncIterator, Callable, Optional
@@ -142,12 +143,28 @@ def create_app(
     metadata = read_contract_metadata(dist_dir)
     store = getattr(runner, "store", None)
 
-    def _run_call(messages, tenant, session, run_id=None):
+    class _UnknownVariant(Exception):
+        pass
+
+    def _runner_for(request: Request):
+        """Select the variant runner (composition/sharding overlay): request header /
+        query wins, else the process profile (AIRLOCK_PROFILE), else the base runner."""
+        v = (request.headers.get("X-Airlock-Variant")
+             or request.query_params.get("variant")
+             or os.environ.get("AIRLOCK_PROFILE"))
+        if v and hasattr(runner, "for_variant"):
+            try:
+                return runner.for_variant(v)
+            except ValueError as exc:
+                raise _UnknownVariant(str(exc))
+        return runner
+
+    def _run_call(rnr, messages, tenant, session, run_id=None):
         def call(msgs, on_step):
             try:
-                return runner.run(msgs, tenant=tenant, session=session, run_id=run_id, on_step=on_step)
+                return rnr.run(msgs, tenant=tenant, session=session, run_id=run_id, on_step=on_step)
             except TypeError:  # legacy .run(messages)
-                return runner.run(msgs)
+                return rnr.run(msgs)
         return call
 
     def _ensure_gate() -> BoundedGate:
@@ -165,7 +182,10 @@ def create_app(
                 pass
         return gate
 
-    def _tenant(request: Request) -> str:
+    def _tenant(request: Request, rnr: Any = None) -> str:
+        # Auth follows the active variant: prefer the (variant) runner's own auth.
+        if rnr is not None and hasattr(rnr, "authenticate"):
+            return rnr.authenticate(request)
         if authenticate is not None:
             return authenticate(request)
         return request.headers.get("X-Airlock-Tenant", "default")
@@ -207,9 +227,12 @@ def create_app(
         wants_stream = bool(body.get("stream"))
         send_steps = bool(body.get("stream_steps", wants_stream))
         try:
-            tenant, session = _tenant(request), _session(request)
+            rnr = _runner_for(request)
+            tenant, session = _tenant(request, rnr), _session(request)
         except PermissionError as exc:
             return JSONResponse({"error": str(exc)}, status_code=401)
+        except _UnknownVariant as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
         run_id = body.get("run_id") or request.headers.get("X-Airlock-Run")
         gate = _ensure_gate()
         try:
@@ -219,7 +242,7 @@ def create_app(
             headers = {"Retry-After": str(int(math.ceil(retry_after)))} if retry_after > 0 else {}
             return JSONResponse({"error": "agent at capacity, retry shortly"}, status_code=429, headers=headers)
 
-        run_call = _run_call(messages, tenant, session, run_id)
+        run_call = _run_call(rnr, messages, tenant, session, run_id)
         if wants_stream:
             return StreamingResponse(
                 _stream_engine(gate, run_call, messages, model, send_steps=send_steps),
@@ -251,12 +274,23 @@ def create_app(
         text = body.get("input") if isinstance(body, dict) else None
         messages = [{"role": "user", "content": text if isinstance(text, str) else json.dumps(body)}]
         try:
-            tenant, session = _tenant(request), _session(request)
+            rnr = _runner_for(request)
+            tenant, session = _tenant(request, rnr), _session(request)
         except PermissionError as exc:
             return JSONResponse({"error": str(exc)}, status_code=401)
+        except _UnknownVariant as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        # Validate the skill against the manifest (skills = tools): unknown → 404,
+        # disabled → 403. Only enforced when the worker declares skills.
+        if hasattr(rnr, "skill_enabled") and rnr.skills:
+            enabled = rnr.skill_enabled(skill_id)
+            if enabled is None:
+                return JSONResponse({"error": f"unknown skill '{skill_id}'"}, status_code=404)
+            if not enabled:
+                return JSONResponse({"error": f"skill '{skill_id}' is disabled"}, status_code=403)
         gate = _ensure_gate()
         await gate.acquire()
-        run_call = _run_call(messages, tenant, session)
+        run_call = _run_call(rnr, messages, tenant, session)
         try:
             result = await run_in_threadpool(run_call, messages, None)
         except InputRejected as exc:
@@ -304,7 +338,7 @@ def create_app(
                 await gate.acquire()
                 try:
                     result = await run_in_threadpool(
-                        _run_call([{"role": "user", "content": text}], tenant, "default"),
+                        _run_call(runner, [{"role": "user", "content": text}], tenant, "default"),
                         [{"role": "user", "content": text}], None,
                     )
                 finally:

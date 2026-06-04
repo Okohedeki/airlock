@@ -42,8 +42,20 @@
     },
     "skills": {
       "type": "object",
-      "description": "skill id -> tool name.",
-      "additionalProperties": { "type": "string" }
+      "description": "skill id -> tool name (string), or { tool, enabled } to toggle a skill on/off.",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "required": ["tool"],
+            "properties": {
+              "tool": { "type": "string" },
+              "enabled": { "type": "boolean", "default": true }
+            }
+          }
+        ]
+      }
     },
     "mcp": {
       "type": "object",
@@ -186,13 +198,13 @@
       }
     },
     "variants": {
-      "type": "array",
-      "description": "Agentic-sharding variants behind one endpoint (epic 12).",
-      "items": {
+      "type": "object",
+      "description": "Named overlays on the base manifest (epic 07 composition + epic 12 sharding). A variant deep-merges over the base; selected per request (X-Airlock-Variant) or at deploy (`--profile`). Use it for multiple agents in one file, or internal-vs-external profiles. May also declare capabilities/cost for fleet routing.",
+      "additionalProperties": {
         "type": "object",
-        "required": ["name"],
+        "description": "A partial worker.yaml: any block (skills/models/controls/auth/io/expose/harness/tools/routing/sandbox) plus optional capabilities/cost_estimate.",
+        "additionalProperties": true,
         "properties": {
-          "name": { "type": "string" },
           "capabilities": { "type": "array", "items": { "type": "string" } },
           "cost_estimate": { "type": "number" }
         }

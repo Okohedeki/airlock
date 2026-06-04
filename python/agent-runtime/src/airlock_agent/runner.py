@@ -40,7 +40,8 @@ class EngineRunner:
         self.m = manifest
         self.store = store
         self.harness = manifest.harness()
-        self.tools = manifest.tools()
+        self.tools = _filter_disabled_skills(manifest.tools(), manifest.skills())
+        self.skills = manifest.skills()
         self.entrypoint = self._resolve_entrypoint()
         self.controls = manifest.controls()
         self.routing = manifest.routing()
@@ -53,6 +54,34 @@ class EngineRunner:
         self.select_binding = build_select_binding(self.routing) if self.routing else None
         self.cache_tools = set((self.state_cfg.get("cache") or {}).get("tools") or [])
         self._base_callers = manifest.build_model_callers()
+        self._variants: dict[str, "EngineRunner"] = {}
+        self._authn: Any = None
+
+    def authenticate(self, request: Any) -> str:
+        """Resolve the tenant for this (possibly variant-overlaid) worker's auth config.
+        Variants can change auth, so auth follows the active variant (epic 10)."""
+        auth = self.m.auth()
+        if not auth:
+            return request.headers.get("X-Airlock-Tenant", "default")
+        if self._authn is None:
+            from .auth import build_authenticator
+
+            self._authn = build_authenticator(auth, self.m.tenancy(), self.store)
+        return self._authn(request)
+
+    def for_variant(self, name: str | None) -> "EngineRunner":
+        """A per-variant runner (composition/sharding overlay), built + cached lazily.
+        The base runner is returned for an empty/unknown-but-default name."""
+        if not name:
+            return self
+        if name not in self._variants:
+            self._variants[name] = EngineRunner(self.m.with_variant(name), self.store)
+        return self._variants[name]
+
+    def skill_enabled(self, skill_id: str) -> bool | None:
+        """True/False for a declared skill, or None if the skill id is unknown."""
+        s = self.skills.get(skill_id)
+        return None if s is None else bool(s.get("enabled", True))
 
     def _resolve_entrypoint(self) -> Any:
         ep = self.m.entrypoint()
@@ -178,3 +207,16 @@ def _tool_hash(name: str, args: dict) -> str:
 
 def _now() -> float:
     return time.time()
+
+
+def _filter_disabled_skills(
+    tools: dict[str, Callable], skills: dict[str, dict]
+) -> dict[str, Callable]:
+    """Drop tools that are backed ONLY by disabled skills. Tools not referenced by any
+    skill, and tools backing at least one enabled skill, stay available."""
+    if not skills:
+        return tools
+    enabled = {s["tool"] for s in skills.values() if s.get("enabled", True)}
+    disabled = {s["tool"] for s in skills.values() if not s.get("enabled", True)}
+    remove = disabled - enabled
+    return {n: fn for n, fn in tools.items() if n not in remove}

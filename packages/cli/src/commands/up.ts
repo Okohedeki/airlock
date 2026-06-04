@@ -63,6 +63,8 @@ export interface UpOptions {
   mount?: boolean;
   /** Path passed to `docker run --env-file` (secrets). */
   envFile?: string;
+  /** Variant/profile to run (sets AIRLOCK_PROFILE) — e.g. internal | external. */
+  profile?: string;
   /** Injectables for tests. */
   spawnImpl?: typeof spawn;
   startTunnelImpl?: typeof startTunnel;
@@ -257,6 +259,8 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
       image = resolveBuildPlan({ cwd }).image; // the content-addressed image from `airlock build`
     }
     containerName = `airlock-${slug(config.project?.name ?? 'worker')}`;
+    const dockerEnv = forwardedEnv();
+    if (opts.profile) dockerEnv.AIRLOCK_PROFILE = opts.profile;
     const run = buildDockerRun({
       image: image!,
       port,
@@ -265,7 +269,7 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
       mountDir,
       addHostGateway: true,
       envFile: opts.envFile,
-      env: forwardedEnv(),
+      env: dockerEnv,
     });
     binary = run.binary;
     args = run.args;
@@ -275,6 +279,7 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
     binary = plan.python;
     args = plan.args;
     spawnEnv = { ...process.env, ...plan.env } as Record<string, string>;
+    if (opts.profile) spawnEnv.AIRLOCK_PROFILE = opts.profile;
     console.log(`airlock up  →  starting agent: ${plan.python} -m airlock_agent (:${plan.port})`);
   }
 

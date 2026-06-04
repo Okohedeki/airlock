@@ -353,6 +353,7 @@ async function main() {
     .option('--image <ref>', 'image to run with --docker (default: the image from `airlock build`)')
     .option('--mount', 'dev: mount the project into the base image instead of a built image')
     .option('--env-file <path>', 'pass an env file to the container (--docker)')
+    .option('--profile <name>', 'run a worker.yaml variant/profile (e.g. internal | external)')
     .action(
       async (opts: {
         port: string;
@@ -370,6 +371,7 @@ async function main() {
         image?: string;
         mount?: boolean;
         envFile?: string;
+        profile?: string;
       }) => {
         const port = Number.parseInt(opts.port, 10);
         if (!Number.isFinite(port) || port <= 0) {
@@ -404,6 +406,7 @@ async function main() {
             image: opts.image,
             mount: opts.mount,
             envFile: opts.envFile,
+            profile: opts.profile,
           });
           const shutdown = async () => {
             await handle.stop();
