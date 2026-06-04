@@ -26,8 +26,9 @@ Operator vs. the Caller).
 
 ## Consequences
 
-- A TS schema/validator (in the CLI) and a Python loader (in the runtime) must stay
-  in sync.
+- The schema has **one source of truth** — a checked-in `worker.schema.json`
+  validated on the TS/CLI side; the Python runtime loads and trusts it rather than
+  re-validating. See [ADR-0020](./0020-worker-yaml-single-schema-source.md).
 - The Worker becomes the unit that is composed, released in pieces, and versioned
   ([ADR-0017](./0017-fleet-router.md), epic 08).
 - "Skills flatten to tools," and the airlock-config skill schema is reused for the

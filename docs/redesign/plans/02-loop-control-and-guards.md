@@ -54,3 +54,150 @@ budgets via the price table).
 - A `require_approval` tool holds the run; approve resumes; **edit-args** and **inject-guidance**
   visibly change the outcome; **override/skip** returns without firing the tool.
 - No response within the window → auto-deny.
+
+---
+
+# Build-ready spec (frozen contracts)
+
+> Frozen 2026-06-04. Consumes C1 (`StepEvent`/`ControlSignal`/`ControlMode` from epic 01), C2 (one
+> `worker.schema.json`, validated TS-side), C3 (`ScopedStore` held-run parking). This epic supplies
+> the **real `control_source`** that epic 01's `run_loop` left as a no-op `continue` provider.
+> Guards are **feature-derived per the C1 matrix** — see
+> [ADR-0014 §"loop ownership is feature-derived"](../../adr/0014-airlock-owns-the-loop.md).
+
+## `controls` block — added to `packages/cli/src/worker-schema/worker.schema.json` (C2)
+
+ONE schema file; validated TS/CLI-side only (Python loads + trusts). Added under the worker object:
+
+```jsonc
+"controls": {
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "max_steps": { "type": "integer", "minimum": 1 },
+    "budget": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "tokens": { "type": "integer", "minimum": 1 },
+                      "usd": { "type": "number", "exclusiveMinimum": 0 } }
+    },
+    "tool_gates": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["tool", "action"], "additionalProperties": false,
+        "properties": {
+          "tool": { "type": "string" },                       // exact name or glob (db.*)
+          "when": { "type": "string" },                        // safe arg-matcher expr; omit = always
+          "action": { "enum": ["allow", "deny"] }
+        }
+      }
+    },
+    "approvals": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["tool"], "additionalProperties": false,
+        "properties": {
+          "tool": { "type": "string" },
+          "when": { "type": "string" },                        // optional: only hold when matched
+          "timeout_s": { "type": "integer", "minimum": 1, "default": 300 },
+          "on_timeout": { "enum": ["deny", "allow"], "default": "deny" }
+        }
+      }
+    }
+  }
+}
+```
+
+Every producer/mutator of worker.yaml routes through the TS validator (C2) — the dashboard's
+held-run UI does not write `controls` at runtime; it only writes held-run *state* (C3, below).
+
+## `engine/policy.py` — the `control_source` (consumed by epic 01 `run_loop`)
+
+```python
+from airlock_agent.engine.events import StepEvent, StepType, StepStatus, ControlSignal
+from airlock_agent.state.store import ScopedStore   # C3
+
+class PolicyControlSource:
+    """Built per run from worker.yaml `controls`. Engine calls evaluate() between steps and
+    gate(pending) before each tool dispatch. Returns a ControlSignal (C1) — never raises."""
+    def __init__(self, controls: dict, store: ScopedStore, run_id: str, control_mode): ...
+
+    def gate(self, pending: "ToolCall") -> ControlSignal:        # WRAP-ok: tool-dispatch boundary
+        # 1) tool_gates: first matching rule wins; deny → ControlSignal(action="kill"|"override"
+        #    with override_result={"blocked": reason}) per breach mode.
+        # 2) approvals: if a rule matches → park held run (C3) + ControlSignal(action="pause").
+        ...
+
+    def evaluate(self, ev: StepEvent) -> ControlSignal:          # between steps
+        # max_steps: ev.index+1 >= max_steps → kill (reason=MAX_STEPS). WRAP-ok (step count only).
+        # budget.tokens / budget.usd: OWN-ONLY — needs per-step model token counts
+        #   (ev.prompt_tokens/completion_tokens, C1) + epic-05 price table for usd. On a WRAP
+        #   binding these fields are 0/unknown, so budget guards are SKIPPED + a warning logged.
+        ...
+```
+
+- **Argument matcher (`when`):** reuse airlock-config's existing safe `when` evaluator if one
+  exists — **do NOT introduce `eval`/`exec`**. *Open item:* confirm a safe evaluator ships in
+  `airlock-config` (sandboxed AST / comparison-only grammar); if absent, build a minimal
+  comparison-only matcher (`==`, `!=`, `in`, `and`/`or` over `args.*`) — never raw Python eval.
+- **Breach behavior:** default `stop + return partial` with machine reason (`BUDGET_EXCEEDED`,
+  `MAX_STEPS`) via `ControlSignal(action="kill")`; opt-in `hold-for-approval` breach mode reuses the
+  approval park path (asks a human to extend).
+
+## Approval flow + held-run parking (C3)
+
+- **Park:** on an `approvals` match, `gate()` writes `store.snapshot(f"_held/{run_id}", {pending,
+  rule, deadline})` via the **scoped handle** — key resolves to `{tenant}/_held/run_x` (C3). Engine
+  receives `pause`; the step is recorded with `StepStatus.BLOCKED` (C1).
+- **Resume routes in `surface.py`** (one approval API; lists from `store.list_prefix("_held/")`):
+  `GET /runs?status=held`, `POST /runs/{id}/approve|deny|edit|guide|override` →
+  - `approve` → `ControlSignal(action="continue")` (fire as-is).
+  - `deny` → `kill` (or skip per rule).
+  - `edit` → `override(override_args=...)` — mutate pending call (C1 `override_args`).
+  - `guide` → `override(guidance=...)` — inject steering message, then continue.
+  - `override` / skip → `override(override_result=...)` — return a result without firing the tool.
+- **Auto-deny on timeout:** a sweeper (or the resume path, lazily) checks `deadline`; expired held
+  runs resolve per `on_timeout` (default `deny` → `kill`), so held runs never pile up.
+
+## C1 matrix mapping (authoritative for this epic)
+
+| Guard | Mechanism | `WRAP`-ok? |
+|---|---|---|
+| tool gating by arg (`tool_gates`) | tool-dispatch intercept | ✅ all harnesses |
+| approval hold (`approvals`) | tool-dispatch intercept + park | ✅ all harnesses |
+| `max_steps` | step-index count between steps | ✅ all harnesses |
+| `budget.tokens` / `budget.usd` stop | per-step model token counts (`OWN`) | ❌ `OWN` only |
+
+So tool-gate/approval/max_steps guards run on **all** harnesses (LangGraph, Claude, smolagents,
+CrewAI, OpenAI Agents, custom); **budget-stop guards run on `OWN` harnesses only** (LangGraph,
+Claude, custom-as-`Planner`) — on `WRAP` bindings budget is skipped with a logged warning, never a
+false enforcement on `tokens == 0`.
+
+## File-by-file
+
+- **new** `engine/policy.py` — `PolicyControlSource` (`gate` + `evaluate` above); the breach-reason
+  enum; the `when`-matcher adapter (wraps airlock-config's safe evaluator, open item).
+- **new** `notify/` — `slack.py` / `teams.py` notifiers posting held-run links; a `Notifier`
+  protocol so the surface fires on park. *Open item:* where Slack/Teams creds live —
+  `worker.yaml` secret refs vs env (defer to epic 10 secrets; env for v1).
+- **edit** `surface.py` — wire `PolicyControlSource` as `run_loop`'s `control_source` (replacing the
+  epic-01 no-op); add the `/runs?status=held` + `approve|deny|edit|guide|override` routes; build the
+  `ScopedStore` handle (C3, tenant `default` until epic 10) and pass it into the policy source.
+- **schema** — the `controls` block in `worker.schema.json` (C2); CLI validate covers it.
+- **dashboard** — held-run list + action UI extends `packages/server` (consumes the held routes).
+- **edit** `engine/loop.py` — *no new code*: it already consults `control_source`; epic 02 only
+  supplies a non-trivial source. (Confirms the epic-01 seam.)
+
+## Verification → test layers (`docs/testing-e2e.md`)
+
+- **L1** (`policy.py` unit): first-matching-gate-wins; `when` matcher allows `==`/`in`, **rejects
+  `eval`-style input**; `max_steps` kills at the cap; budget on a `WRAP` step (tokens=0) is skipped
+  not enforced; auto-deny resolves an expired held run.
+- **L2** (stub harness, in-process ASGI): a `DELETE`-arg call is denied while a read on the **same
+  tool** passes; a `require_approval` tool parks under `{tenant}/_held/run_x` and `approve` resumes;
+  `edit`/`guide` change the outcome; `override`/skip returns without firing. **Subagent-automatable:
+  a subagent plays the approver** hitting the held routes.
+- **L2 (`OWN` only):** budget-stop returns partial + `BUDGET_EXCEEDED` mid-run on LangGraph/Claude;
+  asserted **not** to run on smolagents/CrewAI/OpenAI Agents (C1 matrix). Tool-gate/approval/
+  max_steps L2 tests run on **all** harnesses.
+- **L4 (e2e):** real held run surfaces a Slack/Teams notification → approve from the link → run
+  completes; timeout path auto-denies.

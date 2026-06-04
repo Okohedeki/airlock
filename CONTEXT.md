@@ -27,10 +27,15 @@ what ships; it is released, versioned, and exposed as a whole.
 _Avoid_: Agent (informal only — the Worker is the deployable), service, function, app
 
 **Loop Engine**:
-The in-Worker orchestrator that **owns the agent loop** — it makes the model calls
-and dispatches the tools itself, emitting a `StepEvent` per iteration and consuming
-`ControlSignal`s. This is the keystone that makes step-level control possible.
-_Avoid_: Driver, scheduler, executor
+The in-Worker orchestrator that **owns the agent loop** where it can — it makes the
+model calls and dispatches the tools itself, emitting a `StepEvent` per iteration and
+consuming `ControlSignal`s. The keystone that makes step-level control possible.
+Control is **feature-derived, not uniform**: where airlock drives the model calls
+(native-seam harnesses, and opaque ones where defs extract cleanly) it *owns* the loop
+and the full control set applies; where it can only intercept tool dispatch it *wraps*
+the loop and only tool-centric control applies (gating, approval, tool-fallback,
+tool-result cache, sandbox). See ADR-0014 for the feature→mechanism matrix.
+_Avoid_: Driver, scheduler, executor; never call a wrapped (tool-gated) loop "owned"
 
 **Step** / **StepEvent**:
 A **Step** is one iteration of the loop (a model call and/or a tool dispatch). A
@@ -150,6 +155,28 @@ parallel (`AIRLOCK_MAX_CONCURRENCY`). Callers beyond the cap queue (FIFO); calle
 beyond the queue bound, or who wait too long, get HTTP 429. Per-Worker, about
 simultaneous Callers — distinct from per-Tenant limits.
 _Avoid_: Throughput, rate limit (that's request-rate over time), pool size
+
+## Relationships
+
+Cardinality and boundaries between the core terms (the seams the redesign must keep clean):
+
+- **Operator** `1 — *` **Worker** — one Operator runs many Workers.
+- **Worker** `1 — *` **Tenant** — many Tenants share one Worker; the Tenant is the
+  isolation boundary, not the Worker.
+- **Tenant** `⊃` **Session** `⊃` **Run** — state nests this way. The State Store keys
+  it literally: `{tenant}/{session}/{run}/{kind}/{id}`, tenant always first so
+  isolation is structural. Cross-tenant registries live under `_system/`.
+- **Harness** *contributes* tools + planner + prompt assembly → the **Loop Engine**
+  *runs* them. The Harness no longer runs its own loop (where airlock can own it).
+- **Skill** `=` **Tool** — a Skill flattens to a callable; MCP-provided tools are
+  Skills too. The **airlock-config** descriptor supplies a Skill's typed I/O schema;
+  the **worker.yaml** manifest wires it into the running Worker. One Worker has both
+  documents: `worker.yaml` (operational) and an airlock-config descriptor (buyer-facing).
+- **Variant** `⊃` **Version** — a Version is a content-addressed release; a Variant is
+  any of several configs behind one endpoint. A Version is a special case of a Variant.
+- **Fleet Router** *decides* which Worker handles a request; the **Tunnel** *exposes* a
+  Worker to the public internet. The router routes; the tunnel only opens a public URL.
+  Distinct concerns — never conflate them.
 
 ## Flagged ambiguities
 

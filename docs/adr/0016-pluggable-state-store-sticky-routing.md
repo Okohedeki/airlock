@@ -34,3 +34,22 @@ checkpoint/resume, replay, fork, and cross-run tool-result reuse — the core of
   keyed per tenant.
 - Sticky-routing mechanism (affinity vs. shared store as the v1 default) is an open
   question in epic 04.
+
+## Consequences — tenant-first key namespace (2026-06-04)
+
+The Store protocol (`get` / `set` / `delete` / `list-by-prefix` / `snapshot`) is
+frozen so the SQLite/files/Redis/Postgres adapters all plug in behind one interface.
+All keys use a **tenant-first hierarchical scheme**:
+
+```
+{tenant}/{session}/{run}/{kind}/{id}
+```
+
+Tenant is **always** the first segment, so isolation is *structural*:
+`list-by-prefix {tenant}/` can never cross tenants, and the single-tenant default is
+just `tenant = "default"`. Genuinely cross-tenant registries (version registry,
+worker registry) live under a reserved `_system/` prefix. The protocol exposes a
+**`scoped(tenant)`** method that hands every consumer (epics 02 held-runs, 05 traces,
+10 per-tenant limits) a pre-scoped handle, so a caller cannot forget the prefix and
+leak across the isolation boundary. This makes the relationship **Tenant ⊃ Session ⊃
+Run** concrete in the keyspace rather than enforced ad hoc at the query layer.

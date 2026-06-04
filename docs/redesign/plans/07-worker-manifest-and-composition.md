@@ -54,3 +54,85 @@ airlock does not implement a hook lifecycle.
 - Flipping a skill / swapping an MCP / changing a model binding in dev reloads in place.
 - `airlock migrate` converts an existing `config.toml` to an equivalent `worker.yaml`.
 - A `/skills/<id>` call dispatches the corresponding tool (skills = tools).
+
+---
+
+# Build-ready spec (frozen contract C2)
+
+> Frozen 2026-06-04. **One schema source: a versioned `worker.schema.json`, validated TS-side
+> only; the runtime trusts CLI-validated input.** See
+> [ADR-0020](../../adr/0020-worker-yaml-single-schema-source.md). Every Wave-2 epic that adds a
+> block edits **this one file** — the consolidation gate diffs it.
+
+## Source of truth — `packages/cli/src/worker-schema/worker.schema.json`
+
+JSON Schema (draft 2020-12), `$id` carries a schema version. The TS validator consumes it
+directly (Ajv) or generates Zod from it — either way there is **no second, hand-maintained
+schema**. The Python runtime never holds a competing definition.
+
+### Top-level blocks (the union every epic extends — owners noted)
+
+```yaml
+worker:            # {name, version}                         — epic 07
+harness:           # {kind, entrypoint, control_mode?}       — epic 07 / 01
+models:            # name -> {provider, endpoint, env_key}   — epic 07; default + per-step (03)
+skills:            # id -> tool ref  (skills = tools)         — epic 07
+tools:             # name -> module:attr                      — epic 07
+mcp:               # server -> {transport: stdio|http, ...}  — epic 07
+controls:          # {max_steps, budget:{tokens,usd}, tool_gates[], approvals[]} — epic 02
+routing:           # per-step model selection rules           — epic 03
+fallback:          # model/tool backup chains                 — epic 03
+io:                # {input_guards[], output:{schema,redact}} — epic 13
+state:             # {backend, dsn?}  sessions: {ttl}  cache: {tools[]} — epic 04
+triggers:          # {cron[], webhook[], event[]}             — epic 11
+expose:            # internal | public  (+ auth ref)          — epic 09
+auth:              # caller auth scheme                        — epic 10
+tenancy:           # {claim->tenant map, limits}              — epic 10
+pricing:           # price table                               — epic 05
+sandbox:           # {network, fs, limits}                     — epic 06
+variants:          # capability/cost/latency shards            — epic 12
+```
+
+Each block is **optional**; a minimal worker is `worker` + `harness` (+ `models`). Wave-2 epics
+fill in their block's sub-schema in the *same* file.
+
+## The validation boundary (C2)
+
+- **TS / CLI is the only gate.** `init.ts` / `scan.ts` emit `worker.yaml`; `doctor` and `migrate`
+  validate against `worker.schema.json`. `config-file.ts` is **superseded** (kept only to read
+  legacy TOML during the deprecation window for `migrate`).
+- **Python runtime trusts.** `airlock_agent/manifest.py` (new) = `yaml.safe_load` + typed
+  accessors (`worker_name()`, `harness()`, `models()`, `skills()`, …). **No `jsonschema`
+  dependency, no re-validation.** `config.py` (`read_agent_config`) is replaced by these accessors;
+  `__main__.py`/`serve.py` boot from `manifest.py` instead of `.airlock/config.toml`.
+- **Every producer routes through the validator.** Dev **hot-reload** (below) and any epic-11
+  **trigger that writes config** call the TS validator before the runtime re-reads — a manifest
+  reaching the runtime by any other path is booted unvalidated *by design*.
+
+## Hot-reload safety contract (resolves open question)
+
+`worker.yaml` change in dev → validate (TS) → signal runtime to reload. In-flight runs are
+**version-pinned**: a running run keeps the manifest snapshot it started with; the new manifest
+applies to runs started after the swap. No drain stall, no mid-run config flip. (Prod piece-changes
+mint a new version through canary/rollback — epic 08.)
+
+## MCP wiring (resolves open question)
+`mcp:` declares servers by transport (`stdio` | `http`). On boot, the runtime imports each server's
+tools and namespaces them `&lt;server&gt;.&lt;tool&gt;` into the tool set, so they flatten to skills like
+any other tool. Naming collisions are a `doctor` validation error (TS side).
+
+## File-by-file
+- **new** `packages/cli/src/worker-schema/worker.schema.json` (+ `validate.ts` wrapper).
+- **new** `python/agent-runtime/src/airlock_agent/manifest.py` (load + accessors; trusts).
+- **edit** `migrate.ts` — fill the real mapping (epic 00 stub → full schema); drop payment.
+- **edit** `init.ts`, `scan.ts` — emit `worker.yaml`.
+- **edit** `__main__.py`, `serve.py` — boot from `manifest.py`; remove `config.py` TOML read.
+- **supersede** `config-file.ts` (legacy-read only), `config.py`.
+
+## Verification → test layers
+- **L3 (full-CLI):** `airlock doctor` rejects an invalid `worker.yaml`; accepts a valid one.
+  `airlock migrate` turns a sample `config.toml` into a schema-valid `worker.yaml`.
+- **L4 (hermetic):** runtime boots a worker entirely from `worker.yaml` (no TOML present); a
+  `/skills/<id>` call dispatches the mapped tool. Hot-reload: change a model binding mid-idle →
+  next run uses it; a run in flight keeps its pinned manifest.
+- **L1:** schema round-trips (every block parses); MCP namespacing + collision error.

@@ -51,3 +51,84 @@ snapshot/replay hooks (epic 01); router sticky logic (epic 09); `worker.yaml` `s
 - Two calls in one session share state across calls within the TTL; a new session starts blind.
 - A cacheable tool's second call (same args, same tenant) is served from cache; a send/pay/write
   tool is never cached.
+
+---
+
+# Build-ready spec (frozen contract C3)
+
+> Frozen 2026-06-04. **One Store protocol; tenant-first hierarchical keys; isolation is
+> structural.** See [ADR-0016 §"tenant-first key namespace"](../../adr/0016-pluggable-state-store-sticky-routing.md).
+> Consumed by epics 02 (held runs), 05 (traces), 10 (per-tenant state) — they key into *this*
+> namespace via `scoped(tenant)`, never raw keys.
+
+## Frozen protocol — `airlock_agent/state/store.py`
+
+```python
+from typing import Protocol, runtime_checkable, Any, Iterator
+
+@runtime_checkable
+class StateStore(Protocol):
+    def get(self, key: str) -> Any | None: ...
+    def set(self, key: str, value: Any, ttl_s: int | None = None) -> None: ...
+    def delete(self, key: str) -> None: ...
+    def list_prefix(self, prefix: str) -> Iterator[str]: ...        # keys under a prefix
+    def snapshot(self, key: str, value: Any) -> None: ...           # append-only step snapshot
+    def scoped(self, tenant: str) -> "ScopedStore": ...             # hand consumers a safe handle
+
+# Consumers receive a ScopedStore so they CANNOT forget the tenant prefix.
+@runtime_checkable
+class ScopedStore(Protocol):
+    tenant: str
+    def get(self, rest: str) -> Any | None: ...     # rest = "{session}/{run}/{kind}/{id}"
+    def set(self, rest: str, value: Any, ttl_s: int | None = None) -> None: ...
+    def list_prefix(self, rest: str) -> Iterator[str]: ...
+    def snapshot(self, rest: str, value: Any) -> None: ...
+```
+
+## Frozen key scheme
+
+```
+{tenant}/{session}/{run}/{kind}/{id}
+# examples:
+acme/sess_42/run_7/checkpoint/step_3      # per-step snapshot (resume/fork)
+acme/sess_42/cache/{tool_hash}            # tool-result cache, shared across runs in a session
+acme/_held/run_7                          # epic-02 held run, tenant-scoped
+_system/versions/{worker}@{ver}           # epic-08 registry: cross-tenant, reserved prefix
+_system/workers/{id}                      # epic-09 worker registry
+```
+
+- **Tenant is always segment 1** → `list_prefix("acme/")` can never cross tenants. Isolation is
+  structural, not enforced at the query layer.
+- Single-tenant default: `tenant = "default"`. Cross-tenant registries live under `_system/`.
+- `cache` key = `tool + args(+ model where the tool's result depends on it)` → resolves the
+  cache-key-stability open question: model is part of the key only for model-dependent tools.
+
+## Adapters (behind the one protocol)
+`sqlite` (default, single-box, zero-dep) · `files` · `redis` · `postgres`. Selected by
+`worker.yaml` `state.backend`. Sticky routing (resolves open question): **shared-store is the v1
+default** (any replica rehydrates from the store); affinity-by-session is an optimization the fleet
+router (epic 09 stage 4) can add later — shared-store keeps replicas swappable per ADR-0011's
+spirit while enabling resume/fork.
+
+## Snapshot granularity (resolves open question)
+**Full working-context snapshot per step** for v1 (simple, correct); deltas are a later
+optimization. Harness-specific state is serialized via the binding (epic 01 `OWN` mode only —
+`WRAP` harnesses get session/cache state but **not** checkpoint/resume, per the C1 matrix).
+
+## File-by-file
+- **new** `airlock_agent/state/{store.py (protocol), sqlite.py, files.py, redis.py, postgres.py,
+  keys.py (key builder + `scoped`)}`.
+- **edit** engine `loop.py` (epic 01) — call `store.snapshot(...)` after each step on `OWN`
+  bindings; add `resume(run_id)` / `fork(run_id, at_step, change)` entry points.
+- **edit** `surface.py` — resolve `tenant` (default until epic 10) + `X-Airlock-Session`, build the
+  `ScopedStore`, pass it into the run.
+- **schema** — `state` / `sessions` / `cache` blocks in `worker.schema.json` (epic 07, C2).
+
+## Verification → test layers
+- **L2:** kill→resume completes without re-running a cached tool; fork@N diverges only after N;
+  session sharing within TTL; new session blind. **Isolation test:** tenant B cannot
+  `list_prefix` into tenant A's keys.
+- **L1:** key builder always emits `{tenant}/…`; `scoped()` rejects empty tenant; send/pay/write
+  tool never written to `cache/`.
+- Checkpoint/resume/fork tests run on **`OWN` harnesses only** (C1 matrix); session+cache tests run
+  on all.
