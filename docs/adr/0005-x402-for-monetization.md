@@ -1,5 +1,7 @@
 # x402 for Publisher monetization
 
+> **Status (2026-06-03): Superseded.** All payment/crypto is removed ([redesign epic 00](../redesign/plans/00-foundations-strip-crypto-config-reset.md)). airlock no longer has a payment rail.
+
 Publishers deploying AI agents via `airlock` need a way to charge Callers for inbound calls (token costs, compute, value). We adopted Coinbase's **x402** standard — HTTP 402 Payment Required with signed USDC payments on Base — as the v1 payment rail. The Publisher provides a wallet; Callers pay directly to that wallet via on-chain settlement; we never custody funds, run a Facilitator, or have a payout obligation. This matches ADR-0001 (we don't hold prod traffic) and ADR-0004 (open source, publisher owns everything). Payment enforcement ships as per-Recipe middleware libraries the Publisher imports into their handler — we don't proxy paid requests because we don't sit in the prod request path.
 
 ## Considered Options

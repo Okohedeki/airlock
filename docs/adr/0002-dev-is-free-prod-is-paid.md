@@ -1,5 +1,7 @@
 # Dev is free, prod is paid
 
+> **Status (2026-06-03): Superseded.** Payments were removed ([redesign epic 00](../redesign/plans/00-foundations-strip-crypto-config-reset.md)); the dev-free/prod-paid model no longer applies.
+
 The natural funnel for `airlock` is dev → prod: solo devs and OSS authors build agents on the dev tunnel; when they ship to customers, they graduate to the production path. We chose this as the primary paid wedge instead of an ngrok-style "free tier with restricted tunnel, paid tier with better tunnel" model. The Free signed-in tier is **deliberately generous** — stable subdomain, no time caps, 3 concurrent tunnels, full agent-aware observability, all Shape detectors, ~50 GB/mo bandwidth cap. The paid Pro tier unlocks `airlock deploy` to the publisher's own cloud, custom domains, longer log retention, and multi-agent management. An Anonymous tier (rotating URL, ~30 min auto-close, 1 tunnel) exists only for the marketing-page 5-second wow; every real user signs up.
 
 ## Considered Options

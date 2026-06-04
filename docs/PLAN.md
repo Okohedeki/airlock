@@ -1,4 +1,11 @@
+> ⚠️ **Historical — superseded by [`docs/redesign/`](./redesign/).** Kept for reference.
+
 # airlock — initial plan
+
+> **Superseded (2026-06-03).** This is the original Cloudflare-Workers-codegen v1 sketch. The
+> current direction is the **in-the-loop agent runtime** redesign — see
+> [`docs/redesign/`](./redesign/README.md) (north star: [`PRODUCT-BRIEF.md`](./redesign/PRODUCT-BRIEF.md)).
+> Kept for history.
 
 This is the design carry-over from the `airlock` repo's grilling session. When this project actually starts, do a real grill-with-docs pass to convert these notes into concrete decisions + ADRs.
 

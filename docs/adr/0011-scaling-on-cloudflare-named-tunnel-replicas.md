@@ -1,5 +1,7 @@
 # Scale on Cloudflare with named-tunnel connector replicas
 
+> **Status (2026-06-03): Superseded** by [ADR-0016](./0016-pluggable-state-store-sticky-routing.md) (pluggable state + sticky routing) and [ADR-0017](./0017-fleet-router.md) (fleet router). The stateless-replicas posture is replaced (redesign epics 04/09).
+
 A deployed Agent must serve many Callers at low latency under one **stable**
 hostname. The scale ceiling today is self-imposed, not Cloudflare's: a fixed
 concurrency cap of 4 (clamped to 1 for an in-process model), a blocking

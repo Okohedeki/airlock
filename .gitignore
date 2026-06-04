@@ -39,3 +39,6 @@ __pycache__/
 # Local LLM artifacts (large; not part of the project)
 models/
 tools/llama.cpp/
+
+# Reference clone of the sibling airlock-config repo (read-only; not part of this repo)
+/airlock-config/

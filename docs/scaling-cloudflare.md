@@ -1,3 +1,5 @@
+> ⚠️ **Historical — superseded by [`docs/redesign/`](./redesign/).** Scaling is now the Fleet Router + state store (redesign epics 04/09). Kept for reference.
+
 # Scaling on Cloudflare — latency + concurrent requests
 
 `airlock up` exposes a publisher's agent over a Cloudflare tunnel. This doc asks
