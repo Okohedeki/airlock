@@ -183,6 +183,21 @@ async function main() {
     });
 
   program
+    .command('build')
+    .description('Build a reproducible Docker image for this worker.yaml (validates first)')
+    .option('--base <image>', 'base image to layer on', undefined)
+    .option('--no-base-build', "don't build the base image even if it's missing locally")
+    .action(async (opts: { base?: string; baseBuild: boolean }) => {
+      try {
+        const { runBuild } = await import('./commands/build.js');
+        await runBuild({ cwd: process.cwd(), base: opts.base, noBaseBuild: opts.baseBuild === false });
+      } catch (err) {
+        console.error(`error: ${(err as Error).message}`);
+        process.exit(1);
+      }
+    });
+
+  program
     .command('doctor')
     .description('Validate the local airlock config and report issues')
     .action(async () => {
@@ -334,6 +349,10 @@ async function main() {
     .option('--cf-protocol <proto>', 'cloudflared edge protocol: quic | http2 | auto')
     .option('--cf-region <region>', 'pin the cloudflared connector to a Cloudflare region (e.g. us)')
     .option('--cf-metrics <addr>', "expose cloudflared's metrics server on host:port")
+    .option('--docker', 'run the Worker in Docker (reproducible; needs `airlock build` first)')
+    .option('--image <ref>', 'image to run with --docker (default: the image from `airlock build`)')
+    .option('--mount', 'dev: mount the project into the base image instead of a built image')
+    .option('--env-file <path>', 'pass an env file to the container (--docker)')
     .action(
       async (opts: {
         port: string;
@@ -347,6 +366,10 @@ async function main() {
         cfProtocol?: 'quic' | 'http2' | 'auto';
         cfRegion?: string;
         cfMetrics?: string;
+        docker?: boolean;
+        image?: string;
+        mount?: boolean;
+        envFile?: string;
       }) => {
         const port = Number.parseInt(opts.port, 10);
         if (!Number.isFinite(port) || port <= 0) {
@@ -377,6 +400,10 @@ async function main() {
             cfProtocol: opts.cfProtocol,
             cfRegion: opts.cfRegion,
             cfMetrics: opts.cfMetrics,
+            docker: opts.docker,
+            image: opts.image,
+            mount: opts.mount,
+            envFile: opts.envFile,
           });
           const shutdown = async () => {
             await handle.stop();

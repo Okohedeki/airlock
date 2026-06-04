@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { parse as parseYaml } from 'yaml';
 import { ZodError } from 'zod';
 import {
   type AirlockConfig,
@@ -5,8 +8,43 @@ import {
   readConfig,
   validateTunnel,
 } from '../config-file.js';
+import { validateWorker } from '../worker-schema/validate.js';
 
 const KNOWN_TARGETS = ['workers', 'fly'] as const;
+
+/** Validate worker.yaml (C2 gate) + warn about container-hostile model endpoints. */
+function checkWorkerYaml(cwd: string, findings: Finding[]): boolean {
+  const path = resolve(cwd, 'worker.yaml');
+  if (!existsSync(path)) return false;
+  let manifest: Record<string, unknown>;
+  try {
+    manifest = parseYaml(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  } catch (err) {
+    findings.push({ level: 'error', message: `worker.yaml is not valid YAML: ${(err as Error).message}` });
+    return true;
+  }
+  const { ok, errors } = validateWorker(manifest);
+  if (!ok) {
+    for (const e of errors) findings.push({ level: 'error', message: `worker.yaml ${e}` });
+  } else {
+    const w = (manifest.worker ?? {}) as { name?: string };
+    findings.push({ level: 'ok', message: `worker.yaml valid (worker=${w.name ?? '<unnamed>'})` });
+  }
+  // Docker note: a host-run model on 127.0.0.1 is unreachable from inside a container.
+  const models = (manifest.models ?? {}) as Record<string, { endpoint?: string }>;
+  for (const [name, m] of Object.entries(models)) {
+    const ep = m?.endpoint ?? '';
+    if (/127\.0\.0\.1|localhost/.test(ep)) {
+      findings.push({
+        level: 'warn',
+        message:
+          `models.${name}.endpoint uses ${ep} — unreachable from inside a container. ` +
+          'For `airlock up --docker` with a host-run model, use http://host.docker.internal:<port>.',
+      });
+    }
+  }
+  return true;
+}
 
 export interface DoctorReport {
   ok: boolean;
@@ -21,6 +59,9 @@ export interface Finding {
 export async function runDoctor(cwd: string): Promise<DoctorReport> {
   const findings: Finding[] = [];
 
+  // worker.yaml is the manifest of record (epic 07). Validate it if present.
+  const hasWorker = checkWorkerYaml(cwd, findings);
+
   let config: AirlockConfig;
   try {
     config = await readConfig(cwd);
@@ -29,9 +70,13 @@ export async function runDoctor(cwd: string): Promise<DoctorReport> {
       message: `read .airlock/config.toml (project=${config.project?.name ?? '<unknown>'})`,
     });
   } catch (err) {
+    if (hasWorker) {
+      // worker.yaml-only project — no legacy config.toml is expected.
+      return { ok: !findings.some((f) => f.level === 'error'), findings };
+    }
     findings.push({
       level: 'error',
-      message: `no .airlock/config.toml — run \`airlock init <name>\`. (${(err as Error).message})`,
+      message: `no worker.yaml or .airlock/config.toml — run \`airlock init <name>\` or \`airlock migrate\`. (${(err as Error).message})`,
     });
     return { ok: false, findings };
   }

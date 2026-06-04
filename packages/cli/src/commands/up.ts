@@ -12,10 +12,12 @@
  * Cloudflare keys either way.
  */
 
-import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ZodError } from 'zod';
+import { buildDockerRun } from '../exec.js';
+import { DEFAULT_BASE_IMAGE, resolveBuildPlan } from './build.js';
 import {
   type AirlockConfig,
   CF_TUNNEL_TOKEN_ENV,
@@ -53,6 +55,14 @@ export interface UpOptions {
   cfRegion?: string;
   /** Expose cloudflared metrics on host:port; overrides [tunnel].metrics. */
   cfMetrics?: string;
+  /** Run the Worker in Docker (reproducible) instead of host python (ADR-0012). */
+  docker?: boolean;
+  /** Image to run with --docker (default: the content-addressed image from `airlock build`). */
+  image?: string;
+  /** Dev mode: mount the project into the base image instead of using a built image. */
+  mount?: boolean;
+  /** Path passed to `docker run --env-file` (secrets). */
+  envFile?: string;
   /** Injectables for tests. */
   spawnImpl?: typeof spawn;
   startTunnelImpl?: typeof startTunnel;
@@ -218,7 +228,6 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
     if (!existsSync(resolve(cwd, 'worker.yaml'))) throw err;
     config = { project: { name: 'worker' } } as AirlockConfig;
   }
-  const plan = resolveUpPlan(config, opts);
   const spawnFn = opts.spawnImpl ?? spawn;
   const startTunnelFn = opts.startTunnelImpl ?? startTunnel;
   const startNamedTunnelFn = opts.startNamedTunnelImpl ?? startNamedTunnel;
@@ -228,13 +237,48 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
   // so a misconfigured `--durable` fails fast with actionable guidance.
   const durable = opts.noTunnel ? null : resolveDurableTunnel(config, opts);
 
-  console.log(`airlock up  →  starting agent: ${plan.python} -m airlock_agent (:${plan.port})`);
+  const port = opts.port ?? 3000;
+  let containerName: string | undefined;
+  let binary: string;
+  let args: string[];
+  let spawnEnv: Record<string, string> = { ...process.env } as Record<string, string>;
 
-  const child = spawnFn(plan.python, plan.args, {
-    cwd,
-    stdio: 'inherit',
-    env: { ...process.env, ...plan.env },
-  });
+  if (opts.docker) {
+    // Reproducible containerized run (ADR-0012): publish the port, mount the state
+    // volume so the SQLite store persists, wire host.docker.internal for host models.
+    const stateDir = resolve(cwd, '.airlock');
+    mkdirSync(stateDir, { recursive: true });
+    let image = opts.image;
+    let mountDir: string | undefined;
+    if (opts.mount) {
+      image = image ?? DEFAULT_BASE_IMAGE;
+      mountDir = cwd; // dev: mount the project; no rebuild
+    } else if (!image) {
+      image = resolveBuildPlan({ cwd }).image; // the content-addressed image from `airlock build`
+    }
+    containerName = `airlock-${slug(config.project?.name ?? 'worker')}`;
+    const run = buildDockerRun({
+      image: image!,
+      port,
+      name: containerName,
+      stateDir,
+      mountDir,
+      addHostGateway: true,
+      envFile: opts.envFile,
+      env: forwardedEnv(),
+    });
+    binary = run.binary;
+    args = run.args;
+    console.log(`airlock up  →  docker run ${image} (:${port})`);
+  } else {
+    const plan = resolveUpPlan(config, opts);
+    binary = plan.python;
+    args = plan.args;
+    spawnEnv = { ...process.env, ...plan.env } as Record<string, string>;
+    console.log(`airlock up  →  starting agent: ${plan.python} -m airlock_agent (:${plan.port})`);
+  }
+
+  const child = spawnFn(binary, args, { cwd, stdio: 'inherit', env: spawnEnv });
 
   const done = new Promise<number>((resolve) => {
     child.on('exit', (code) => resolve(code ?? 0));
@@ -242,30 +286,29 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
 
   let tunnel: TunnelHandle | undefined;
   try {
-    await waitForHealth(plan.port, fetchFn, child, 120_000);
+    await waitForHealth(port, fetchFn, child, 120_000);
   } catch (err) {
     child.kill();
+    if (containerName) spawnSync('docker', ['stop', containerName]);
     throw err;
   }
 
+  console.log(`  console:      http://localhost:${port}/console`);
   if (!opts.noTunnel) {
     const tuning = resolveTunnelTuning(config, opts);
     if (durable) {
       console.log('  opening durable named tunnel on your Cloudflare account…');
-      tunnel = await startNamedTunnelFn(plan.port, { ...durable, tuning });
+      tunnel = await startNamedTunnelFn(port, { ...durable, tuning });
       console.log(`\n✓ live (durable) at  ${tunnel.url}`);
     } else {
       console.log('  opening public tunnel…');
-      tunnel = await startTunnelFn(plan.port, { tuning });
+      tunnel = await startTunnelFn(port, { tuning });
       console.log(`\n✓ live at  ${tunnel.url}`);
     }
     console.log(`  callers POST to:  ${tunnel.url}/v1/chat/completions`);
   } else {
-    console.log(`\n✓ agent live on 0.0.0.0:${plan.port} (no tunnel)`);
-    console.log(`  local:        http://localhost:${plan.port}/v1/chat/completions`);
-    console.log(
-      `  public host:  http://<this-server-ip>:${plan.port}/v1/chat/completions  (open the port / front with your own proxy)`,
-    );
+    console.log(`\n✓ agent live on 0.0.0.0:${port} (no tunnel)`);
+    console.log(`  local:        http://localhost:${port}/v1/chat/completions`);
   }
   console.log('  press Ctrl-C to stop');
 
@@ -274,8 +317,26 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
     stop: async () => {
       tunnel?.stop();
       child.kill();
+      if (containerName) spawnSync('docker', ['stop', containerName]);
       await done;
     },
     done,
   };
+}
+
+/** Forward a small allowlist of host env into the container (secrets + knobs). */
+function forwardedEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  const allow = ['HOOK_SECRET', 'OPENAI_API_KEY', 'OPENAI_API_BASE'];
+  for (const k of Object.keys(process.env)) {
+    if (allow.includes(k) || k.startsWith('AIRLOCK_')) {
+      const v = process.env[k];
+      if (v !== undefined) env[k] = v;
+    }
+  }
+  return env;
+}
+
+function slug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '') || 'worker';
 }

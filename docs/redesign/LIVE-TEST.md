@@ -173,7 +173,7 @@ Each tenant’s state lives under `{acme}/…` vs `{globex}/…` — neither can
 
 ```bash
 BODY='{"issue":{"title":"fix the login bug"}}'
-SIG="sha256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$HOOK_SECRET" | awk '{print $2}')"
+SIG="sha256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$HOOK_SECRET" | awk '{print $NF}')"
 curl -s $PUBLIC/hooks/github -H "X-Hub-Signature-256: $SIG" -d "$BODY" | jq
 ```
 → `{"trigger":"webhook","output":"echo: fix the login bug"}` — the payload’s `issue.title` was mapped to the run input and a run fired. A bad signature returns **401**.
