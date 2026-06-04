@@ -5,6 +5,9 @@ This directory is the program of record for the airlock redesign. The north star
 [`plans/`](./plans/). Each epic is independently grabbable but ordered by the dependency graph
 below.
 
+> **New here?** Start with [`READ-FIRST.md`](./READ-FIRST.md) — the ordered reading map across the
+> docs, the decisions (ADRs), and the code each epic touches.
+
 ## Vision
 
 airlock becomes an **in-the-loop agent runtime**: it executes the agent *step by step* so the
