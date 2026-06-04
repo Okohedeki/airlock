@@ -258,7 +258,9 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
     } else if (!image) {
       image = resolveBuildPlan({ cwd }).image; // the content-addressed image from `airlock build`
     }
-    containerName = `airlock-${slug(config.project?.name ?? 'worker')}`;
+    // Include the port so several workers can run side by side (worker.yaml projects
+    // share the default config name, so the name alone isn't unique).
+    containerName = `airlock-${slug(config.project?.name ?? 'worker')}-${port}`;
     const dockerEnv = forwardedEnv();
     if (opts.profile) dockerEnv.AIRLOCK_PROFILE = opts.profile;
     const run = buildDockerRun({
