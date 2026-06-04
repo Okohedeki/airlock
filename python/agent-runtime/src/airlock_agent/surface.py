@@ -1,9 +1,10 @@
-"""The OpenAI-compatible chat surface — written ONCE, reused by every Harness.
+"""The OpenAI-compatible chat surface — written once, reused by every harness.
 
-`POST /v1/chat/completions` → run the adapter (the Harness's full native loop)
-→ return a standard chat completion. The airlock-config Bundle is served if
-present. Adding a new Harness means writing a small adapter, not touching this
-file. See ADR-0007.
+`POST /v1/chat/completions` runs the agent through the Airlock Loop Engine (airlock
+owns the loop, ADR-0014). With `"stream": true` the surface emits live StepEvents as
+SSE `event: step` frames (epic 05) interleaved with standard OpenAI `data:` chunks,
+so a watcher sees each model call / tool call / result as it happens. Approval routes
+(epic 02) and typed `/skills/<id>` dispatch (epic 13) live here too.
 """
 
 from __future__ import annotations
@@ -13,38 +14,24 @@ import json
 import math
 import time
 import uuid
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable, Optional
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from .adapter import AgentRunResult, HarnessAdapter
+from .adapter import AgentRunResult
 from .concurrency import BoundedGate, QueueFull
+from .engine.events import StepEvent
+from .io import InputRejected
 from .wellknown import mount_wellknown, read_contract_metadata
 
-# Heartbeat cadence while a run is in flight — short enough to stay under the
-# idle-connection timeouts of Cloudflare/load balancers, so long agent loops
-# don't get their stream dropped.
 HEARTBEAT_S = 12.0
 
 
-def _chunk(
-    chunk_id: str,
-    created: int,
-    model: str,
-    *,
-    delta: dict[str, Any] | None = None,
-    finish_reason: str | None = None,
-    usage: dict[str, int] | None = None,
-    error: str | None = None,
-) -> str:
-    """One OpenAI `chat.completion.chunk` as an SSE `data:` frame."""
+def _chunk(chunk_id, created, model, *, delta=None, finish_reason=None, usage=None, error=None) -> str:
     obj: dict[str, Any] = {
-        "id": chunk_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": model,
+        "id": chunk_id, "object": "chat.completion.chunk", "created": created, "model": model,
         "choices": [{"index": 0, "delta": delta or {}, "finish_reason": finish_reason}],
     }
     if usage is not None:
@@ -54,88 +41,43 @@ def _chunk(
     return f"data: {json.dumps(obj)}\n\n"
 
 
-async def _stream_run(
-    gate: BoundedGate,
-    adapter: HarnessAdapter,
-    messages: list[dict[str, Any]],
-    model: str,
-) -> AsyncIterator[str]:
-    """Tier A streaming: emit an immediate role frame, heartbeat while the (sync)
-    Harness loop runs in the threadpool, then the final content + a `usage` frame.
-    TTFB drops to ~0 and the connection stays warm; the gate slot is held for the
-    whole run and released as soon as the loop finishes. The caller `gate` MUST be
-    already acquired — this generator owns releasing it exactly once."""
-    chunk_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
-    created = int(time.time())
-    task: asyncio.Future = asyncio.ensure_future(run_in_threadpool(adapter.run, messages))
-    # Retrieve the result/exception even if the client disconnects, so a finished
-    # background run doesn't log "exception never retrieved".
-    task.add_done_callback(lambda t: t.cancelled() or t.exception())
-    released = False
+def _step_frame(ev: StepEvent) -> str:
+    """A live StepEvent as a named SSE event (epic 05). Plain OpenAI clients ignore
+    non-`data:` events, so this is additive."""
+    return f"event: step\ndata: {json.dumps(ev.to_dict())}\n\n"
 
-    def _release() -> None:
-        nonlocal released
-        if not released:
-            released = True
-            gate.release()
 
-    try:
-        yield _chunk(chunk_id, created, model, delta={"role": "assistant"})
-        while True:
-            done, _ = await asyncio.wait({task}, timeout=HEARTBEAT_S)
-            if task in done:
-                break
-            yield ": keepalive\n\n"  # SSE comment — keeps the pipe alive, ignored by clients
-        result: AgentRunResult = task.result()
-    except Exception as exc:  # run failed after headers were already flushed
-        _release()
-        yield _chunk(chunk_id, created, model, finish_reason="stop", error=str(exc))
-        yield "data: [DONE]\n\n"
-        return
-    finally:
-        _release()
-
-    yield _chunk(chunk_id, created, model, delta={"content": result.content})
-    usage = {
-        "prompt_tokens": result.prompt_tokens,
-        "completion_tokens": result.completion_tokens,
-        "total_tokens": result.units,
+def to_chat_completion(result: AgentRunResult, model: str, *, include_steps: bool = False) -> dict:
+    out = {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:24]}", "object": "chat.completion",
+        "created": int(time.time()), "model": model,
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": result.content},
+                     "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": result.prompt_tokens, "completion_tokens": result.completion_tokens,
+                  "total_tokens": result.units},
     }
-    yield _chunk(chunk_id, created, model, finish_reason="stop", usage=usage)
-    yield "data: [DONE]\n\n"
+    if include_steps and result.steps is not None:
+        out["steps"] = result.steps
+    return out
 
 
-def _usage_of(result: AgentRunResult) -> dict[str, int]:
-    return {
-        "prompt_tokens": result.prompt_tokens,
-        "completion_tokens": result.completion_tokens,
-        "total_tokens": result.units,
-    }
-
-
-async def _stream_run_native(
-    gate: BoundedGate,
-    adapter: Any,
-    messages: list[dict[str, Any]],
-    model: str,
-) -> AsyncIterator[str]:
-    """Tier B streaming: pump a harness's own (sync, blocking) token/step stream
-    out as deltas as they're produced. `adapter.run_stream(messages)` yields `str`
-    deltas and finally one `AgentRunResult` (for usage). The blocking iterator runs
-    in a thread and feeds an async queue; if no delta arrives within HEARTBEAT_S we
-    emit a keepalive. Falls back to Tier A semantics when no delta is produced."""
+async def _stream_engine(gate, run_call, messages, model, *, send_steps: bool) -> AsyncIterator[str]:
+    """Run the engine in the threadpool; pump StepEvents (optional) + final content."""
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
     created = int(time.time())
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
     sentinel = object()
 
+    def on_step(ev: StepEvent) -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, ("step", ev))
+
     def _produce() -> None:
         try:
-            for item in adapter.run_stream(messages):
-                loop.call_soon_threadsafe(queue.put_nowait, item)
-        except Exception as exc:  # propagate to the async side
-            loop.call_soon_threadsafe(queue.put_nowait, exc)
+            result = run_call(messages, on_step if send_steps else None)
+            loop.call_soon_threadsafe(queue.put_nowait, ("done", result))
+        except Exception as exc:
+            loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, sentinel)
 
@@ -143,13 +85,14 @@ async def _stream_run_native(
     task.add_done_callback(lambda t: t.cancelled() or t.exception())
     released = False
 
-    def _release() -> None:
+    def _release():
         nonlocal released
         if not released:
             released = True
             gate.release()
 
-    final: AgentRunResult | None = None
+    final: Optional[AgentRunResult] = None
+    err: Optional[Exception] = None
     try:
         yield _chunk(chunk_id, created, model, delta={"role": "assistant"})
         while True:
@@ -160,48 +103,30 @@ async def _stream_run_native(
                 continue
             if item is sentinel:
                 break
-            if isinstance(item, Exception):
-                raise item
-            if isinstance(item, AgentRunResult):
-                final = item
-                continue
-            yield _chunk(chunk_id, created, model, delta={"content": str(item)})
-    except Exception as exc:
-        _release()
-        yield _chunk(chunk_id, created, model, finish_reason="stop", error=str(exc))
-        yield "data: [DONE]\n\n"
-        return
+            kind, payload = item
+            if kind == "step":
+                yield _step_frame(payload)
+            elif kind == "done":
+                final = payload
+            elif kind == "error":
+                err = payload
     finally:
         _release()
 
-    usage = _usage_of(final) if final is not None else None
-    yield _chunk(chunk_id, created, model, finish_reason="stop", usage=usage)
+    if err is not None:
+        yield _chunk(chunk_id, created, model, finish_reason="stop", error=str(err))
+        yield "data: [DONE]\n\n"
+        return
+    if final is not None:
+        yield _chunk(chunk_id, created, model, delta={"content": final.content})
+        usage = {"prompt_tokens": final.prompt_tokens, "completion_tokens": final.completion_tokens,
+                 "total_tokens": final.units}
+        yield _chunk(chunk_id, created, model, finish_reason="stop", usage=usage)
     yield "data: [DONE]\n\n"
 
 
-def to_chat_completion(result: AgentRunResult, model: str) -> dict[str, Any]:
-    return {
-        "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": model,
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": result.content},
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": {
-            "prompt_tokens": result.prompt_tokens,
-            "completion_tokens": result.completion_tokens,
-            "total_tokens": result.units,
-        },
-    }
-
-
 def create_app(
-    adapter: HarnessAdapter,
+    runner: Any,
     *,
     name: str = "airlock-agent",
     dist_dir: str = "dist",
@@ -209,14 +134,23 @@ def create_app(
     max_queue: int = 0,
     queue_timeout_s: float = 30.0,
     max_wait_s: float | None = None,
+    authenticate: Callable[[Request], str] | None = None,  # epic 10: request -> tenant
 ) -> FastAPI:
+    """`runner` exposes `run(messages, *, tenant, session, run_id, on_step) -> AgentRunResult`.
+    A legacy `.run(messages)` object is adapted transparently."""
     app = FastAPI(title=name)
     metadata = read_contract_metadata(dist_dir)
+    store = getattr(runner, "store", None)
+
+    def _run_call(messages, tenant, session, run_id=None):
+        def call(msgs, on_step):
+            try:
+                return runner.run(msgs, tenant=tenant, session=session, run_id=run_id, on_step=on_step)
+            except TypeError:  # legacy .run(messages)
+                return runner.run(msgs)
+        return call
 
     def _ensure_gate() -> BoundedGate:
-        # Lazily built on the running loop (first request) so the semaphore binds
-        # to the right loop without depending on startup events firing — which
-        # they don't under a plain (non-context-manager) TestClient.
         gate = getattr(app.state, "run_gate", None)
         if gate is None:
             gate = BoundedGate(max_concurrency, max_queue, queue_timeout_s, max_wait=max_wait_s)
@@ -231,6 +165,14 @@ def create_app(
                 pass
         return gate
 
+    def _tenant(request: Request) -> str:
+        if authenticate is not None:
+            return authenticate(request)
+        return request.headers.get("X-Airlock-Tenant", "default")
+
+    def _session(request: Request) -> str:
+        return request.headers.get("X-Airlock-Session", "default")
+
     @app.get("/")
     def info() -> dict[str, Any]:
         gate = getattr(app.state, "run_gate", None)
@@ -238,9 +180,8 @@ def create_app(
         if gate is not None:
             concurrency["live"] = gate.stats()
         return {
-            "name": name,
-            "shape": "openai",
-            "endpoints": ["POST /v1/chat/completions"],
+            "name": name, "shape": "openai",
+            "endpoints": ["POST /v1/chat/completions", "POST /skills/{id}", "GET /v1/runs/held"],
             "concurrency": concurrency,
             "discovery": "/.well-known/airlock-config.yaml" if metadata is not None else None,
             "contract": metadata,
@@ -251,64 +192,109 @@ def create_app(
         return {"ok": True}
 
     @app.get("/metrics")
-    def metrics() -> dict[str, Any]:
-        # Run-gate saturation: lets an operator (or a Cloudflare LB health check)
-        # see whether this box is at capacity. Gate is built on the first request.
+    def metrics(request: Request):
         gate = getattr(app.state, "run_gate", None)
-        return gate.stats() if gate is not None else {"running": 0, "waiting": 0, "pending": 0}
+        stats = gate.stats() if gate is not None else {"running": 0, "waiting": 0, "pending": 0}
+        if "prometheus" in request.headers.get("accept", "") or request.query_params.get("format") == "prom":
+            lines = [f"airlock_{k} {v}" for k, v in stats.items() if isinstance(v, (int, float))]
+            return PlainTextResponse("\n".join(lines) + "\n")
+        return JSONResponse(stats)
 
     async def chat(request: Request):
         body = await request.json()
         messages = body.get("messages") or []
         model = body.get("model") or name
         wants_stream = bool(body.get("stream"))
+        send_steps = bool(body.get("stream_steps", wants_stream))
+        try:
+            tenant, session = _tenant(request), _session(request)
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=401)
+        run_id = body.get("run_id") or request.headers.get("X-Airlock-Run")
         gate = _ensure_gate()
-        # Admission is synchronous so 429s happen here (not mid-stream): up to N
-        # run in parallel, the rest queue (FIFO), and callers whose estimated wait
-        # exceeds the budget are shed with 429 + Retry-After.
         try:
             await gate.acquire()
         except (QueueFull, asyncio.TimeoutError) as exc:
             retry_after = getattr(exc, "retry_after", 0.0) or gate.stats().get("est_wait_s", 0.0)
             headers = {"Retry-After": str(int(math.ceil(retry_after)))} if retry_after > 0 else {}
-            return JSONResponse(
-                {"error": "agent at capacity, retry shortly"},
-                status_code=429,
-                headers=headers,
-            )
+            return JSONResponse({"error": "agent at capacity, retry shortly"}, status_code=429, headers=headers)
 
-        # The Harness's full native loop is sync, so it runs in the threadpool
-        # either way; streaming just emits a heartbeat while it runs so the
-        # caller sees first-byte immediately instead of after the whole loop.
+        run_call = _run_call(messages, tenant, session, run_id)
         if wants_stream:
-            # Tier B (real incremental deltas) when the harness exposes a stream;
-            # otherwise Tier A (heartbeat + final). Either way the gate is held
-            # for the whole run and released by the generator.
-            generator = (
-                _stream_run_native(gate, adapter, messages, model)
-                if hasattr(adapter, "run_stream")
-                else _stream_run(gate, adapter, messages, model)
-            )
             return StreamingResponse(
-                generator,
+                _stream_engine(gate, run_call, messages, model, send_steps=send_steps),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
-
         try:
-            result: AgentRunResult = await run_in_threadpool(adapter.run, messages)
-        finally:
+            result: AgentRunResult = await run_in_threadpool(run_call, messages, None)
+        except InputRejected as exc:
             gate.release()
+            return JSONResponse({"error": exc.reason}, status_code=exc.status)
+        except Exception as exc:
+            gate.release()
+            return JSONResponse({"error": str(exc)}, status_code=500)
+        finally:
+            if not wants_stream:
+                gate.release()
         headers: dict[str, str] = {}
         if result.units and result.units > 0:
-            # Token-usage accounting header (observability only).
             headers["X-Airlock-Units"] = str(result.units)
-        return JSONResponse(to_chat_completion(result, model), headers=headers)
+        return JSONResponse(to_chat_completion(result, model, include_steps=bool(body.get("include_steps"))), headers=headers)
 
     app.add_api_route("/v1/chat/completions", chat, methods=["POST"])
-    app.add_api_route("/chat", chat, methods=["POST"])  # short alias
+    app.add_api_route("/chat", chat, methods=["POST"])
 
-    # Discovery: serve the Bundle's well-known files if the Publisher built one.
+    # ---- /skills/<id> typed dispatch (epic 13) ------------------------------
+    async def skill(request: Request, skill_id: str):
+        body = await request.json()
+        text = body.get("input") if isinstance(body, dict) else None
+        messages = [{"role": "user", "content": text if isinstance(text, str) else json.dumps(body)}]
+        try:
+            tenant, session = _tenant(request), _session(request)
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=401)
+        gate = _ensure_gate()
+        await gate.acquire()
+        run_call = _run_call(messages, tenant, session)
+        try:
+            result = await run_in_threadpool(run_call, messages, None)
+        except InputRejected as exc:
+            return JSONResponse({"error": exc.reason}, status_code=exc.status)
+        finally:
+            gate.release()
+        return JSONResponse({"skill": skill_id, "output": result.content, "units": result.units})
+
+    app.add_api_route("/skills/{skill_id}", skill, methods=["POST"])
+
+    # ---- approval / held-run routes (epic 02) -------------------------------
+    @app.get("/v1/runs/held")
+    def held(request: Request):
+        if store is None:
+            return JSONResponse({"held": []})
+        scoped = store.scoped(_tenant(request))
+        out = []
+        for key in scoped.list_prefix("_held/"):
+            if key.count("/") == 1:  # "_held/{run}" entries, not the per-gate decisions
+                v = scoped.get(key)
+                if v:
+                    out.append(v)
+        return JSONResponse({"held": out})
+
+    async def decide(request: Request, run_id: str):
+        if store is None:
+            return JSONResponse({"error": "no state store"}, status_code=400)
+        body = await request.json()
+        scoped = store.scoped(_tenant(request))
+        held_entry = scoped.get(f"_held/{run_id}")
+        if not held_entry:
+            return JSONResponse({"error": "no such held run"}, status_code=404)
+        gate_key = held_entry.get("gate_key") or f"_held/{run_id}/{held_entry.get('tool')}"
+        scoped.set(gate_key, {"decision": body.get("decision"), "args": body.get("args"),
+                              "result": body.get("result")})
+        return JSONResponse({"ok": True, "run": run_id, "decision": body.get("decision")})
+
+    app.add_api_route("/v1/runs/{run_id}/decision", decide, methods=["POST"])
+
     mount_wellknown(app, dist_dir)
-
     return app

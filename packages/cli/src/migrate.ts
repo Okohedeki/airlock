@@ -60,6 +60,11 @@ export function configToWorkerYaml(config: AirlockConfig): string {
     if (config.agent.build_per_call !== undefined) {
       lines.push(`build_per_call: ${config.agent.build_per_call}`);
     }
+    // A default model binding so the migrated worker boots; add named bindings for
+    // mid-run routing/fallback (epic 03).
+    lines.push('');
+    lines.push('models:');
+    lines.push('  default: {}');
   }
 
   // Tunnel → expose. A durable named tunnel maps to public reach; otherwise the
@@ -76,16 +81,40 @@ export function configToWorkerYaml(config: AirlockConfig): string {
   }
 
   lines.push('');
-  lines.push('# TODO(epic 07): controls, routing, fallback, io, state, sessions, cache,');
-  lines.push('# triggers, auth/tenancy, pricing, sandbox — define these blocks here.');
+  lines.push('# Optional blocks (see worker.schema.json for the full set):');
+  lines.push('#   controls:  { max_steps: 50, budget: { tokens: 100000 } }   # guards/approval (epic 02)');
+  lines.push('#   routing:   { default: default, by_role: { quick: fast } }  # mid-run model routing (epic 03)');
+  lines.push('#   state:     { backend: sqlite }                             # checkpoint/cache (epic 04)');
+  lines.push('#   io:        { input_guards: [{}], output: { format: json } } # contract shaping (epic 13)');
+  lines.push('#   auth:      { scheme: api_key }                             # multi-tenancy (epic 10)');
+  lines.push('#   sandbox:   { enabled: true }                               # tool isolation (epic 06)');
   lines.push('');
   return lines.join('\n');
+}
+
+/** The object form of a migrated manifest — used to validate against the one schema (C2). */
+export function configToWorkerObject(config: AirlockConfig): Record<string, unknown> {
+  const tunnel = validateTunnel(config);
+  const obj: Record<string, unknown> = {
+    worker: { name: config.project.name },
+    harness: config.agent?.harness ?? 'stub',
+    expose: tunnel?.durable ? 'public' : 'internal',
+    models: { default: {} },
+  };
+  if (config.agent?.entrypoint) obj.entrypoint = config.agent.entrypoint;
+  return obj;
 }
 
 export async function runMigrate(opts: MigrateOptions = {}): Promise<MigrateResult> {
   const cwd = opts.cwd ?? process.cwd();
   const config = await readConfig(cwd);
   const yaml = configToWorkerYaml(config);
+  // C2: every producer of a worker.yaml routes through the one validator.
+  const { validateWorker } = await import('./worker-schema/validate.js');
+  const { ok, errors } = validateWorker(configToWorkerObject(config));
+  if (!ok) {
+    throw new Error(`migration produced an invalid worker.yaml:\n  - ${errors.join('\n  - ')}`);
+  }
   const workerPath = resolve(cwd, opts.out ?? 'worker.yaml');
   await writeFile(workerPath, yaml, 'utf8');
   return { workerPath, yaml };

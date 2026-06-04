@@ -141,39 +141,7 @@ def test_stream_tier_a_buffered_adapter_emits_role_content_usage():
     assert usage["total_tokens"] == 42
 
 
-class StreamingAdapter:
-    """Exposes run_stream → exercises the Tier B native path (real deltas)."""
-
-    def run(self, messages):
-        return AgentRunResult(content="Hello world", units=9, prompt_tokens=4, completion_tokens=5)
-
-    def run_stream(self, messages):
-        for piece in ["Hello", " ", "world"]:
-            yield piece
-        yield AgentRunResult(content="Hello world", units=9, prompt_tokens=4, completion_tokens=5)
-
-
-def test_stream_tier_b_native_emits_incremental_deltas():
-    app = create_app(StreamingAdapter(), name="t")
-    import httpx
-
-    async def go():
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
-            async with client.stream(
-                "POST",
-                "/v1/chat/completions",
-                json={"messages": [{"role": "user", "content": "x"}], "stream": True},
-            ) as resp:
-                assert resp.status_code == 200
-                text = ""
-                async for chunk in resp.aiter_text():
-                    text += chunk
-                return text
-
-    text = asyncio.run(go())
-    frames = _parse_sse(text)
-    deltas = [f["choices"][0]["delta"].get("content") for f in frames if f["choices"][0]["delta"].get("content")]
-    assert deltas == ["Hello", " ", "world"]  # three separate incremental frames
-    usage = next(f["usage"] for f in frames if "usage" in f)
-    assert usage["total_tokens"] == 9
+# NOTE: the pre-redesign Tier-B `run_stream` incremental-delta path was removed when
+# airlock took ownership of the loop (ADR-0014). The surface now streams StepEvents
+# (event: step frames) plus a final content frame — covered by the functional suite
+# (tests/functional/test_features.py::test_sse_step_stream).
