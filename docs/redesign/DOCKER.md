@@ -43,6 +43,19 @@ airlock holds no Cloudflare keys — the token is yours and stays on your machin
 `--durable` you get the throwaway quick tunnel. (The same `--durable`/`--hostname` flags work
 on the host path too.)
 
+**Zero-interaction setup** (no dashboard, no sudo): put a Cloudflare **API token** (Account →
+Cloudflare Tunnel:Edit + Zone → DNS:Edit) in `.env` as `CF_API_TOKEN`, then:
+
+```bash
+airlock tunnel provision --hostname agent.yourdomain.com   # creates the tunnel + DNS,
+                                                            # writes AIRLOCK_CF_TUNNEL_TOKEN
+airlock up --docker --durable --hostname agent.yourdomain.com
+```
+
+`airlock tunnel provision` creates (or reuses) the named tunnel, routes its ingress at your
+local port, upserts the DNS CNAME, and saves the connector token to `.env` for you. The CLI
+also auto-loads `.env`, so the token is picked up automatically.
+
 ## The control plane is unchanged
 
 Containerizing changes *packaging*, not *control*. All 13 features stay driven by the same
