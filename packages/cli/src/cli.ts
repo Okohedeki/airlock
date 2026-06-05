@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { clearAuth } from './auth-store.js';
+import { loadDotEnv } from './env.js';
 import { runDoctor } from './commands/doctor.js';
 import { runInit } from './commands/init.js';
 import { runLogin } from './commands/login.js';
@@ -74,6 +75,7 @@ async function runDev(port: number): Promise<number> {
 }
 
 async function main() {
+  loadDotEnv(); // pick up .env (AIRLOCK_CF_TUNNEL_TOKEN, model keys, HOOK_SECRET, …)
   const version = await readPackageVersion();
   const program = new Command();
 
