@@ -478,14 +478,15 @@ async function main() {
     .description('Auto-create a durable tunnel + DNS via the Cloudflare API (needs CF_API_TOKEN)')
     .requiredOption('--hostname <host>', 'public hostname to route, e.g. agent.yourdomain.com')
     .option('-p, --port <port>', 'local worker port to route to', '3000')
-    .option('--account <id>', 'Cloudflare account id (else auto-detected)')
+    .option('--account <id>', 'Cloudflare account id (else auto-detected; set to drop the /accounts call)')
+    .option('--zone <id>', 'Cloudflare zone id (set it to drop the Zone:Read permission)')
     .option('--name <name>', 'tunnel name (else airlock-<sub>)')
-    .action(async (opts: { hostname: string; port: string; account?: string; name?: string }) => {
+    .action(async (opts: { hostname: string; port: string; account?: string; zone?: string; name?: string }) => {
       try {
         const { runTunnelProvision } = await import('./commands/tunnel-provision.js');
         await runTunnelProvision({
           cwd: process.cwd(), hostname: opts.hostname,
-          port: Number.parseInt(opts.port, 10), account: opts.account, name: opts.name,
+          port: Number.parseInt(opts.port, 10), account: opts.account, zone: opts.zone, name: opts.name,
         });
       } catch (err) {
         console.error(`error: ${(err as Error).message}`);

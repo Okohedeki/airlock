@@ -21,6 +21,8 @@ export interface ProvisionOptions {
   hostname: string;
   port: number;
   accountId?: string;
+  /** Zone id. If given, the token needs NO Zone:Read (only DNS:Edit + Tunnel:Edit). */
+  zoneId?: string;
   name?: string;
   fetchImpl?: typeof fetch;
 }
@@ -87,9 +89,11 @@ export async function provisionTunnel(opts: ProvisionOptions): Promise<Provision
   const accountId = opts.accountId ?? (await cf(fetchFn, token, 'GET', '/accounts'))?.[0]?.id;
   if (!accountId) throw new Error('could not resolve a Cloudflare account id (set --account / CF_ACCOUNT_ID).');
 
-  // Zone for the hostname.
-  const zones = await cf(fetchFn, token, 'GET', '/zones?per_page=50');
-  const zone = pickZone(opts.hostname, zones);
+  // Zone for the hostname. If a zone id is supplied, skip the GET /zones lookup so the
+  // token needs no Zone:Read — only DNS:Edit + Cloudflare Tunnel:Edit.
+  const zone = opts.zoneId
+    ? { id: opts.zoneId, name: opts.hostname }
+    : pickZone(opts.hostname, await cf(fetchFn, token, 'GET', '/zones?per_page=50'));
 
   // Find-or-create the named tunnel; fetch its connector token.
   const existing = await cf(fetchFn, token, 'GET',
@@ -149,6 +153,7 @@ export async function runTunnelProvision(opts: {
   hostname: string;
   port?: number;
   account?: string;
+  zone?: string;
   name?: string;
 }): Promise<void> {
   const cwd = opts.cwd ?? process.cwd();
@@ -161,7 +166,9 @@ export async function runTunnelProvision(opts: {
   }
   console.log(`airlock tunnel provision  →  ${opts.hostname} (port ${opts.port ?? 3000})…`);
   const r = await provisionTunnel({
-    apiToken, hostname: opts.hostname, port: opts.port ?? 3000, accountId: opts.account, name: opts.name,
+    apiToken, hostname: opts.hostname, port: opts.port ?? 3000,
+    accountId: opts.account ?? process.env.CF_ACCOUNT_ID,
+    zoneId: opts.zone ?? process.env.CF_ZONE_ID, name: opts.name,
   });
   const envPath = writeTokenToEnv(cwd, r.token);
   console.log(`✓ tunnel ${r.tunnelId} created/updated; DNS ${r.hostname} → ${r.cname}`);
