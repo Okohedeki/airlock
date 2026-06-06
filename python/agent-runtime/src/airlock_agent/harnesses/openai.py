@@ -11,6 +11,7 @@ Model bindings come from worker.yaml `models:`; tools from worker.yaml `tools:`.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import urllib.request
@@ -20,6 +21,33 @@ from ..adapter import AgentRunResult, ControlMode
 from ..engine.events import StepEvent, StepType
 from ..engine.loop import ModelResult
 from ..engine.planner import Action, Finish, ModelCall, ToolCall
+
+
+_PY_TO_JSON = {int: "integer", float: "number", bool: "boolean", str: "string"}
+
+
+def build_tools_schema(tools: dict[str, Callable]) -> list[dict]:
+    """Introspect tool callables into OpenAI function-tool schemas so the model can
+    emit tool_calls. Types come from annotations; the one-line docstring is the
+    description. (Epic 13 can later override with the descriptor's typed schema.)"""
+    out: list[dict] = []
+    for name, fn in tools.items():
+        props: dict[str, Any] = {}
+        required: list[str] = []
+        try:
+            for pname, p in inspect.signature(fn).parameters.items():
+                if p.kind in (p.VAR_KEYWORD, p.VAR_POSITIONAL):
+                    continue
+                props[pname] = {"type": _PY_TO_JSON.get(p.annotation, "string")}
+                if p.default is inspect.Parameter.empty:
+                    required.append(pname)
+        except (ValueError, TypeError):
+            pass
+        desc = (inspect.getdoc(fn) or name).strip().splitlines()[0][:200]
+        out.append({"type": "function", "function": {
+            "name": name, "description": desc,
+            "parameters": {"type": "object", "properties": props, "required": required}}})
+    return out
 
 
 def http_model_caller(endpoint: str, model: str, env_key: str = "OPENAI_API_KEY",

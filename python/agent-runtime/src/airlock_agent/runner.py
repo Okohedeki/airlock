@@ -53,7 +53,11 @@ class EngineRunner:
         self.max_steps = int(self.controls.get("max_steps") or 50)
         self.select_binding = build_select_binding(self.routing) if self.routing else None
         self.cache_tools = set((self.state_cfg.get("cache") or {}).get("tools") or [])
-        self._base_callers = manifest.build_model_callers()
+        # Give the model the tool schemas so it can actually emit tool_calls (tool-chaining).
+        from .harnesses.openai import build_tools_schema
+
+        self._tools_schema = build_tools_schema(self.tools) if self.tools else None
+        self._base_callers = manifest.build_model_callers(tools_schema=self._tools_schema)
         self._variants: dict[str, "EngineRunner"] = {}
         self._authn: Any = None
 

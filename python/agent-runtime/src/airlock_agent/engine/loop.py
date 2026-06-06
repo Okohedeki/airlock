@@ -105,6 +105,32 @@ def as_binding(obj: Any) -> Binding:
     raise TypeError("object is neither a Binding nor a .run(messages) adapter")
 
 
+def _coerce_args(tool: Callable[..., Any], args: dict[str, Any]) -> dict[str, Any]:
+    """Coerce args to the tool's annotated types — models often send numbers as
+    strings (e.g. "128"), which would silently misbehave (string concat, etc.)."""
+    import inspect
+
+    if not isinstance(args, dict):
+        return args
+    try:
+        params = inspect.signature(tool).parameters
+    except (ValueError, TypeError):
+        return args
+    out = dict(args)
+    for name, val in args.items():
+        ann = params.get(name).annotation if params.get(name) else None
+        try:
+            if ann is int and not isinstance(val, bool):
+                out[name] = int(val)
+            elif ann is float:
+                out[name] = float(val)
+            elif ann is bool and isinstance(val, str):
+                out[name] = val.strip().lower() in ("1", "true", "yes")
+        except (ValueError, TypeError):
+            pass
+    return out
+
+
 def _call_tool(tool: Callable[..., Any], args: dict[str, Any]) -> Any:
     """Dispatch a tool with dict args, tolerating both kwargs and single-arg tools."""
     try:
@@ -141,6 +167,7 @@ def _dispatch(ctx: RunContext, tools: dict[str, Any], name: str, args: dict[str,
     tool = tools.get(name)
     if tool is None:
         raise KeyError(f"unknown tool '{name}'")
+    args = _coerce_args(tool, args)
     if ctx.dispatch_wrapper is not None:
         return ctx.dispatch_wrapper(tool, name, args)
     return _call_tool(tool, args)
