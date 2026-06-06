@@ -10,10 +10,44 @@ patch bumps remain backwards-compatible. SemVer kicks in fully at `1.0.0`.
 
 ## [Unreleased]
 
-### Decided (direction for v1 — no code yet)
-- **Docker-first runtime** ([ADR-0012](docs/adr/0012-docker-first-runtime-model-external.md)) — v1 ships as one `airlockhq/airlock` image + a no-Node `airlock` shim; Python is pinned in the image, the model is always an external URL. **Reverses** the earlier "no Docker / native + uv bootstrap" direction. Resolves the new-user install gap (missing/wrong Python) and the opaque 120s startup timeout.
-- **Directory liveness via publisher heartbeat** ([ADR-0013](docs/adr/0013-directory-liveness-via-publisher-heartbeat.md)) — `airlock up` heartbeats the directory with a per-agent anti-spoof token; status is "last seen," computed at read time. Reachability poller deferred.
-- **v1 bar = "a stranger installs on a fresh machine and goes live"** — scope (P0+P1) and the fresh-machine smoke-test gate captured in the v1-readiness review.
+## [0.2.0] — 2026-06-06
+
+The **in-the-loop agent runtime** redesign. airlock now executes the agent step
+by step and owns the loop, so the Operator controls every step, tool call, and
+dollar *during* the run — harness-agnostic, self-hosted, the same Worker for
+internal callers and the open internet. All 14 epics (00–13) built and tested.
+Program of record: [`docs/redesign/`](docs/redesign/README.md). This is a
+breaking release: payments are gone and the runtime/manifest surface is new.
+
+### Added
+- **Airlock Loop Engine** (`engine/`) — OWN step loop with `StepEvent`/`ControlSignal`, planner protocol, and per-step cost accounting ([ADR-0014](docs/adr/0014-airlock-owns-the-loop.md)).
+- **Loop control & guards** — budget/$ stop, tool gating, and a `hold→decide→resume` approval gate over the control API.
+- **Mid-run routing & fallback** — per-step model routing with model/tool fallback.
+- **State, checkpoint, resume & fork** — pluggable `State Store` (`memory` + `sqlite`) with tenant-first keys, snapshots, run-index, held-runs, usage, and tool-result reuse; resume and fork-by-replay ([ADR-0016](docs/adr/0016-pluggable-state-store-sticky-routing.md)).
+- **Step observability** — SSE step stream, per-step `cost_usd`, `/metrics`, traces, and a local **Operator Console** at `/console` (Overview, Live, Runs+trace, Approvals, Controls).
+- **Sandboxed execution** — subprocess isolation + rlimits + SIGKILL wall-clock cap.
+- **`worker.yaml` manifest** — one JSON-Schema (TS-validated via Ajv), manifest loader, variants/profiles, and per-skill on/off ([ADR-0015](docs/adr/0015-worker-yaml-single-manifest.md), [ADR-0020](docs/adr/0020-worker-yaml-single-schema-source.md)).
+- **Versioning controls** — router stage with `promote`/`rollback` control API (canary + instant rollback).
+- **Deploy, expose & fleet router** — reproducible content-hash Docker image, `airlock up --docker`, real multi-container `airlock deploy --replicas N [--canary]`, and a live router service (pipeline + reverse-proxy + control API) ([ADR-0017](docs/adr/0017-fleet-router.md)).
+- **Multi-tenancy & identity** — api-key auth, tenant-scoped state and usage ([ADR-0018](docs/adr/0018-pluggable-caller-auth-multitenancy.md)).
+- **Triggers** — signed webhook trigger.
+- **Agentic sharding** — variant routing in the fleet router.
+- **Contract shaping** — input guard, output enforce+redact, real `/skills/<id>` dispatch.
+- **All 5 framework harnesses real** — LangGraph, smolagents, CrewAI, OpenAI Agents SDK, and Claude Agent SDK, all OWN via tool-extraction (`harnesses/extract.py`); live-verified against a local Qwen2.5-3B.
+- **Durable tunnel auto-provisioning** — `airlock tunnel provision` zero-interaction creates the Cloudflare tunnel + DNS via the CF API; `up --durable --hostname` with no sudo; `.env` autoload.
+
+### Changed
+- **airlock owns the loop** — reverses the front-of-agent gateway / "runtime forbidden" framing; the Worker now drives the agent loop itself ([ADR-0014](docs/adr/0014-airlock-owns-the-loop.md)).
+- **Inference stays external** — airlock makes the model calls; the model endpoint remains the Operator's ([ADR-0019](docs/adr/0019-inference-stays-external.md)).
+- `CONTEXT.md` and the ADR ledger rewritten to runtime vocabulary (**Operator** replaces Publisher; Worker, Loop Engine, StepEvent/ControlSignal, Fleet Router, Tenant, State Store).
+
+### Removed
+- **x402 payments / crypto** — `payment-core`, `payment-workers`, `payment-fly-node`, `python/payment-fly`, the optional buy tool, and `docs/payment.md` (epic 00). `airlock-crypto` is out of scope.
+- **airlock-directory + publisher heartbeat** — directory paused; ADR-0013 retired; the planned `airlock register` CLI is dropped.
+- Legacy example deploy scaffolds (`agent-template`, `local-llm-agent`) and the Fly/Workers CLI templates.
+
+### Deferred (not release-blocking)
+Per-tenant rate/quota limits · MCP server wiring (schema block only) · redis/postgres state backends · JWT/OIDC auth · `worker.yaml` hot-reload · OTel exporter · durable fleet registry · py3.10 base bump + `[frameworks]` pip extra.
 
 ## [0.1.0] — 2026-05-28
 
@@ -47,5 +81,6 @@ First tagged release. Self-host is the supported deploy path; the ecosystem's di
 - The `airlock init` command still defaults to `--target=fly` and gates Python-harness scaffolding on it; this flow's templates are named `fly-*` historically. Surface-level deploy/doctor enforce workers-only, so legacy configs fail loudly — but a deeper init-flow cleanup is queued for `0.2.0`.
 - `airlock register` CLI (publisher → airlock-directory) is specified in MEMORY but not yet implemented.
 
-[Unreleased]: https://github.com/Okohedeki/airlock/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Okohedeki/airlock/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Okohedeki/airlock/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Okohedeki/airlock/releases/tag/v0.1.0

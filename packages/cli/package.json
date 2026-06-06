@@ -1,6 +1,6 @@
 {
   "name": "@airlockhq/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "airlock CLI — local project setup, config validation, and status. v1.x scope is local file ops; deploy/tunnel/auth land in v1.1+.",
   "type": "module",
