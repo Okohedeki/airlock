@@ -2,7 +2,7 @@
 
 Deploy an agentic process (LangGraph, CrewAI, smolagents, OpenAI Agents SDK,
 Claude Agent SDK, or a custom harness) behind an OpenAI-compatible API with
-in-process x402 payment and optional `airlock-config` discovery.
+optional `airlock-config` discovery.
 
 The developer writes no adapter and no `app.py`. They declare a `[agent]` block
 in `.airlock/config.toml`:

@@ -4,15 +4,16 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { clearAuth } from './auth-store.js';
+import { loadDotEnv } from './env.js';
 import { runDoctor } from './commands/doctor.js';
 import { runInit } from './commands/init.js';
 import { runLogin } from './commands/login.js';
-import { startServe } from './commands/serve.js';
 import { runStatus } from './commands/status.js';
 import { runSync } from './commands/sync.js';
 import { runUp } from './commands/up.js';
 import { NotLoggedInError, runWhoami } from './commands/whoami.js';
 import { readConfig } from './config-file.js';
+import { runMigrate } from './migrate.js';
 import {
   buildDelete,
   buildDeploy,
@@ -74,6 +75,7 @@ async function runDev(port: number): Promise<number> {
 }
 
 async function main() {
+  loadDotEnv(); // pick up .env (AIRLOCK_CF_TUNNEL_TOKEN, model keys, HOOK_SECRET, …)
   const version = await readPackageVersion();
   const program = new Command();
 
@@ -89,10 +91,6 @@ async function main() {
     .option('-t, --target <target>', 'deploy Target: workers | fly', 'fly')
     .option('--no-recipe', 'skip writing the Recipe config (wrangler.toml / fly.toml)')
     .option(
-      '--with-agent',
-      'also scaffold a runnable starter agent (entry point, Dockerfile, deps)',
-    )
-    .option(
       '--agent <harness>',
       'scaffold a harness-backed agentic service: smolagents | langgraph | crewai (Fly-only)',
     )
@@ -107,7 +105,6 @@ async function main() {
         opts: {
           target: string;
           recipe: boolean;
-          withAgent?: boolean;
           agent?: string;
           detect?: boolean;
           selfHost?: boolean;
@@ -136,7 +133,6 @@ async function main() {
           name,
           target: opts.target,
           scaffoldRecipe: opts.recipe,
-          withAgent: opts.withAgent,
           harness: opts.agent as AgentHarness | undefined,
           detect: opts.detect,
           mode: opts.selfHost ? 'self-hosted' : undefined,
@@ -161,25 +157,47 @@ async function main() {
         console.log('\nnext steps:');
         if (opts.agent) {
           console.log('  1. `pip install -r requirements.txt`');
-          console.log(
-            '  2. Edit adapter.py — run your harness (see examples/' + `${opts.agent}-agent` + ')',
-          );
+          console.log(`  2. Edit adapter.py — run your harness (see examples/${opts.agent}-agent)`);
           console.log(
             '  3. Point the model: OPENAI_API_BASE / OPENAI_API_KEY (airlock secret set …)',
           );
           console.log('  4. `airlock doctor`, then `airlock deploy`');
-        } else if (result.agentPaths?.length) {
-          console.log('  1. `npm install` (or pnpm/yarn) in the project');
-          console.log('  2. Edit src/ — replace the /run handler with your agent logic');
-          console.log('  3. Edit .airlock/config.toml — set payment.wallet to your address');
-          console.log('  4. `airlock doctor`, then `airlock deploy`');
         } else {
-          console.log('  1. Edit .airlock/config.toml — set payment.wallet to your address');
-          console.log('  2. Run `airlock doctor` to validate');
-          console.log('  3. Deploy with `airlock deploy`');
+          console.log('  1. Run `airlock doctor` to validate');
+          console.log('  2. Deploy with `airlock deploy`');
         }
       },
     );
+
+  program
+    .command('migrate')
+    .description('Scaffold a worker.yaml from a legacy .airlock/config.toml')
+    .option('-o, --out <file>', 'output filename', 'worker.yaml')
+    .action(async (opts: { out: string }) => {
+      try {
+        const result = await runMigrate({ cwd: process.cwd(), out: opts.out });
+        console.log(`✓ wrote ${result.workerPath}`);
+        console.log('  review the TODO blocks — the full worker.yaml schema lands in epic 07');
+      } catch (err) {
+        console.error(`error: ${(err as Error).message}`);
+        process.exit(1);
+      }
+    });
+
+  program
+    .command('build')
+    .description('Build a reproducible Docker image for this worker.yaml (validates first)')
+    .option('--base <image>', 'base image to layer on', undefined)
+    .option('--no-base-build', "don't build the base image even if it's missing locally")
+    .action(async (opts: { base?: string; baseBuild: boolean }) => {
+      try {
+        const { runBuild } = await import('./commands/build.js');
+        await runBuild({ cwd: process.cwd(), base: opts.base, noBaseBuild: opts.baseBuild === false });
+      } catch (err) {
+        console.error(`error: ${(err as Error).message}`);
+        process.exit(1);
+      }
+    });
 
   program
     .command('doctor')
@@ -207,8 +225,53 @@ async function main() {
 
   program
     .command('deploy')
-    .description('Ship the Agent to the Target (wraps `wrangler deploy`)')
-    .action(async () => process.exit(await runWithConfig(buildDeploy)));
+    .description('Deploy a multi-container fleet: N worker containers behind the router')
+    .option('-r, --replicas <n>', 'number of worker replicas', '2')
+    .option('-p, --port <port>', 'router (public) port', '8080')
+    .option('--canary <image@pct>', 'add a canary version at pct% of new sessions')
+    .option('--expose', 'open a public tunnel at the router')
+    .option('--no-build', 'use the already-built image (skip docker build)')
+    .action(async (opts: { replicas: string; port: string; canary?: string; expose?: boolean; build: boolean }) => {
+      const { runDeploy } = await import('./commands/deploy.js');
+      try {
+        const handle = await runDeploy({
+          cwd: process.cwd(),
+          replicas: Number.parseInt(opts.replicas, 10),
+          port: Number.parseInt(opts.port, 10),
+          canary: opts.canary,
+          expose: opts.expose,
+          noBuild: opts.build === false,
+        });
+        const shutdown = async () => { await handle.stop(); process.exit(0); };
+        process.on('SIGINT', shutdown);
+        process.on('SIGTERM', shutdown);
+        console.log('  press Ctrl-C to tear down the fleet');
+        await new Promise(() => {});
+      } catch (err) {
+        console.error(`error: ${(err as Error).message}`);
+        process.exit(1);
+      }
+    });
+
+  const control = async (port: string, path: string, body: unknown) => {
+    const res = await fetch(`http://127.0.0.1:${port}/_control/${path}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}),
+    });
+    console.log(JSON.stringify(await res.json()));
+  };
+
+  program
+    .command('promote')
+    .description('Promote a version to 100% of traffic (epic 08)')
+    .requiredOption('--version <ver>', 'the version to promote')
+    .option('-p, --port <port>', 'router control port', '8080')
+    .action(async (opts: { version: string; port: string }) => control(opts.port, 'promote', { version: opts.version }));
+
+  program
+    .command('rollback')
+    .description('Instantly drop the canary; stable wins (epic 08)')
+    .option('-p, --port <port>', 'router control port', '8080')
+    .action(async (opts: { port: string }) => control(opts.port, 'rollback', {}));
 
   program
     .command('delete')
@@ -314,69 +377,10 @@ async function main() {
     });
 
   program
-    .command('serve')
-    .description(
-      'DEV-ONLY proxy: wrap a locally-running agent/LLM with x402 + reporting (prod mounts the middleware in-process — see `init`)',
-    )
-    .option(
-      '-u, --upstream <url>',
-      'local agent/LLM URL (OpenAI-compatible /v1/chat/completions by default)',
-      'http://localhost:8080',
-    )
-    .option('--upstream-path <path>', 'path on the upstream to forward to', '/v1/chat/completions')
-    .option('-p, --port <port>', 'port for the wrapper to listen on', '3000')
-    .option('--wallet <addr>', 'override payment.wallet (skip config.toml)')
-    .option('--price <usdc>', 'override per-call price in USDC (flat mode)')
-    .option('--no-payment', 'disable payment enforcement (for upstream debugging)')
-    .option('--tunnel', 'expose the wrapper publicly via a bundled Cloudflare tunnel')
-    .option('--backend <url>', 'dashboard backend URL for the reporter')
-    .option('--project <name>', 'project name for the reporter (defaults to config.project.name)')
-    .action(
-      async (opts: {
-        upstream: string;
-        upstreamPath: string;
-        port: string;
-        wallet?: string;
-        price?: string;
-        payment: boolean;
-        tunnel?: boolean;
-        backend?: string;
-        project?: string;
-      }) => {
-        const port = Number.parseInt(opts.port, 10);
-        if (!Number.isFinite(port) || port <= 0) {
-          console.error(`error: invalid --port "${opts.port}"`);
-          process.exit(2);
-        }
-        try {
-          const handle = await startServe({
-            upstream: opts.upstream,
-            upstreamPath: opts.upstreamPath,
-            port,
-            wallet: opts.wallet,
-            priceUsdc: opts.price,
-            noPayment: !opts.payment,
-            tunnel: opts.tunnel,
-            backendUrl: opts.backend,
-            projectName: opts.project,
-          });
-          process.on('SIGINT', async () => {
-            await handle.close();
-            process.exit(0);
-          });
-        } catch (err) {
-          console.error(`error: ${(err as Error).message}`);
-          process.exit(1);
-        }
-      },
-    );
-
-  program
     .command('up')
     .description('Self-host: run your config-bound agent here + front it with a public URL')
     .option('-p, --port <port>', 'port the agent listens on', '3000')
     .option('--python <bin>', 'python executable for `-m airlock_agent` (respects an active venv)')
-    .option('--no-payment', 'run the agent with payment enforcement disabled')
     .option('--no-tunnel', 'run the agent locally without opening a public tunnel')
     .option(
       '--durable',
@@ -392,11 +396,16 @@ async function main() {
     .option('--cf-protocol <proto>', 'cloudflared edge protocol: quic | http2 | auto')
     .option('--cf-region <region>', 'pin the cloudflared connector to a Cloudflare region (e.g. us)')
     .option('--cf-metrics <addr>', "expose cloudflared's metrics server on host:port")
+    .option('--docker', 'run the Worker in Docker (reproducible; needs `airlock build` first)')
+    .option('--image <ref>', 'image to run with --docker (default: the image from `airlock build`)')
+    .option('--mount', 'dev: mount the project into the base image instead of a built image')
+    .option('--env-file <path>', 'pass an env file to the container (--docker)')
+    .option('--profile <name>', 'run a worker.yaml variant/profile (e.g. internal | external)')
+    .option('--hostname <host>', 'durable-tunnel hostname (with --durable + AIRLOCK_CF_TUNNEL_TOKEN)')
     .action(
       async (opts: {
         port: string;
         python?: string;
-        payment: boolean;
         tunnel: boolean;
         durable?: boolean;
         maxConcurrency?: string;
@@ -406,6 +415,12 @@ async function main() {
         cfProtocol?: 'quic' | 'http2' | 'auto';
         cfRegion?: string;
         cfMetrics?: string;
+        docker?: boolean;
+        image?: string;
+        mount?: boolean;
+        envFile?: string;
+        profile?: string;
+        hostname?: string;
       }) => {
         const port = Number.parseInt(opts.port, 10);
         if (!Number.isFinite(port) || port <= 0) {
@@ -426,7 +441,6 @@ async function main() {
             cwd: process.cwd(),
             port,
             python: opts.python,
-            noPayment: !opts.payment,
             noTunnel: !opts.tunnel,
             durable: opts.durable,
             maxConcurrency: numOpt(opts.maxConcurrency, '--max-concurrency'),
@@ -437,6 +451,12 @@ async function main() {
             cfProtocol: opts.cfProtocol,
             cfRegion: opts.cfRegion,
             cfMetrics: opts.cfMetrics,
+            docker: opts.docker,
+            image: opts.image,
+            mount: opts.mount,
+            envFile: opts.envFile,
+            profile: opts.profile,
+            hostname: opts.hostname,
           });
           const shutdown = async () => {
             await handle.stop();
@@ -451,6 +471,28 @@ async function main() {
         }
       },
     );
+
+  const tunnel = program.command('tunnel').description('Manage durable Cloudflare tunnels');
+  tunnel
+    .command('provision')
+    .description('Auto-create a durable tunnel + DNS via the Cloudflare API (needs CF_API_TOKEN)')
+    .requiredOption('--hostname <host>', 'public hostname to route, e.g. agent.yourdomain.com')
+    .option('-p, --port <port>', 'local worker port to route to', '3000')
+    .option('--account <id>', 'Cloudflare account id (else auto-detected; set to drop the /accounts call)')
+    .option('--zone <id>', 'Cloudflare zone id (set it to drop the Zone:Read permission)')
+    .option('--name <name>', 'tunnel name (else airlock-<sub>)')
+    .action(async (opts: { hostname: string; port: string; account?: string; zone?: string; name?: string }) => {
+      try {
+        const { runTunnelProvision } = await import('./commands/tunnel-provision.js');
+        await runTunnelProvision({
+          cwd: process.cwd(), hostname: opts.hostname,
+          port: Number.parseInt(opts.port, 10), account: opts.account, zone: opts.zone, name: opts.name,
+        });
+      } catch (err) {
+        console.error(`error: ${(err as Error).message}`);
+        process.exit(1);
+      }
+    });
 
   program
     .command('dev')

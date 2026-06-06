@@ -1,0 +1,36 @@
+# Live-demo Worker (model-driven) — epic 01 real tool loop + epic 03 routing/fallback.
+#
+# Uses the `openai` harness: airlock OWNS the loop and makes the model calls itself
+# against any OpenAI-compatible endpoint. Here both bindings point at the local mock
+# model (model.py), which echoes its model name so you can SEE which one answered.
+#
+# Boot:  cp worker.openai.yaml worker.yaml && airlock up
+# (run `python model.py --port 8999` first.)
+
+worker:
+  name: live-openai
+  version: 0.1.0
+
+harness: openai
+
+models:
+  primary: { endpoint: "http://127.0.0.1:8999/v1/chat/completions", model: m-primary }
+  fast:    { endpoint: "http://127.0.0.1:8999/v1/chat/completions", model: m-fast }
+  backup:  { endpoint: "http://127.0.0.1:8999/v1/chat/completions", model: m-backup }
+
+# epic 03 — route per step; change `default` to switch which model answers.
+routing:
+  default: primary
+  by_role:
+    quick: fast
+
+# epic 03 — if `primary` fails (e.g. point it at a dead port), retry then fall back.
+fallback:
+  retries: 1
+  models:
+    primary: [backup]
+
+tools:
+  echo: tools:echo
+
+expose: public

@@ -16,19 +16,18 @@ afterEach(async () => {
 });
 
 describe('runInit', () => {
-  it('writes a valid config.toml with project + payment scaffold', async () => {
+  it('writes a valid config.toml with the project block and no payment', async () => {
     const result = await runInit({ cwd, name: 'my-agent', target: 'fly' });
     const raw = await readFile(result.configPath, 'utf8');
     const parsed = parse(raw) as {
       project: { name: string; target: string; schemaVersion: number };
-      payment: { enabled: boolean; wallet: string; network: string };
+      payment?: unknown;
     };
     expect(parsed.project.name).toBe('my-agent');
     expect(parsed.project.target).toBe('fly');
     expect(parsed.project.schemaVersion).toBe(1);
-    expect(parsed.payment.enabled).toBe(false);
-    expect(parsed.payment.network).toBe('base-sepolia');
-    expect(parsed.payment.wallet).toMatch(/^0x[a-fA-F0-9]{40}$/);
+    expect(parsed.payment).toBeUndefined();
+    expect(raw).not.toMatch(/payment/i);
   });
 
   it('scaffolds a wrangler.toml when target is workers', async () => {
@@ -57,30 +56,6 @@ describe('runInit', () => {
   it('does not scaffold a starter agent by default', async () => {
     const result = await runInit({ cwd, name: 'x', target: 'fly' });
     expect(result.agentPaths).toBeUndefined();
-  });
-
-  it('scaffolds a runnable fly-node starter agent with --with-agent', async () => {
-    const result = await runInit({ cwd, name: 'my-agent', target: 'fly', withAgent: true });
-    expect(result.agentPaths?.length).toBeGreaterThan(0);
-    const server = await readFile(join(cwd, 'src/server.ts'), 'utf8');
-    expect(server).toContain("withPaymentExpress");
-    expect(server).toContain("'/run'");
-    const pkg = JSON.parse(await readFile(join(cwd, 'package.json'), 'utf8')) as {
-      name: string;
-      dependencies: Record<string, string>;
-    };
-    expect(pkg.name).toBe('my-agent');
-    expect(pkg.dependencies['@airlockhq/payment-fly-node']).toBeTruthy();
-    // Dockerfile present for containerized deploy
-    await expect(readFile(join(cwd, 'Dockerfile'), 'utf8')).resolves.toContain('EXPOSE 3000');
-  });
-
-  it('scaffolds a workers starter agent with --with-agent --target=workers', async () => {
-    const result = await runInit({ cwd, name: 'my-worker', target: 'workers', withAgent: true });
-    expect(result.agentPaths?.length).toBeGreaterThan(0);
-    const index = await readFile(join(cwd, 'src/index.ts'), 'utf8');
-    expect(index).toContain('withPayment');
-    expect(index).toContain('X-Airlock-Units');
   });
 
   it('warms one machine by default in the fly recipe (cold-start fix)', async () => {
@@ -143,17 +118,13 @@ describe('runInit', () => {
     expect(docker).toContain('python", "-m", "airlock_agent');
     // airlock runtime is vendored + pip-installed from local source (Blocker 0:
     // the packages aren't on PyPI), not listed as a bare requirement.
-    expect(docker).toContain('/app/.airlock/vendor/payment-fly');
     expect(docker).toContain('/app/.airlock/vendor/agent-runtime');
     const reqs = await readFile(join(cwd, 'requirements.txt'), 'utf8');
     expect(reqs).not.toMatch(/^airlock-agent\b/m);
-    // Both packages were copied into the build context with their pyproject.
+    // The runtime package was copied into the build context with its pyproject.
     await expect(
       readFile(join(cwd, '.airlock/vendor/agent-runtime/pyproject.toml'), 'utf8'),
     ).resolves.toContain('name = "airlock-agent"');
-    await expect(
-      readFile(join(cwd, '.airlock/vendor/payment-fly/pyproject.toml'), 'utf8'),
-    ).resolves.toContain('name = "airlock-payment"');
   });
 
   it('--self-host writes mode=self-hosted and skips the cloud Recipe', async () => {
@@ -169,12 +140,11 @@ describe('runInit', () => {
 
   it('--detect strips an unresolvable bare airlock-agent line from requirements', async () => {
     const { writeFile: wf } = await import('node:fs/promises');
-    await wf(join(cwd, 'requirements.txt'), 'smolagents==1.25.*\nairlock-agent\nairlock-payment\n');
+    await wf(join(cwd, 'requirements.txt'), 'smolagents==1.25.*\nairlock-agent\n');
     await wf(join(cwd, 'agents.py'), 'from smolagents import CodeAgent\nagent = CodeAgent()\n');
     await runInit({ cwd, name: 'x', target: 'fly', detect: true });
     const reqs = await readFile(join(cwd, 'requirements.txt'), 'utf8');
     expect(reqs).toContain('smolagents');
     expect(reqs).not.toMatch(/^airlock-agent\b/m);
-    expect(reqs).not.toMatch(/^airlock-payment\b/m);
   });
 });

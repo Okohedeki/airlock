@@ -12,11 +12,11 @@ def test_registry_has_all_harnesses():
 
 
 def test_reentrancy_matrix():
-    assert is_reentrant("langgraph")
-    assert is_reentrant("openai-agents")
-    assert is_reentrant("claude")
-    assert not is_reentrant("smolagents")
-    assert not is_reentrant("crewai")
+    # All framework harnesses are now OWN (airlock extracts their tools and drives
+    # its own per-request loop), so all are reentrant. custom may hold a shared
+    # Planner, so it stays non-reentrant by default.
+    for h in ("langgraph", "openai-agents", "claude", "smolagents", "crewai"):
+        assert is_reentrant(h)
     assert not is_reentrant("custom")
     assert not is_reentrant("unknown-harness")
 

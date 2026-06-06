@@ -1,3 +1,5 @@
+> ⚠️ **Historical — superseded by [`docs/redesign/`](./redesign/).** The CLI surface changes under the redesign (worker.yaml, migrate, expose, fleet router). Kept for reference.
+
 # `airlock` CLI reference
 
 All commands are accessible via `npx -y @airlockhq/cli <command>` or a local install. Source lives at [`packages/cli/src/cli.ts`](../packages/cli/src/cli.ts); the platform-specific spawn logic is at [`packages/cli/src/exec.ts`](../packages/cli/src/exec.ts).

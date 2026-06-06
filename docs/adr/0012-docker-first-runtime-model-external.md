@@ -1,5 +1,7 @@
 # Docker-first runtime; the model is always external
 
+> **Status (2026-06-03): Accepted (aligned with the redesign).** Delivered by [redesign epic 09](../redesign/plans/09-deploy-expose-and-fleet-router.md). The model-always-external half is carried forward in [ADR-0019](./0019-inference-stays-external.md).
+
 A new user on a fresh machine must be able to install airlock and go live. The
 blocker is the unmanaged **Node↔Python boundary**: the CLI is Node, the runtime
 is Python (`airlock-agent`, FastAPI/uvicorn), and the host must satisfy *both*

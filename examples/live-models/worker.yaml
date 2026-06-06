@@ -1,0 +1,44 @@
+# Live demo with REAL local models (llama.cpp) + variant-based model switching.
+#
+# Two llama-server instances run on the host:
+#   :11434  Qwen2.5-0.5B  (fast)      :11435  Qwen2.5-1.5B  (smart)
+# In Docker the worker reaches them via host.docker.internal (airlock up --docker
+# adds --add-host=host.docker.internal:host-gateway).
+#
+#   airlock build && airlock up --docker         # default = fast
+#   header X-Airlock-Variant: smart              # switch to the 1.5B model
+
+worker:
+  name: live-models
+  version: 0.1.0
+
+harness: openai
+
+models:
+  default:
+    endpoint: "http://host.docker.internal:11434/v1/chat/completions"
+    model: qwen0_5b
+
+tools:
+  echo: tools:echo
+
+# epic 07 — skills on/off (the public surface)
+skills:
+  chat: { tool: echo, enabled: true }
+  danger: { tool: echo, enabled: false }   # off → /skills/danger returns 403
+
+# epic 12/07 — variants: switch the model per request (X-Airlock-Variant)
+variants:
+  fast:
+    models:
+      default: { endpoint: "http://host.docker.internal:11434/v1/chat/completions", model: qwen0_5b }
+  smart:
+    models:
+      default: { endpoint: "http://host.docker.internal:11435/v1/chat/completions", model: qwen1_5b }
+
+# epic 13 — redact emails from output
+io:
+  output:
+    redact: [email]
+
+expose: public

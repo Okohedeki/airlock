@@ -1,10 +1,7 @@
 import json
 
 from airlock_agent import AgentRunResult, create_app
-from airlock_payment import parse_payment_config
 from fastapi.testclient import TestClient
-
-WALLET = "0x" + "1" * 40
 
 
 class FakeAdapter:
@@ -15,13 +12,8 @@ class FakeAdapter:
         return AgentRunResult(content=f"answer: {last}", units=42, unit_label="tokens")
 
 
-def _client(payment_enabled=None):
-    cfg = None
-    if payment_enabled is not None:
-        cfg = parse_payment_config(
-            {"enabled": payment_enabled, "wallet": WALLET, "mode": "flat", "priceUsdc": "0.001"}
-        )
-    return TestClient(create_app(FakeAdapter(), name="test-agent", payment_config=cfg))
+def _client():
+    return TestClient(create_app(FakeAdapter(), name="test-agent"))
 
 
 def test_chat_returns_standard_openai_completion():
@@ -40,13 +32,6 @@ def test_health_and_info():
     assert c.get("/").json()["shape"] == "openai"
 
 
-def test_payment_off_passes_through():
-    r = _client(payment_enabled=False).post(
-        "/v1/chat/completions", json={"messages": [{"role": "user", "content": "hi"}]}
-    )
-    assert r.status_code == 200
-
-
 def test_discovery_bundle_served_when_present(tmp_path):
     wk = tmp_path / ".well-known"
     wk.mkdir()
@@ -63,17 +48,6 @@ def test_no_bundle_means_discovery_off_but_agent_still_answers(tmp_path):
     assert client.get("/.well-known/airlock-config.yaml").status_code == 404
     assert client.get("/").json()["discovery"] is None
     assert client.post("/v1/chat/completions", json={"messages": []}).status_code == 200
-
-
-def test_payment_on_gates_chat_but_health_and_info_stay_free():
-    c = _client(payment_enabled=True)
-    # chat requires payment
-    r = c.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "hi"}]})
-    assert r.status_code == 402
-    assert r.json()["x402Version"] == 1
-    # health + info + discovery exempt
-    assert c.get("/healthz").status_code == 200
-    assert c.get("/").status_code == 200
 
 
 # ---- concurrency: gate caps parallel runs, queues the rest, sheds overflow ----
@@ -167,39 +141,7 @@ def test_stream_tier_a_buffered_adapter_emits_role_content_usage():
     assert usage["total_tokens"] == 42
 
 
-class StreamingAdapter:
-    """Exposes run_stream → exercises the Tier B native path (real deltas)."""
-
-    def run(self, messages):
-        return AgentRunResult(content="Hello world", units=9, prompt_tokens=4, completion_tokens=5)
-
-    def run_stream(self, messages):
-        for piece in ["Hello", " ", "world"]:
-            yield piece
-        yield AgentRunResult(content="Hello world", units=9, prompt_tokens=4, completion_tokens=5)
-
-
-def test_stream_tier_b_native_emits_incremental_deltas():
-    app = create_app(StreamingAdapter(), name="t")
-    import httpx
-
-    async def go():
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
-            async with client.stream(
-                "POST",
-                "/v1/chat/completions",
-                json={"messages": [{"role": "user", "content": "x"}], "stream": True},
-            ) as resp:
-                assert resp.status_code == 200
-                text = ""
-                async for chunk in resp.aiter_text():
-                    text += chunk
-                return text
-
-    text = asyncio.run(go())
-    frames = _parse_sse(text)
-    deltas = [f["choices"][0]["delta"].get("content") for f in frames if f["choices"][0]["delta"].get("content")]
-    assert deltas == ["Hello", " ", "world"]  # three separate incremental frames
-    usage = next(f["usage"] for f in frames if "usage" in f)
-    assert usage["total_tokens"] == 9
+# NOTE: the pre-redesign Tier-B `run_stream` incremental-delta path was removed when
+# airlock took ownership of the loop (ADR-0014). The surface now streams StepEvents
+# (event: step frames) plus a final content frame — covered by the functional suite
+# (tests/functional/test_features.py::test_sse_step_stream).

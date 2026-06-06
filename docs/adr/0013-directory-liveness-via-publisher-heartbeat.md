@@ -1,5 +1,7 @@
 # Directory liveness via publisher heartbeat, not a poller
 
+> **Status (2026-06-03): Retired.** The airlock-directory is paused/shut down and is out of scope for the redesign.
+
 The airlock-directory exists to answer a question a static list cannot: **which
 registered agents are actually live?** The `agents` table carries a `status`
 (live/degraded/offline/unknown) and `status_checked_at`, but today nothing ever

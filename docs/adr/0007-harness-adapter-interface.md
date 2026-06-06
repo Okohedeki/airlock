@@ -1,5 +1,7 @@
 # Harness integration via a reusable adapter interface
 
+> **Status (2026-06-03): Superseded** by [ADR-0014](./0014-airlock-owns-the-loop.md). The adapter contract is inverted: the Loop Engine owns the loop and the Harness contributes tools/planner/prompt instead of running its full native loop ([redesign epic 01](../redesign/plans/01-airlock-loop-engine.md)).
+
 To deploy *agentic processes* (not just single LLM calls), airlock exposes every Agent behind an OpenAI-compatible `POST /v1/chat/completions` surface and binds the Publisher's Harness (LangGraph, CrewAI, smolagents, …) to it through a small reusable **`HarnessAdapter`** interface — `run(messages) -> { content, usage, steps? }`, which executes the Harness's *full native loop* (hooks, tool-calling, multi-step) server-side. The chat surface, payment, and well-known serving are written once in a shared `airlock-agent` package; each Harness is a thin (~30-line) adapter. We chose this over a template-per-harness approach because the goal is to support *many* harnesses: copying the surface per harness would duplicate payment/usage/serving wiring and drift immediately.
 
 ## Considered Options

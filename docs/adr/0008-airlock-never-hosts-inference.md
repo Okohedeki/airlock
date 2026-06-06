@@ -1,5 +1,7 @@
 # airlock never hosts inference
 
+> **Status (2026-06-03): Superseded** by [ADR-0019](./0019-inference-stays-external.md). The invariant survives — inference is external; airlock runs no GPUs and custodies no model keys — but is restated under the runtime framing, where the Loop Engine now *makes* the model calls itself (to the Operator's external endpoint).
+
 A deployed Agent's model is always a **Publisher-supplied OpenAI-compatible endpoint** (`OPENAI_API_BASE` / `OPENAI_API_KEY`), never inference that airlock operates. The Publisher picks where the model runs — self-host (vLLM/llama.cpp on their own GPU), a bring-your-own-key fast OS-model provider (Groq/Together/Fireworks), or a white-glove setup we automate **on the Publisher's own cloud account**. In every case the account, key, cost, and ops stay with the Publisher; airlock only wires `OPENAI_API_BASE`/`OPENAI_API_KEY` as secrets. This preserves the open-source-neutral posture and the ADR-0001 "never hold prod traffic" invariant — the moment we ran models, inference cost, scaling, abuse handling, and key custody would fall on us.
 
 Inference speed (which matters more for agentic loops, since latency compounds across steps) is therefore the Publisher's lever via their provider choice — fast OS-model providers run the same open weights faster than most self-hosts — not something we solve by hosting.

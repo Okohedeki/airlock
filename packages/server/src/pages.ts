@@ -116,20 +116,17 @@ export function projectDetailPage(
         <td class="${cls}">${c.status}</td>
         <td><code>${escHtml(c.caller ?? 'anon')}</code></td>
         <td>${c.tokens_used ?? '—'}</td>
-        <td>${c.amount_usdc ?? '—'}</td>
-        <td>${c.payment_settled ? '✓' : '—'}</td>
       </tr>`;
     })
     .join('');
   const callsBody =
     calls.length === 0
-      ? `<div class="empty">No recorded calls yet. The Payment Middleware posts inspect data to <code>POST /api/inspect</code> as calls happen.</div>`
-      : `<table><thead><tr><th>Time</th><th>Status</th><th>Caller</th><th>Tokens</th><th>USDC</th><th>Paid</th></tr></thead><tbody>${rows}</tbody></table>`;
+      ? `<div class="empty">No recorded calls yet. Calls are posted to <code>POST /api/inspect</code> as they happen.</div>`
+      : `<table><thead><tr><th>Time</th><th>Status</th><th>Caller</th><th>Tokens</th></tr></thead><tbody>${rows}</tbody></table>`;
   const lastCallAt = stats.last_call_at ? new Date(stats.last_call_at).toLocaleString() : 'never';
   const statsBody = `
     <div class="stats-grid">
-      <div class="stat"><div class="stat-label">Revenue</div><div class="stat-value">${escHtml(stats.total_revenue_usdc)} <span class="stat-unit">USDC</span></div></div>
-      <div class="stat"><div class="stat-label">Paid calls</div><div class="stat-value">${stats.paid_calls} <span class="stat-unit">/ ${stats.total_calls}</span></div></div>
+      <div class="stat"><div class="stat-label">Calls</div><div class="stat-value">${stats.total_calls}</div></div>
       <div class="stat"><div class="stat-label">Unique callers</div><div class="stat-value">${stats.unique_callers}</div></div>
       <div class="stat"><div class="stat-label">Tokens served</div><div class="stat-value">${stats.total_tokens.toLocaleString()}</div></div>
       <div class="stat"><div class="stat-label">Last call</div><div class="stat-value-sm">${escHtml(lastCallAt)}</div></div>
@@ -183,8 +180,6 @@ export function callDetailPage(
        <div class="stat"><div class="stat-label">Status</div><div class="stat-value ${cls}">${call.status}</div></div>
        <div class="stat"><div class="stat-label">Caller</div><div class="stat-value-sm"><code>${escHtml(call.caller ?? 'anon')}</code></div></div>
        <div class="stat"><div class="stat-label">Tokens</div><div class="stat-value">${call.tokens_used ?? '—'}</div></div>
-       <div class="stat"><div class="stat-label">USDC</div><div class="stat-value">${escHtml(call.amount_usdc ?? '—')}</div></div>
-       <div class="stat"><div class="stat-label">Settled</div><div class="stat-value">${call.payment_settled ? '✓' : '—'}</div></div>
      </div>
      <p>Request URL: <code>${escHtml(call.request_url)}</code></p>
      <h3>Request body</h3>

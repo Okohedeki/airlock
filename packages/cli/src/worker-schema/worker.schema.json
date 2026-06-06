@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airlock.dev/schema/worker/0.1.0/worker.schema.json",
+  "title": "worker.yaml",
+  "description": "The single operational manifest for an airlock Worker (ADR-0015, ADR-0020). One schema, TS-validated; the runtime trusts CLI-validated input. Every epic that adds a block adds it here.",
+  "type": "object",
+  "required": ["worker", "harness"],
+  "additionalProperties": true,
+  "properties": {
+    "worker": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string" }
+      }
+    },
+    "harness": {
+      "type": "string",
+      "enum": ["stub", "openai", "langgraph", "claude", "smolagents", "crewai", "openai-agents", "custom"]
+    },
+    "entrypoint": { "type": "string", "description": "module:attr" },
+    "models": {
+      "type": "object",
+      "description": "name -> model binding (epic 03/07). A `default` is recommended.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "provider": { "type": "string" },
+          "endpoint": { "type": "string" },
+          "model": { "type": "string" },
+          "env_key": { "type": "string" }
+        }
+      }
+    },
+    "tools": {
+      "type": "object",
+      "description": "name -> module:attr (skills = tools).",
+      "additionalProperties": { "type": "string" }
+    },
+    "skills": {
+      "type": "object",
+      "description": "skill id -> tool name (string), or { tool, enabled } to toggle a skill on/off.",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "required": ["tool"],
+            "properties": {
+              "tool": { "type": "string" },
+              "enabled": { "type": "boolean", "default": true }
+            }
+          }
+        ]
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "description": "server -> { transport: stdio|http, ... } (epic 07).",
+      "additionalProperties": {
+        "type": "object",
+        "properties": { "transport": { "enum": ["stdio", "http"] } },
+        "additionalProperties": true
+      }
+    },
+    "controls": {
+      "type": "object",
+      "description": "Loop guards + approval (epic 02).",
+      "additionalProperties": true,
+      "properties": {
+        "max_steps": { "type": "integer", "minimum": 1 },
+        "approval_window_s": { "type": "number", "minimum": 0 },
+        "budget": {
+          "type": "object",
+          "properties": { "tokens": { "type": "integer" }, "usd": { "type": "number" } }
+        },
+        "tool_gates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["tool"],
+            "properties": {
+              "tool": { "type": "string" },
+              "when": { "type": "object" },
+              "action": { "enum": ["allow", "deny"] }
+            }
+          }
+        },
+        "approvals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["tool"],
+            "properties": { "tool": { "type": "string" }, "when": { "type": "object" } }
+          }
+        }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "description": "Mid-run model routing (epic 03).",
+      "properties": {
+        "default": { "type": "string" },
+        "by_role": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "fallback": {
+      "type": "object",
+      "description": "Model/tool backup chains (epic 03).",
+      "properties": {
+        "retries": { "type": "integer", "minimum": 1 },
+        "models": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+        "tools": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }
+      }
+    },
+    "io": {
+      "type": "object",
+      "description": "Input guard + output contract (epic 13).",
+      "properties": {
+        "input_guards": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "patterns": { "type": "array", "items": { "type": "string" } },
+              "max_chars": { "type": "integer" }
+            }
+          }
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "format": { "enum": ["json", "text"] },
+            "redact": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "state": {
+      "type": "object",
+      "description": "State store + sessions + tool-result cache (epic 04).",
+      "properties": {
+        "backend": { "enum": ["memory", "sqlite", "files", "redis", "postgres"] },
+        "dsn": { "type": "string" },
+        "sessions": { "type": "object", "properties": { "ttl_s": { "type": "number" } } },
+        "cache": {
+          "type": "object",
+          "properties": {
+            "tools": { "type": "array", "items": { "type": "string" } },
+            "ttl_s": { "type": "number" }
+          }
+        }
+      }
+    },
+    "triggers": {
+      "type": "object",
+      "description": "cron / webhook / event entry points (epic 11).",
+      "properties": {
+        "cron": { "type": "array", "items": { "type": "object", "required": ["schedule"] } },
+        "webhook": { "type": "array", "items": { "type": "object", "required": ["path"] } },
+        "event": { "type": "array", "items": { "type": "object", "required": ["path"] } }
+      }
+    },
+    "expose": { "enum": ["internal", "public"], "description": "Network reach (epic 09)." },
+    "auth": {
+      "type": "object",
+      "description": "Caller auth scheme (epic 10).",
+      "properties": {
+        "scheme": { "enum": ["none", "open", "api_key", "jwt"] },
+        "required": { "type": "boolean" },
+        "keys": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "tenancy": {
+      "type": "object",
+      "description": "Per-tenant identity + limits (epic 10).",
+      "properties": {
+        "keys": { "type": "object", "additionalProperties": { "type": "string" } },
+        "defaults": { "type": "object" },
+        "tenants": { "type": "object" }
+      }
+    },
+    "pricing": {
+      "type": "object",
+      "description": "Price table for per-step $ (epic 05).",
+      "additionalProperties": true
+    },
+    "sandbox": {
+      "type": "object",
+      "description": "Tool isolation grants + limits (epic 06).",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "defaults": { "type": "object" },
+        "per_tool": { "type": "object" }
+      }
+    },
+    "variants": {
+      "type": "object",
+      "description": "Named overlays on the base manifest (epic 07 composition + epic 12 sharding). A variant deep-merges over the base; selected per request (X-Airlock-Variant) or at deploy (`--profile`). Use it for multiple agents in one file, or internal-vs-external profiles. May also declare capabilities/cost for fleet routing.",
+      "additionalProperties": {
+        "type": "object",
+        "description": "A partial worker.yaml: any block (skills/models/controls/auth/io/expose/harness/tools/routing/sandbox) plus optional capabilities/cost_estimate.",
+        "additionalProperties": true,
+        "properties": {
+          "capabilities": { "type": "array", "items": { "type": "string" } },
+          "cost_estimate": { "type": "number" }
+        }
+      }
+    }
+  }
+}

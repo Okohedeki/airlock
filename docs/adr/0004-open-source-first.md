@@ -1,3 +1,5 @@
 # Open source from day one
 
+> **Status (2026-06-03): Accepted (survives the redesign).** airlock remains Apache-2.0 and self-hostable; this invariant is restated in [`CONTEXT.md`](../../CONTEXT.md). The pricing/we-operate specifics this ADR references are retired alongside [ADR-0001](./0001-we-operate-the-hosted-dev-tunnel.md) and [ADR-0002](./0002-dev-is-free-prod-is-paid.md).
+
 `airlock` ships as open source (Apache-2.0) from v1. The CLI, both Recipes (Cloudflare Workers + Fly.io), and the tunnel server are all open and self-hostable. The hosted product is the tunnel infrastructure + web dashboard we operate — offered as convenience over self-hosting, **not as a feature gate**. This matches the dominant pattern for developer-infrastructure tools (Vercel CLI, Fly CLI, Wrangler, `cloudflared`): open CLI, proprietary dashboard, optional self-host path. The pricing model (ADR-0002) and "we operate" decisions (ADR-0001) therefore apply only to the hosted product; the OSS layer has none of those constraints. A self-hoster running their own tunnel server and their own deploy pipeline pays us nothing and is a fully supported user.

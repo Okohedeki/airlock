@@ -1,5 +1,7 @@
 # Per-call agent isolation, capped by a bounded queue
 
+> **Status (2026-06-03): Revisited.** The Loop Engine ([ADR-0014](./0014-airlock-owns-the-loop.md)) and the State Store ([ADR-0016](./0016-pluggable-state-store-sticky-routing.md)) change the isolation model (redesign epics 01/04). The bounded-queue concurrency cap survives.
+
 A deployed Agent must serve many Callers at once without their runs mixing. The
 runtime builds a fresh agent **wrapper** per request (the harness's factory is
 called again each call), while the **model** stays a single shared, out-of-process

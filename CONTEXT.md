@@ -1,85 +1,215 @@
 # airlock
 
-"ngrok for AI agents." A general agent-exposure tool with two surfaces: in **dev**, get a public URL for any HTTP-speaking Agent in one command; in **prod**, deploy that Agent to the publisher's own cloud. Airlock contracts are one supported Shape among several (MCP, A2A, OpenAI tools); the project no longer assumes Airlock as input.
+An **in-the-loop agent runtime**. airlock executes an agent *step by step* so the
+Operator controls every step, tool call, and dollar **during** the run —
+harness-agnostic, self-hosted, and the **same Worker** whether it serves internal
+callers or the open internet. The moat is **control the loop**, which a
+front-of-agent gateway structurally cannot copy.
 
-**Open source from day one (Apache-2.0).** The CLI, Recipes, and tunnel server are fully open and self-hostable. The paid hosted product is the tunnel infrastructure + web dashboard we operate — convenience over self-hosting, not a feature gate.
+**Open source from day one (Apache-2.0).** The runtime, the CLI shim, and the fleet
+router are fully open and self-hostable. Any hosted product is convenience over
+self-hosting, not a feature gate.
+
+> The program of record for this product lives in [`docs/redesign/`](./docs/redesign/)
+> (`PRODUCT-BRIEF.md` + 14 epics). This glossary tracks that program. Terms from the
+> previous product (deploy-orchestrator + x402 payments + two-target Recipes) are
+> collected under **Historical (pre-redesign)** at the bottom and are no longer
+> current.
 
 ## Language
 
-**Agent**:
-Any HTTP server the publisher wants to expose. We accept any HTTP service — Airlock-aware, MCP, A2A, plain REST. The Agent's internals are opaque to us at *runtime*; we only inspect responses well enough to detect Shapes.
-_Avoid_: Service, server, function, endpoint (use Agent consistently when referring to the deployable unit)
+### Core runtime
+
+**Worker**:
+The deployable unit airlock runs and controls — a `worker.yaml` manifest plus the
+code, skills, and model bindings it composes. The Worker, not a build output, is
+what ships; it is released, versioned, and exposed as a whole.
+_Avoid_: Agent (informal only — the Worker is the deployable), service, function, app
+
+**Loop Engine**:
+The in-Worker orchestrator that **owns the agent loop** where it can — it makes the
+model calls and dispatches the tools itself, emitting a `StepEvent` per iteration and
+consuming `ControlSignal`s. The keystone that makes step-level control possible.
+Control is **feature-derived, not uniform**: where airlock drives the model calls
+(native-seam harnesses, and opaque ones where defs extract cleanly) it *owns* the loop
+and the full control set applies; where it can only intercept tool dispatch it *wraps*
+the loop and only tool-centric control applies (gating, approval, tool-fallback,
+tool-result cache, sandbox). See ADR-0014 for the feature→mechanism matrix.
+_Avoid_: Driver, scheduler, executor; never call a wrapped (tool-gated) loop "owned"
+
+**Step** / **StepEvent**:
+A **Step** is one iteration of the loop (a model call and/or a tool dispatch). A
+**StepEvent** is the uniform record the engine emits per step — index, type, input,
+output, tokens, duration, status.
+_Avoid_: Turn, tick, frame, event (unqualified)
+
+**ControlSignal**:
+A directive the loop consumes between steps, from policy or a human Operator:
+`continue | pause | retry | kill | override`. The mechanism behind guards,
+approval gates, and mid-run intervention.
+_Avoid_: Command, action, hook
 
 **Harness**:
-The agent framework *inside* an Agent — LangGraph, CrewAI, smolagents, or a custom loop. A scaffold-time concept: airlock helps package and run the Harness (via a per-Harness adapter behind an OpenAI-compatible surface), but never inspects its internals at runtime, so the Agent's runtime opacity still holds. The Harness lives in the deploy layer, not in the airlock-config contract (which declares *what* skills an Agent offers, not *how* it runs them).
-_Avoid_: Framework (too generic), runtime (forbidden), engine
+The agent framework a Worker is built on — LangGraph, CrewAI, smolagents, OpenAI
+Agents, Claude SDK, or a custom loop. Under the redesign the Harness **contributes
+tools, a planner, and prompt assembly**; airlock runs the loop. (This reverses the
+prior "never inspects internals at runtime" stance — the engine now drives the
+framework's pieces directly.)
+_Avoid_: Framework (too generic), engine (that's the Loop Engine)
 
-**Shape**:
-A recognized Agent protocol pattern (MCP, A2A, Airlock contract, OpenAI tool schema). Detected automatically from the Agent's responses at expose-time. Multiple Shapes can coexist on one Agent. Detection lights up Shape-specific ergonomics: well-known paths, tool listings, schema-aware logs.
-_Avoid_: Protocol (overloaded — HTTP is a protocol too), type, kind
+**Skill**:
+A callable the Worker exposes — **skills flatten to tools**, and MCP-provided tools
+are skills too. The airlock-config descriptor supplies each skill's typed
+input/output schema for validation and the typed `/skills/<id>` surface.
+_Avoid_: Capability, plugin, function (unqualified)
 
-**Tunnel** *(dev path only)*:
-The public URL we operate that fronts a locally-running Agent. Dev-only — never used for production traffic. We run the tunnel infrastructure ourselves; restrictions on the free tier are abuse defenses, not time caps. This is the one place `airlock` holds traffic, scoped explicitly to dev.
+### Manifest & contract
+
+**worker.yaml**:
+The single operational manifest for a Worker — composition (skills, MCP, tools,
+model bindings, harness), controls, routing, I/O contract, state, triggers, expose,
+tenancy/auth, and the price table. Replaces `.airlock/config.toml`.
+_Avoid_: config.toml, deploy config, settings
+
+**airlock-config**:
+Narrowed to the **buyer-facing descriptor** of a deployed Worker — what skills it
+offers and their I/O schemas. Validated and served at `/.well-known`; it supplies
+the skill schemas the contract layer validates against. It is *not* the operational
+manifest (that's `worker.yaml`).
+_Avoid_: contract config, deploy config
+
+### Actors
+
+**Operator**:
+The entity that deploys *and* controls a Worker — owns the hardware, the manifest,
+and the runtime controls (guards, approvals, routing, rollback). The canonical
+actor of the system.
+_Avoid_: Publisher (retired), user (overloaded), owner, developer
+
+**Caller**:
+The authenticated party — another agent, app, or human — that invokes a Worker.
+_Avoid_: Client, consumer, requester, payer (payments are retired)
+
+**Tenant**:
+A per-customer identity derived from caller auth, used to isolate state and
+sessions, scope limits, and meter usage. Many Tenants can share one Worker.
+_Avoid_: Org, account, customer (use Tenant for the isolation boundary)
+
+### Fleet & deploy
+
+**Fleet Router**:
+The component that fronts a fleet of Workers and routes across them —
+version/variant/canary routing, agentic sharding, load balancing, and **sticky
+routing** for resume/fork. Control stays *inside* each Worker; the router only
+decides which Worker handles a request.
+_Avoid_: Gateway, proxy, load balancer (it is more than any one of these)
+
+**Variant** / **Version**:
+A **Version** is a content-addressed release of a Worker (the unit of canary and
+instant rollback). A **Variant** is one of several Worker configs sharing a single
+endpoint, selected by capability/cost/latency (agentic sharding). A Version is a
+special case of a Variant.
+_Avoid_: Revision, build, flavor
+
+**Expose**:
+The act of flipping a Worker between internal and public reach. Internal vs
+external differs **only** in network binding + auth — same routes, same Worker
+(`expose: internal | public` in `worker.yaml`).
+_Avoid_: Publish, deploy (that's the verb for shipping), open
+
+**Tunnel**:
+The Cloudflare tunnel that `expose: public` opens to give an internal Worker a
+public URL. (Narrowed from the prior hosted dev-tunnel business — it is now just the
+public-exposure mechanism.)
 _Avoid_: Proxy, forwarder
 
-**Target** *(production path only)*:
-The cloud platform we deploy a publisher's Agent to. v1 Targets: **Cloudflare Workers** (stateless TS, edge) and **Fly.io** (containerized, Python + TS + stateful). Each Target has exactly one Recipe. Adding a third Target means adding a third Recipe, not generalizing the existing ones. The Target is chosen explicitly via `--target=` at `init` time and persists for the project's lifetime — we never auto-detect and never silently switch.
-_Avoid_: Provider, host, vendor
+### State & execution
 
-**Recipe** *(production path only)*:
-The opinionated, prescriptive configuration we ship per Target. A Recipe owns secrets handling, custom-domain wiring, `/.well-known/` serving, logging hookup, and the deploy command. Recipes are tightly coupled to one Target by design — they don't share code beyond the routing layer.
-_Avoid_: Template, preset, blueprint
+**State Store**:
+The pluggable substrate behind run snapshots, sessions, the tool-result cache, and
+per-tenant state. SQLite/files by default; Redis/Postgres for scale.
+_Avoid_: Database, cache (it is broader), persistence layer
 
-**Scaffold** *(v2; not in v1)*:
-The starter project a future `airlock new` command will generate for publishers without existing code. v1 does not scaffold — `init` only wraps existing projects with Recipe configs. When `new` ships, the Scaffold belongs to the publisher and we never re-touch it.
-_Avoid_: Boilerplate, skeleton (use Scaffold consistently)
+**Session**:
+Caller/tenant-scoped run continuity — the thread a series of runs belongs to,
+keyed by tenant by default or an explicit `X-Airlock-Session`.
+_Avoid_: Conversation, thread (unqualified), context
 
-**Bundle** *(Airlock Shape only)*:
-The static output of `airlock build` (machine spec + HTML docs + `llms.txt` + landing page). Only relevant when the Agent has an Airlock contract. The Bundle is an input to `airlock`, never modified by it.
-_Avoid_: Build, dist, artifacts
+**Sandbox**:
+The isolated execution environment for a single tool or code call — a subprocess
+with resource limits (CPU, memory, FD, seccomp) and no host network unless granted
+in `worker.yaml`.
+_Avoid_: Jail, container (container-per-tool is a later-phase escalation), VM
 
-**Handler stub** *(Airlock Shape only)*:
-A typed function generated by `airlock codegen` from a skill's input/output schema. Only relevant when the Agent has an Airlock contract. The publisher fills in the body.
-_Avoid_: Endpoint, route handler, function
+**Trigger**:
+A non-request entry point that invokes a Worker run — cron schedule, webhook, or
+event intake. A triggered run goes through the engine like any other, so all
+controls, observability, and state apply.
+_Avoid_: Cron job, hook, listener
 
-**Wrangler / target CLI**:
-The underlying platform's command-line tool. `airlock` wraps the target CLI rather than reimplementing it. Secrets and production traffic never touch `airlock`.
-_Avoid_: Adapter (that term belongs to airlock's channel adapters), driver
+### Operations
 
-**Publisher**:
-The entity that deploys an Agent. They own the cloud account, the URL, the secrets, and — for monetized Agents — the wallet that receives payments. We never custody Publisher data, secrets, or funds.
-_Avoid_: User (overloaded), owner, developer (too narrow)
+**Concurrency cap** *(runtime)*:
+The maximum number of in-flight `/v1/chat/completions` runs one Worker executes in
+parallel (`AIRLOCK_MAX_CONCURRENCY`). Callers beyond the cap queue (FIFO); callers
+beyond the queue bound, or who wait too long, get HTTP 429. Per-Worker, about
+simultaneous Callers — distinct from per-Tenant limits.
+_Avoid_: Throughput, rate limit (that's request-rate over time), pool size
 
-**Caller** *(payment context)*:
-The counterpart to Publisher — another agent, app, or human that calls a Publisher's deployed Agent. For monetized Agents, the Caller pays the Publisher per call via x402. Callers bring their own wallet; we never custody Caller funds.
-_Avoid_: Client, consumer, requester
+## Relationships
 
-**Payment Middleware** *(payment context, production path only)*:
-The per-Recipe library a Publisher imports into their handler to enforce x402 on incoming requests. Reads price config from `.airlock/config.toml`, returns HTTP 402 to unpaid Callers, verifies payments via the Facilitator, and settles directly to the Publisher's wallet. We ship one Payment Middleware per Recipe + language (`payment-workers`, `payment-fly-node`, `payment-fly-python`).
-_Avoid_: Paywall, gateway
+Cardinality and boundaries between the core terms (the seams the redesign must keep clean):
 
-**Facilitator** *(payment context)*:
-The x402 verification and settlement service. v1 defaults to Coinbase's public Facilitator (free, USDC on Base). Publishers can swap to a self-hosted Facilitator via the `facilitator_url` config key. We never run a Facilitator ourselves.
-_Avoid_: Settler, processor
-
-**Credit Balance** *(payment context, per-token mode only)*:
-For per-token pricing, the pre-funded USDC balance a Caller holds against a Publisher's Agent. Funded via a single upfront x402 payment, drawn down per call by `(tokens_used × price_per_token_usdc)` as reported in the Agent's `X-Tokens-Used` response header. Callers top up by paying again when the balance falls below `min_credit_balance_usdc`.
-_Avoid_: Prepaid balance, escrow
-
-**Concurrency cap** *(deploy path)*:
-The maximum number of in-flight `/v1/chat/completions` runs one deployed Agent executes in parallel (`AIRLOCK_MAX_CONCURRENCY`). Callers beyond the cap queue (FIFO); callers beyond the queue bound, or who wait too long, get HTTP 429. Distinct from ADR-0002's **concurrent tunnels** (how many Agents a Publisher may expose at once) — the cap is *per Agent*, about simultaneous Callers, not a count of tunnels.
-_Avoid_: throughput, rate limit (that's request-rate over time, not simultaneity), pool size
+- **Operator** `1 — *` **Worker** — one Operator runs many Workers.
+- **Worker** `1 — *` **Tenant** — many Tenants share one Worker; the Tenant is the
+  isolation boundary, not the Worker.
+- **Tenant** `⊃` **Session** `⊃` **Run** — state nests this way. The State Store keys
+  it literally: `{tenant}/{session}/{run}/{kind}/{id}`, tenant always first so
+  isolation is structural. Cross-tenant registries live under `_system/`.
+- **Harness** *contributes* tools + planner + prompt assembly → the **Loop Engine**
+  *runs* them. The Harness no longer runs its own loop (where airlock can own it).
+- **Skill** `=` **Tool** — a Skill flattens to a callable; MCP-provided tools are
+  Skills too. The **airlock-config** descriptor supplies a Skill's typed I/O schema;
+  the **worker.yaml** manifest wires it into the running Worker. One Worker has both
+  documents: `worker.yaml` (operational) and an airlock-config descriptor (buyer-facing).
+- **Variant** `⊃` **Version** — a Version is a content-addressed release; a Variant is
+  any of several configs behind one endpoint. A Version is a special case of a Variant.
+- **Fleet Router** *decides* which Worker handles a request; the **Tunnel** *exposes* a
+  Worker to the public internet. The router routes; the tunnel only opens a public URL.
+  Distinct concerns — never conflate them.
 
 ## Flagged ambiguities
 
+**Worker vs Agent**:
+The deployable unit is a **Worker**. "Agent" is fine in informal prose for the AI
+behavior a Worker runs, but when naming the thing that is deployed, versioned, and
+exposed, say Worker.
+
 **"Deploy"** has two valid uses:
-- The verb: `airlock deploy` invokes the target CLI to push code to production.
+- The verb: shipping a Worker to the Operator's hardware.
 - The project: `airlock` is the name of this whole repo.
-Both are fine; context disambiguates. When clarity matters, use `airlock deploy` for the verb.
+Context disambiguates.
 
-**"Runtime"** remains forbidden as a description of this project. In prod, `airlock` is a deploy orchestrator. In dev, it orchestrates a Tunnel — ephemeral and time-limited, not a hosted runtime. The "never holds *production* traffic" invariant stands; dev tunnels are explicitly scoped out.
+**"Runtime" is now the correct framing.** airlock *is* an in-the-loop agent runtime:
+it owns the loop and holds per-step state and production traffic by design. (This
+reverses the previous glossary, which forbade "runtime" and asserted "never holds
+production traffic" — both are retired below.)
 
-**Tunnel vs Deploy**:
-- `airlock dev` opens a Tunnel to a locally-running Agent — ephemeral, dev-only.
-- `airlock deploy` ships the Agent to the publisher's cloud Target — durable, production, publisher's account.
-Two distinct surfaces with two distinct lifecycles. Don't blur them.
+## Historical (pre-redesign)
+
+These terms described the previous product (a deploy orchestrator monetized via
+x402) and are **no longer current**. They are kept only so older commits, ADRs, and
+docs remain readable. See [`docs/redesign/`](./docs/redesign/) for what replaced
+them.
+
+- **Publisher** → replaced by **Operator**.
+- **Caller-as-payer**, **Payment Middleware**, **Facilitator**, **Credit Balance** →
+  payments removed entirely (redesign epic 00).
+- **Target**, **Recipe**, **Wrangler / target CLI** → replaced by one Docker image +
+  the **Fleet Router**; deploy is no longer a matrix of per-Target Recipes.
+- **Bundle**, **Handler stub**, **Scaffold** → artifacts of the old Airlock-contract
+  build flow; airlock-config is now descriptor-only.
+- **dev-free / prod-paid**, **hosted dev tunnel** → the dev/prod paid-tier business
+  model is retired; **Tunnel** survives only as the `expose: public` mechanism.
+- The **"runtime forbidden"** rule and the **"never holds production traffic"**
+  invariant are both reversed (see above).

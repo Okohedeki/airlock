@@ -6,12 +6,3 @@ schemaVersion = 1
 [agent]
 harness = "crewai"
 entrypoint = "agent:build_crew"
-
-[payment]
-enabled = false
-wallet = "0x0000000000000000000000000000000000000001"
-network = "base-sepolia"
-facilitatorUrl = "https://facilitator.x402.org"
-description = "Call this agent"
-mode = "flat"
-priceUsdc = "0.001"

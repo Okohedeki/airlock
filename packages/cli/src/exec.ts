@@ -88,6 +88,54 @@ export function buildSecret(
   return { binary: 'wrangler', args: ['secret', 'delete', arg] };
 }
 
+// ---- Docker: the reproducible run path (epic 09, ADR-0012) ------------------
+
+/** `docker build -t <image> [-f <dockerfile>] <context>` */
+export function buildDockerBuild(
+  image: string,
+  contextDir: string,
+  dockerfile?: string,
+): CommandBuild {
+  const args = ['build', '-t', image];
+  if (dockerfile) args.push('-f', dockerfile);
+  args.push(contextDir);
+  return { binary: 'docker', args };
+}
+
+export interface DockerRunOptions {
+  image: string;
+  /** Host port mapped to the container's :3000. */
+  port: number;
+  name?: string;
+  /** Host dir mounted at /app/worker/.airlock so the SQLite State Store persists. */
+  stateDir?: string;
+  /** Path passed to --env-file (secrets: API keys, HOOK_SECRET, …). */
+  envFile?: string;
+  /** Extra -e KEY=VALUE pairs. */
+  env?: Record<string, string>;
+  /** Add host.docker.internal:host-gateway so a host-run model resolves (epic 03/19). */
+  addHostGateway?: boolean;
+  /** Mount the project read-only at /app/worker for dev (no rebuild). */
+  mountDir?: string;
+  detach?: boolean;
+}
+
+/** `docker run` for a worker image — publishes the port, mounts the state volume,
+ *  wires host networking + secrets. Pure + testable. */
+export function buildDockerRun(o: DockerRunOptions): CommandBuild {
+  const args = ['run'];
+  args.push(o.detach ? '-d' : '--rm');
+  if (o.name) args.push('--name', o.name);
+  args.push('-p', `${o.port}:3000`, '-e', 'PORT=3000');
+  if (o.stateDir) args.push('-v', `${o.stateDir}:/app/worker/.airlock`);
+  if (o.mountDir) args.push('-v', `${o.mountDir}:/app/worker`, '-w', '/app/worker', '-e', 'PYTHONPATH=/app/worker');
+  if (o.addHostGateway) args.push('--add-host', 'host.docker.internal:host-gateway');
+  if (o.envFile) args.push('--env-file', o.envFile);
+  for (const [k, v] of Object.entries(o.env ?? {})) args.push('-e', `${k}=${v}`);
+  args.push(o.image);
+  return { binary: 'docker', args };
+}
+
 export type DomainAction = 'add' | 'rm';
 
 /** `airlock domain add HOSTNAME | rm HOSTNAME` */

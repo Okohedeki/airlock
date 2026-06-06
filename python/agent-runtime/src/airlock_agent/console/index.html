@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>airlock console</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --mut:#8b949e;
+          --accent:#58a6ff; --ok:#3fb950; --warn:#d29922; --err:#f85149; --blocked:#bc8cff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--bg); color:var(--fg); }
+  header { display:flex; align-items:center; gap:16px; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel); }
+  header .name { font-weight:700; }
+  header .dot { width:8px; height:8px; border-radius:50%; background:var(--ok); display:inline-block; margin-right:6px; }
+  header .url { color:var(--mut); font-size:12px; }
+  nav { display:flex; gap:4px; padding:8px 12px; border-bottom:1px solid var(--line); }
+  nav button { background:none; border:1px solid transparent; color:var(--mut); padding:6px 12px; border-radius:6px; cursor:pointer; font:inherit; }
+  nav button.active { color:var(--fg); border-color:var(--line); background:var(--bg); }
+  main { padding:16px; max-width:1000px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .card h3 { margin:0 0 4px; font-size:11px; text-transform:uppercase; color:var(--mut); letter-spacing:.05em; }
+  .card .big { font-size:20px; }
+  textarea { width:100%; min-height:90px; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:10px; font:inherit; resize:vertical; }
+  button.go { background:var(--accent); color:#0d1117; border:none; padding:8px 16px; border-radius:6px; font:inherit; font-weight:700; cursor:pointer; }
+  button.sm { font-size:12px; padding:3px 9px; border-radius:5px; border:1px solid var(--line); background:var(--bg); color:var(--fg); cursor:pointer; }
+  .step { display:flex; gap:10px; align-items:flex-start; padding:8px 10px; border:1px solid var(--line); border-left:3px solid var(--mut); border-radius:6px; margin:6px 0; background:var(--panel); }
+  .step.model { border-left-color:var(--accent); }
+  .step.tool_call,.step.tool_result { border-left-color:var(--ok); }
+  .step.final { border-left-color:var(--fg); }
+  .step.s-error { border-left-color:var(--err); }
+  .step.s-killed { border-left-color:var(--err); }
+  .step.s-blocked { border-left-color:var(--blocked); }
+  .step .idx { color:var(--mut); min-width:24px; }
+  .step .body { flex:1; min-width:0; }
+  .step .ty { font-weight:700; }
+  .step .meta { color:var(--mut); font-size:12px; }
+  .step .out { white-space:pre-wrap; word-break:break-word; margin-top:4px; color:var(--fg); }
+  .badge { font-size:11px; padding:1px 7px; border-radius:10px; border:1px solid var(--line); color:var(--mut); }
+  .badge.ok { color:var(--ok); border-color:var(--ok); }
+  .badge.blocked { color:var(--blocked); border-color:var(--blocked); }
+  .badge.stopped,.badge.error,.badge.killed { color:var(--err); border-color:var(--err); }
+  table { width:100%; border-collapse:collapse; }
+  th,td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); font-size:13px; }
+  th { color:var(--mut); font-weight:600; font-size:11px; text-transform:uppercase; }
+  tr.run { cursor:pointer; } tr.run:hover { background:var(--panel); }
+  .mut { color:var(--mut); } .hidden { display:none; }
+  pre.cfg { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .final-out { margin-top:12px; padding:12px; background:var(--panel); border:1px solid var(--line); border-radius:8px; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<header>
+  <span class="name">▲ airlock</span>
+  <span id="worker" class="mut">…</span>
+  <span style="flex:1"></span>
+  <span><span class="dot"></span><span id="expose" class="url">internal</span></span>
+</header>
+<nav>
+  <button data-tab="overview" class="active">Overview</button>
+  <button data-tab="live">Live</button>
+  <button data-tab="runs">Runs</button>
+  <button data-tab="approvals">Approvals <span id="heldCount" class="badge"></span></button>
+  <button data-tab="controls">Controls</button>
+</nav>
+<main>
+  <section id="overview"></section>
+
+  <section id="live" class="hidden">
+    <p class="mut">Send a request and watch the loop run step-by-step. Stub harness script:
+      <code>say: text</code> · <code>tool: name {"json":"args"}</code> · <code>final: text</code></p>
+    <textarea id="msg">say: thinking it through…
+tool: echo {"text":"hello from the console"}
+final: all done</textarea>
+    <div class="row" style="margin:8px 0;">
+      <button class="go" id="run">▶ Run</button>
+      <label class="mut">tenant <input id="tenant" value="default" style="width:90px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:3px;"></label>
+      <span id="runStatus" class="mut"></span>
+    </div>
+    <div id="liveSteps"></div>
+    <div id="liveFinal"></div>
+  </section>
+
+  <section id="runs" class="hidden">
+    <div class="row"><button class="sm" id="refreshRuns">↻ refresh</button><span class="mut">recent runs (tenant: default)</span></div>
+    <table><thead><tr><th>run</th><th>session</th><th>status</th><th>tokens</th><th>steps</th></tr></thead>
+      <tbody id="runsBody"></tbody></table>
+    <div id="runDetail"></div>
+  </section>
+
+  <section id="approvals" class="hidden">
+    <div class="row"><button class="sm" id="refreshHeld">↻ refresh</button><span class="mut">runs awaiting your decision</span></div>
+    <div id="heldList"></div>
+  </section>
+
+  <section id="controls" class="hidden">
+    <p class="mut">Active guards from <code>worker.yaml</code> (read-only here — edit the manifest and
+      <code>airlock</code> re-validates through the one schema).</p>
+    <pre class="cfg" id="controlsView">…</pre>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s==null?'':s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+let TENANT = 'default';
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  ['overview','live','runs','approvals','controls'].forEach(t => $('#'+t).classList.toggle('hidden', t!==b.dataset.tab));
+  if (b.dataset.tab==='runs') loadRuns();
+  if (b.dataset.tab==='approvals') loadHeld();
+  if (b.dataset.tab==='controls') loadControls();
+});
+
+async function j(url, opts) { const r = await fetch(url, opts); return r.json(); }
+
+// ---- Overview ----
+async function loadOverview() {
+  const m = await j('/v1/manifest');
+  $('#worker').textContent = m.name + (m.version?(' v'+m.version):'') + ' · ' + (m.harness||'');
+  $('#expose').textContent = m.expose || 'internal';
+  $('.dot').style.background = m.expose==='public' ? 'var(--ok)' : 'var(--warn)';
+  let met = {}; try { met = await j('/metrics'); } catch(e){}
+  $('#overview').innerHTML = `<div class="grid">
+    <div class="card"><h3>Harness</h3><div class="big">${esc(m.harness)}</div></div>
+    <div class="card"><h3>Expose</h3><div class="big">${esc(m.expose)}</div></div>
+    <div class="card"><h3>Models</h3><div class="big">${(m.models||[]).join(', ')||'—'}</div></div>
+    <div class="card"><h3>Tools</h3><div class="big">${(m.tools||[]).join(', ')||'—'}</div></div>
+    <div class="card"><h3>Running</h3><div class="big">${met.running??0}/${met.max_concurrency??'—'}</div></div>
+    <div class="card"><h3>Waiting</h3><div class="big">${met.waiting??0}</div></div>
+    <div class="card"><h3>Auth</h3><div class="big">${esc(m.auth||'open')}</div></div>
+    <div class="card"><h3>Tenants</h3><div class="big">${(m.tenants||[]).join(', ')||'default'}</div></div>
+  </div>`;
+  refreshHeldCount();
+}
+
+function stepCard(s) {
+  const cls = ['step', s.type, 's-'+(s.status||'ok')].join(' ');
+  const out = s.output!=null ? `<div class="out">${esc(typeof s.output==='object'?JSON.stringify(s.output):s.output).slice(0,400)}</div>` : '';
+  const meta = [s.model&&('model='+s.model), s.tool&&('tool='+s.tool),
+                s.tokens?(s.tokens+' tok'):null, s.cost_usd?('$'+Number(s.cost_usd).toFixed(4)):null,
+                s.duration_ms?(Math.round(s.duration_ms)+'ms'):null,
+                s.stop_reason].filter(Boolean).join(' · ');
+  return `<div class="${cls}"><div class="idx">#${s.index}</div><div class="body">
+     <span class="ty">${esc(s.type)}</span> <span class="badge ${s.status}">${esc(s.status||'ok')}</span>
+     <div class="meta">${esc(meta)}</div>${out}</div></div>`;
+}
+
+// ---- Live playground (SSE over fetch) ----
+$('#run').onclick = async () => {
+  TENANT = $('#tenant').value || 'default';
+  $('#liveSteps').innerHTML = ''; $('#liveFinal').innerHTML = '';
+  $('#runStatus').textContent = 'running…';
+  const body = { messages:[{role:'user', content:$('#msg').value}], stream:true, stream_steps:true };
+  const resp = await fetch('/v1/chat/completions', {method:'POST',
+    headers:{'content-type':'application/json','X-Airlock-Tenant':TENANT}, body:JSON.stringify(body)});
+  const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf='';
+  while (true) {
+    const {value, done} = await reader.read(); if (done) break;
+    buf += dec.decode(value, {stream:true});
+    let i; while ((i = buf.indexOf('\n\n')) >= 0) { handleFrame(buf.slice(0,i)); buf = buf.slice(i+2); }
+  }
+  $('#runStatus').textContent = 'done';
+  loadOverview();
+};
+function handleFrame(frame) {
+  const lines = frame.split('\n'); let ev=null, data=null;
+  for (const ln of lines) { if (ln.startsWith('event:')) ev=ln.slice(6).trim();
+    else if (ln.startsWith('data:')) data=ln.slice(5).trim(); }
+  if (!data || data==='[DONE]') return;
+  let obj; try { obj = JSON.parse(data); } catch(e) { return; }
+  if (ev === 'step') { $('#liveSteps').insertAdjacentHTML('beforeend', stepCard(obj)); window.scrollTo(0,document.body.scrollHeight); }
+  else if (obj.choices) { const d = obj.choices[0].delta||{}; if (d.content) $('#liveFinal').innerHTML = `<div class="final-out">${esc(d.content)}</div>`;
+    if (obj.usage) $('#runStatus').textContent = 'done · '+obj.usage.total_tokens+' tokens'; }
+}
+
+// ---- Runs ----
+async function loadRuns() {
+  const {runs} = await j('/v1/runs?tenant='+encodeURIComponent('default'));
+  $('#runsBody').innerHTML = (runs||[]).map(r => `<tr class="run" data-id="${esc(r.run_id)}">
+    <td>${esc(r.run_id)}</td><td>${esc(r.session)}</td>
+    <td><span class="badge ${r.status}">${esc(r.status)}</span></td>
+    <td>${r.tokens??0}</td><td>${r.n_steps??0}</td></tr>`).join('') || '<tr><td colspan=5 class="mut">no runs yet — try the Live tab</td></tr>';
+  document.querySelectorAll('tr.run').forEach(tr => tr.onclick = () => showRun(tr.dataset.id));
+}
+async function showRun(id) {
+  const r = await j('/v1/runs/'+encodeURIComponent(id)+'?tenant=default');
+  $('#runDetail').innerHTML = `<h3 style="margin-top:18px">${esc(id)} <span class="badge ${r.status}">${esc(r.status)}</span></h3>`
+    + (r.steps||[]).map(stepCard).join('')
+    + (r.content?`<div class="final-out">${esc(r.content)}</div>`:'');
+}
+$('#refreshRuns').onclick = loadRuns;
+
+// ---- Approvals ----
+async function loadHeld() {
+  const {held} = await j('/v1/runs/held');
+  $('#heldList').innerHTML = (held||[]).map(h => `<div class="card" style="margin:8px 0">
+    <div class="row"><b>${esc(h.tool)}</b><span class="mut">run ${esc(h.run)}</span></div>
+    <pre class="cfg">${esc(JSON.stringify(h.args,null,2))}</pre>
+    <div class="row">
+      <button class="sm" onclick="decide('${esc(h.run)}','approve')">✓ approve</button>
+      <button class="sm" onclick="decide('${esc(h.run)}','deny')">✗ deny</button>
+      <button class="sm" onclick="decide('${esc(h.run)}','skip')">⤼ skip</button>
+    </div></div>`).join('') || '<p class="mut">nothing waiting.</p>';
+}
+async function decide(run, decision) {
+  await fetch('/v1/runs/'+encodeURIComponent(run)+'/decision',
+    {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({decision})});
+  loadHeld(); refreshHeldCount();
+}
+async function refreshHeldCount() {
+  try { const {held} = await j('/v1/runs/held'); $('#heldCount').textContent = held&&held.length?held.length:''; } catch(e){}
+}
+$('#refreshHeld').onclick = loadHeld;
+
+// ---- Controls ----
+async function loadControls() {
+  const m = await j('/v1/manifest');
+  $('#controlsView').textContent = JSON.stringify({controls:m.controls, routing:m.routing}, null, 2);
+}
+
+loadOverview();
+setInterval(refreshHeldCount, 5000);
+</script>
+</body>
+</html>

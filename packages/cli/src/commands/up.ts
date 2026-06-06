@@ -1,9 +1,9 @@
 /**
  * `airlock up` — run a self-hosted agent on the publisher's OWN hardware and
  * front it with a public URL. This is the self-host production path: the agent
- * loop (`python -m airlock_agent`) runs here, payment is enforced in-process,
- * and airlock only operates the tunnel that exposes it — never the compute,
- * never the model (which may be local or a remote OPENAI_API_BASE).
+ * loop (`python -m airlock_agent`) runs here, and airlock only operates the
+ * tunnel that exposes it — never the compute, never the model (which may be
+ * local or a remote OPENAI_API_BASE).
  *
  * By default the public URL is an ephemeral *.trycloudflare.com quick tunnel
  * (no account needed). Pass `--durable` to instead run a stable named tunnel on
@@ -12,9 +12,12 @@
  * Cloudflare keys either way.
  */
 
-import { type ChildProcess, spawn } from 'node:child_process';
-import { PaymentConfigSchema } from '@airlockhq/payment-core';
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { ZodError } from 'zod';
+import { buildDockerRun } from '../exec.js';
+import { DEFAULT_BASE_IMAGE, resolveBuildPlan } from './build.js';
 import {
   type AirlockConfig,
   CF_TUNNEL_TOKEN_ENV,
@@ -34,8 +37,6 @@ export interface UpOptions {
   port?: number;
   /** Python executable to run `-m airlock_agent` with (respects an active venv). */
   python?: string;
-  /** Disable payment enforcement on the agent. */
-  noPayment?: boolean;
   /** Run the agent locally but don't open a public tunnel. */
   noTunnel?: boolean;
   /** Use a durable named tunnel on the publisher's own Cloudflare account (vs. ephemeral quick tunnel). */
@@ -54,6 +55,18 @@ export interface UpOptions {
   cfRegion?: string;
   /** Expose cloudflared metrics on host:port; overrides [tunnel].metrics. */
   cfMetrics?: string;
+  /** Run the Worker in Docker (reproducible) instead of host python (ADR-0012). */
+  docker?: boolean;
+  /** Image to run with --docker (default: the content-addressed image from `airlock build`). */
+  image?: string;
+  /** Dev mode: mount the project into the base image instead of using a built image. */
+  mount?: boolean;
+  /** Path passed to `docker run --env-file` (secrets). */
+  envFile?: string;
+  /** Variant/profile to run (sets AIRLOCK_PROFILE) — e.g. internal | external. */
+  profile?: string;
+  /** Durable-tunnel hostname (bring-your-own Cloudflare) for worker.yaml projects. */
+  hostname?: string;
   /** Injectables for tests. */
   spawnImpl?: typeof spawn;
   startTunnelImpl?: typeof startTunnel;
@@ -70,32 +83,23 @@ export interface UpPlan {
 }
 
 /**
- * Translate config + options into a concrete launch plan. Pure + testable:
- * maps the `[payment]` block into the env vars `python -m airlock_agent` reads
- * (PAYMENT_ENABLED / PUBLISHER_WALLET / PAYMENT_NETWORK / PRICE_USDC, see the
- * runtime's serve.config_from_env). Throws if there's no `[agent]` block — `up`
- * runs a config-bound harness; to wrap a bare model, use `airlock serve`.
+ * Translate config + options into a concrete launch plan. Pure + testable.
+ * Throws if there's no `[agent]` block — `up` runs a config-bound harness.
  */
 export function resolveUpPlan(config: AirlockConfig, opts: UpOptions = {}): UpPlan {
-  if (!config.agent?.entrypoint) {
+  // The redesign runtime boots from worker.yaml (epic 07): if one is present, `up`
+  // just spawns it — the worker.yaml supplies harness/entrypoint/tools/models. The
+  // legacy [agent] block is still accepted during the deprecation window.
+  const cwd = opts.cwd ?? process.cwd();
+  const hasWorkerYaml = existsSync(resolve(cwd, 'worker.yaml'));
+  if (!config.agent?.entrypoint && !hasWorkerYaml) {
     throw new Error(
-      'airlock up runs a config-bound agent, but no [agent] block was found in ' +
-        '.airlock/config.toml. Run `airlock init --detect` to wire one, or use ' +
-        '`airlock serve` to wrap a bare model endpoint.',
+      'airlock up needs a worker.yaml (run `airlock init` or `airlock migrate`), ' +
+        'or a legacy [agent] block in .airlock/config.toml (`airlock init --detect`).',
     );
   }
   const port = opts.port ?? 3000;
   const env: Record<string, string> = { PORT: String(port) };
-
-  if (opts.noPayment || !config.payment) {
-    env.PAYMENT_ENABLED = '0';
-  } else {
-    const p = PaymentConfigSchema.parse(config.payment);
-    env.PAYMENT_ENABLED = p.enabled ? '1' : '0';
-    env.PUBLISHER_WALLET = p.wallet;
-    env.PAYMENT_NETWORK = p.network;
-    if (p.mode === 'flat') env.PRICE_USDC = p.priceUsdc;
-  }
 
   // Concurrency knobs — only set when given, so the runtime keeps its own
   // defaults otherwise. A bare `AIRLOCK_MAX_CONCURRENCY=N airlock up` also works
@@ -140,12 +144,13 @@ export function resolveDurableTunnel(
   if (!durable) return null;
 
   const token = env[CF_TUNNEL_TOKEN_ENV];
-  const hostname = tcfg?.hostname;
+  // hostname from --hostname (worker.yaml projects), else legacy [tunnel].hostname.
+  const hostname = opts.hostname ?? tcfg?.hostname;
   const missing: string[] = [];
   if (!token)
     missing.push(`export ${CF_TUNNEL_TOKEN_ENV}=<your Cloudflare Tunnel connector token>`);
   if (!hostname)
-    missing.push('set [tunnel].hostname in .airlock/config.toml to the hostname you routed');
+    missing.push('pass --hostname <the hostname you routed> (or set [tunnel].hostname)');
   if (!token || !hostname) {
     throw new Error(
       'durable tunnel requested but your bring-your-own Cloudflare setup is incomplete:\n' +
@@ -219,8 +224,15 @@ async function waitForHealth(
  */
 export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
   const cwd = opts.cwd ?? process.cwd();
-  const config = await readConfig(cwd);
-  const plan = resolveUpPlan(config, opts);
+  // worker.yaml-only projects have no .airlock/config.toml — tolerate its absence
+  // and fall back to a minimal config (the runtime reads worker.yaml itself).
+  let config: AirlockConfig;
+  try {
+    config = await readConfig(cwd);
+  } catch (err) {
+    if (!existsSync(resolve(cwd, 'worker.yaml'))) throw err;
+    config = { project: { name: 'worker' } } as AirlockConfig;
+  }
   const spawnFn = opts.spawnImpl ?? spawn;
   const startTunnelFn = opts.startTunnelImpl ?? startTunnel;
   const startNamedTunnelFn = opts.startNamedTunnelImpl ?? startNamedTunnel;
@@ -230,16 +242,53 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
   // so a misconfigured `--durable` fails fast with actionable guidance.
   const durable = opts.noTunnel ? null : resolveDurableTunnel(config, opts);
 
-  console.log(`airlock up  →  starting agent: ${plan.python} -m airlock_agent (:${plan.port})`);
-  console.log(
-    `  payment:  ${plan.env.PAYMENT_ENABLED === '1' ? `ON (wallet=${plan.env.PUBLISHER_WALLET})` : 'OFF'}`,
-  );
+  const port = opts.port ?? 3000;
+  let containerName: string | undefined;
+  let binary: string;
+  let args: string[];
+  let spawnEnv: Record<string, string> = { ...process.env } as Record<string, string>;
 
-  const child = spawnFn(plan.python, plan.args, {
-    cwd,
-    stdio: 'inherit',
-    env: { ...process.env, ...plan.env },
-  });
+  if (opts.docker) {
+    // Reproducible containerized run (ADR-0012): publish the port, mount the state
+    // volume so the SQLite store persists, wire host.docker.internal for host models.
+    const stateDir = resolve(cwd, '.airlock');
+    mkdirSync(stateDir, { recursive: true });
+    let image = opts.image;
+    let mountDir: string | undefined;
+    if (opts.mount) {
+      image = image ?? DEFAULT_BASE_IMAGE;
+      mountDir = cwd; // dev: mount the project; no rebuild
+    } else if (!image) {
+      image = resolveBuildPlan({ cwd }).image; // the content-addressed image from `airlock build`
+    }
+    // Include the port so several workers can run side by side (worker.yaml projects
+    // share the default config name, so the name alone isn't unique).
+    containerName = `airlock-${slug(config.project?.name ?? 'worker')}-${port}`;
+    const dockerEnv = forwardedEnv();
+    if (opts.profile) dockerEnv.AIRLOCK_PROFILE = opts.profile;
+    const run = buildDockerRun({
+      image: image!,
+      port,
+      name: containerName,
+      stateDir,
+      mountDir,
+      addHostGateway: true,
+      envFile: opts.envFile,
+      env: dockerEnv,
+    });
+    binary = run.binary;
+    args = run.args;
+    console.log(`airlock up  →  docker run ${image} (:${port})`);
+  } else {
+    const plan = resolveUpPlan(config, opts);
+    binary = plan.python;
+    args = plan.args;
+    spawnEnv = { ...process.env, ...plan.env } as Record<string, string>;
+    if (opts.profile) spawnEnv.AIRLOCK_PROFILE = opts.profile;
+    console.log(`airlock up  →  starting agent: ${plan.python} -m airlock_agent (:${plan.port})`);
+  }
+
+  const child = spawnFn(binary, args, { cwd, stdio: 'inherit', env: spawnEnv });
 
   const done = new Promise<number>((resolve) => {
     child.on('exit', (code) => resolve(code ?? 0));
@@ -247,30 +296,29 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
 
   let tunnel: TunnelHandle | undefined;
   try {
-    await waitForHealth(plan.port, fetchFn, child, 120_000);
+    await waitForHealth(port, fetchFn, child, 120_000);
   } catch (err) {
     child.kill();
+    if (containerName) spawnSync('docker', ['stop', containerName]);
     throw err;
   }
 
+  console.log(`  console:      http://localhost:${port}/console`);
   if (!opts.noTunnel) {
     const tuning = resolveTunnelTuning(config, opts);
     if (durable) {
       console.log('  opening durable named tunnel on your Cloudflare account…');
-      tunnel = await startNamedTunnelFn(plan.port, { ...durable, tuning });
+      tunnel = await startNamedTunnelFn(port, { ...durable, tuning });
       console.log(`\n✓ live (durable) at  ${tunnel.url}`);
     } else {
       console.log('  opening public tunnel…');
-      tunnel = await startTunnelFn(plan.port, { tuning });
+      tunnel = await startTunnelFn(port, { tuning });
       console.log(`\n✓ live at  ${tunnel.url}`);
     }
     console.log(`  callers POST to:  ${tunnel.url}/v1/chat/completions`);
   } else {
-    console.log(`\n✓ agent live on 0.0.0.0:${plan.port} (no tunnel)`);
-    console.log(`  local:        http://localhost:${plan.port}/v1/chat/completions`);
-    console.log(
-      `  public host:  http://<this-server-ip>:${plan.port}/v1/chat/completions  (open the port / front with your own proxy)`,
-    );
+    console.log(`\n✓ agent live on 0.0.0.0:${port} (no tunnel)`);
+    console.log(`  local:        http://localhost:${port}/v1/chat/completions`);
   }
   console.log('  press Ctrl-C to stop');
 
@@ -279,8 +327,26 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
     stop: async () => {
       tunnel?.stop();
       child.kill();
+      if (containerName) spawnSync('docker', ['stop', containerName]);
       await done;
     },
     done,
   };
+}
+
+/** Forward a small allowlist of host env into the container (secrets + knobs). */
+function forwardedEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  const allow = ['HOOK_SECRET', 'OPENAI_API_KEY', 'OPENAI_API_BASE'];
+  for (const k of Object.keys(process.env)) {
+    if (allow.includes(k) || k.startsWith('AIRLOCK_')) {
+      const v = process.env[k];
+      if (v !== undefined) env[k] = v;
+    }
+  }
+  return env;
+}
+
+function slug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '') || 'worker';
 }

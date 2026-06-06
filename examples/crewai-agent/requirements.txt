@@ -1,6 +1,5 @@
 crewai>=0.80,<1
 airlock-agent
-airlock-payment
 fastapi>=0.115,<1
 uvicorn[standard]>=0.30,<1
 pyyaml>=6,<7

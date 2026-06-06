@@ -5,7 +5,10 @@
  * `examples/<harness>-agent/`. Fly-only (these Harnesses are Python; ADR-0003).
  */
 
-import type { TemplateFile } from './fly-node.js';
+export interface TemplateFile {
+  path: string;
+  content: string;
+}
 
 export type AgentHarness =
   | 'smolagents'
@@ -36,7 +39,6 @@ export function flyAgentStarter(name: string, harness: AgentHarness): TemplateFi
       path: 'requirements.txt',
       content: `${HARNESS_DEPS[harness]}
 airlock-agent
-airlock-payment
 fastapi>=0.115,<1
 uvicorn[standard]>=0.30,<1
 pyyaml>=6,<7

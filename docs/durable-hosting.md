@@ -1,3 +1,5 @@
+> ⚠️ **Historical — superseded by [`docs/redesign/`](./redesign/).** Deploy/expose is now one Docker image + the Fleet Router (redesign epic 09). Kept for reference.
+
 # Durable hosting — a stable URL on **your own** account
 
 `airlock up` gives you a public URL out of the box with **zero accounts**: an ephemeral

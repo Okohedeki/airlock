@@ -1,5 +1,7 @@
 # We operate the hosted dev tunnel
 
+> **Status (2026-06-03): Superseded.** The hosted dev-tunnel business model is retired. Public exposure is now the Cloudflare tunnel behind `expose: public` ([redesign epic 09](../redesign/plans/09-deploy-expose-and-fleet-router.md)); see also [ADR-0017](./0017-fleet-router.md). Kept for historical context.
+
 `airlock` has two surfaces: a dev tunnel and a prod deploy. Production preserves the "publisher owns their cloud" invariant — `airlock deploy` never holds production traffic. But dev needs a public URL for a locally-running Agent on the first run, with no friction. We chose to operate the hosted dev tunnel infrastructure ourselves so that `airlock dev` produces a public URL in seconds, with no third-party account required. This explicitly narrows the original "never holds traffic" invariant to **"never holds *production* traffic"** — we do hold dev traffic, scoped to ephemeral tunnels, rate-limited, and never used for prod. The tunnel server itself is open source so anyone can self-host their own tunnel; the hosted version is a convenience layer, not a moat.
 
 ## Considered Options

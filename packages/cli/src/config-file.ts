@@ -1,6 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { PaymentConfigSchema } from '@airlockhq/payment-core';
 import { parse, stringify } from 'smol-toml';
 import { z } from 'zod';
 
@@ -42,8 +41,7 @@ export type TunnelConfig = z.infer<typeof TunnelConfigSchema>;
 export type DeployMode = 'self-hosted' | 'airlock-hosted';
 
 /**
- * On-disk shape of `.airlock/config.toml`. The `[payment]` section is
- * parsed via the shared PaymentConfigSchema from payment-core.
+ * On-disk shape of `.airlock/config.toml`.
  */
 export interface AirlockConfig {
   project: {
@@ -54,7 +52,6 @@ export interface AirlockConfig {
     /** Schema version of this file. Bump on breaking changes; reject older. */
     schemaVersion: 1;
   };
-  payment?: Record<string, unknown>;
   /** Durable public-URL config (see TunnelConfigSchema). Absent = ephemeral quick tunnel. */
   tunnel?: Record<string, unknown>;
   /**
@@ -88,15 +85,6 @@ export async function writeConfig(cwd: string, config: AirlockConfig): Promise<s
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, stringify(config as unknown as Record<string, unknown>), 'utf8');
   return path;
-}
-
-/**
- * Validate just the `[payment]` section. Returns the parsed PaymentConfig or
- * throws a ZodError. Callers pretty-print the error message.
- */
-export function validatePayment(config: AirlockConfig) {
-  if (!config.payment) return undefined;
-  return PaymentConfigSchema.parse(config.payment);
 }
 
 /**
