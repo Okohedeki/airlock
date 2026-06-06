@@ -46,3 +46,4 @@ tools/llama.cpp/
 # runtime state (per-project SQLite store)
 **/.airlock/state.db
 **/.airlock/*.db
+python/agent-runtime/.venv312/

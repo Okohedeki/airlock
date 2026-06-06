@@ -32,6 +32,12 @@ def build_tools_schema(tools: dict[str, Callable]) -> list[dict]:
     description. (Epic 13 can later override with the descriptor's typed schema.)"""
     out: list[dict] = []
     for name, fn in tools.items():
+        # A framework tool can carry its own schema (real param names/types/description);
+        # introspecting the wrapper lambda would lose them.
+        attached = getattr(fn, "_airlock_schema", None)
+        if isinstance(attached, dict):
+            out.append({"type": "function", "function": {"name": name, **attached}})
+            continue
         props: dict[str, Any] = {}
         required: list[str] = []
         try:

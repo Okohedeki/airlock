@@ -1,18 +1,19 @@
-"""Harness bindings, keyed by the `harness` config value (epic 01, frozen C1).
+"""Harness bindings, keyed by the `harness` config value (epic 01, ADR-0014).
 
 A Binding exposes a harness as engine-drivable pieces so airlock owns the loop.
-`control_mode` declares how much of the loop airlock can own:
+**Every harness is now OWN**: airlock extracts the framework's tools (+ prompt) and
+drives them through its own loop (the OpenAI-style planner), so the full control set
+applies uniformly:
 
-  stub, openai            OWN   — real planner+tools; the engine drives the model
-  langgraph, claude       WRAP  — OWN-capable; run as WRAP until native-seam bindings land
-  smolagents, crewai,     WRAP  — opaque frameworks; the engine intercepts tool dispatch
-  openai-agents
-  custom                  OWN if the callable implements Planner, else WRAP (terminal)
+  stub, openai                              real planner + tools, engine drives the model
+  langgraph, smolagents, crewai,            tools extracted (harnesses/extract.py) and
+  openai-agents, claude                     driven by airlock's loop — verified live for all 5
+  custom                                    OWN if the callable implements Planner
 
-The framework bindings reuse the legacy `drive(agent, messages)` functions as their
-`run_wrapped` body, so they stay importable without the framework installed (import
-is lazy, inside the method). The stub and openai bindings are the fully-owned path
-the functional tests exercise.
+The framework adapters need the framework installed (and Python >=3.10 — the base
+runtime targets 3.9, but the modern agent frameworks require 3.10+). `extract.py` is
+defensive across framework versions. The model that drives the loop is airlock's own
+(worker.yaml `models`), so e.g. the Claude SDK harness needs no Anthropic key.
 """
 
 from __future__ import annotations
@@ -69,15 +70,17 @@ class BindingSpec:
     reentrant: bool  # legacy: matters only for the shared-instance fallback
 
 
-# Per-harness metadata (control_mode is frozen contract C1).
+# Per-harness metadata. All harnesses are now OWN: airlock extracts the framework's
+# tools (+ prompt) and drives them through its own loop, so the full control set
+# applies uniformly (frozen contract C1; ADR-0014).
 SPECS: dict[str, BindingSpec] = {
     "stub": BindingSpec(ControlMode.OWN, reentrant=True),
     "openai": BindingSpec(ControlMode.OWN, reentrant=True),
-    "smolagents": BindingSpec(ControlMode.WRAP, reentrant=False),
-    "langgraph": BindingSpec(ControlMode.WRAP, reentrant=True),
-    "crewai": BindingSpec(ControlMode.WRAP, reentrant=False),
-    "openai-agents": BindingSpec(ControlMode.WRAP, reentrant=True),
-    "claude": BindingSpec(ControlMode.WRAP, reentrant=True),
+    "smolagents": BindingSpec(ControlMode.OWN, reentrant=True),
+    "langgraph": BindingSpec(ControlMode.OWN, reentrant=True),
+    "crewai": BindingSpec(ControlMode.OWN, reentrant=True),
+    "openai-agents": BindingSpec(ControlMode.OWN, reentrant=True),
+    "claude": BindingSpec(ControlMode.OWN, reentrant=True),
     "custom": BindingSpec(ControlMode.OWN, reentrant=False),  # OWN if entrypoint is a Planner
 }
 
@@ -120,7 +123,15 @@ def build_binding(
 
         return LegacyWrapBinding(custom_drive, entrypoint)
     if harness in _LEGACY_NAMES:
-        return LegacyWrapBinding(_legacy_driver(harness.replace("-", "_")), entrypoint)
+        # Extract the framework's tools (+ prompt) and drive them through airlock's
+        # own loop (ADR-0014): the framework contributes pieces, airlock owns the loop.
+        from .extract import EXTRACTORS
+        from .openai import OpenAIBinding
+
+        extracted, prompt = EXTRACTORS[harness](entrypoint)
+        merged = {**extracted, **(tools or {})}
+        msgs = ([{"role": "system", "content": prompt}] if prompt else []) + messages
+        return OpenAIBinding(msgs, merged)
     raise ValueError(f"unknown harness '{harness}'. Known: {', '.join(SPECS)}")
 
 

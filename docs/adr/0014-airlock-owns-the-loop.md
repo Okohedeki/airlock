@@ -77,3 +77,20 @@ tests each feature only on harnesses the matrix says support it.
 The moat is unaffected: a front-of-agent gateway can offer **neither** column, because
 it never sees inside the loop at all. Ownership is full on native-seam harnesses and
 tool-gated on opaque ones — strictly more than a gateway can do, just not uniform.
+
+## Consequences — all frameworks are OWN via tool-extraction (2026-06-05)
+
+The "tiered (OWN vs WRAP)" split above is superseded in practice by a cleaner
+realization of this ADR: **every harness is now OWN**. Rather than run a framework's
+native loop and intercept it (WRAP), each binding **extracts the framework's tools
+(+ prompt)** (`harnesses/extract.py`) and airlock drives them through its own loop with
+its own model — exactly "the harness contributes tools/planner/prompt; airlock runs the
+loop." So the full control set (mid-run routing, budgets, checkpoint/resume, per-step
+cost) applies uniformly to **all** harnesses, not just the native-seam ones.
+
+Verified live end-to-end (real framework agent → extracted tool → airlock's loop drives
+a local model → tool called → correct answer) for **all five**: LangGraph, smolagents,
+OpenAI Agents SDK, CrewAI, and the Claude Agent SDK. Because airlock supplies the model,
+the Claude SDK harness needs no Anthropic key. Caveat: the agent frameworks require
+Python ≥3.10 (the base runtime targets 3.9); a worker using a framework harness runs on
+3.10+.

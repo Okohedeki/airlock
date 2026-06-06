@@ -53,11 +53,6 @@ class EngineRunner:
         self.max_steps = int(self.controls.get("max_steps") or 50)
         self.select_binding = build_select_binding(self.routing) if self.routing else None
         self.cache_tools = set((self.state_cfg.get("cache") or {}).get("tools") or [])
-        # Give the model the tool schemas so it can actually emit tool_calls (tool-chaining).
-        from .harnesses.openai import build_tools_schema
-
-        self._tools_schema = build_tools_schema(self.tools) if self.tools else None
-        self._base_callers = manifest.build_model_callers(tools_schema=self._tools_schema)
         self._variants: dict[str, "EngineRunner"] = {}
         self._authn: Any = None
 
@@ -157,8 +152,15 @@ class EngineRunner:
         scoped = self.store.scoped(tenant)
         binding = build_binding(self.harness, messages, tools=self.tools, entrypoint=self.entrypoint)
 
+        # Give the model the schemas for the binding's ACTUAL tools (incl. framework
+        # tools extracted per request), so it can emit tool_calls (tool-chaining).
+        from .harnesses.openai import build_tools_schema
+
+        tool_map = binding.tools() if hasattr(binding, "tools") else {}
+        tools_schema = build_tools_schema(tool_map) if tool_map else None
         # Model callers (+ epic-03 fallback) — OWN only (WRAP has no engine model calls).
-        callers = wrap_callers_with_fallback(dict(self._base_callers), self.fallback)
+        callers = wrap_callers_with_fallback(
+            self.m.build_model_callers(tools_schema=tools_schema), self.fallback)
 
         # Trace persistence (epic 05) + forward to live stream.
         def step_sink(ev: StepEvent) -> None:
