@@ -34,7 +34,7 @@ Control is **feature-derived, not uniform**: where airlock drives the model call
 (native-seam harnesses, and opaque ones where defs extract cleanly) it *owns* the loop
 and the full control set applies; where it can only intercept tool dispatch it *wraps*
 the loop and only tool-centric control applies (gating, approval, tool-fallback,
-tool-result cache, sandbox). See ADR-0014 for the feature→mechanism matrix.
+tool-result cache, sandbox).
 _Avoid_: Driver, scheduler, executor; never call a wrapped (tool-gated) loop "owned"
 
 **Step** / **StepEvent**:
@@ -198,7 +198,7 @@ production traffic" — both are retired below.)
 ## Historical (pre-redesign)
 
 These terms described the previous product (a deploy orchestrator monetized via
-x402) and are **no longer current**. They are kept only so older commits, ADRs, and
+x402) and are **no longer current**. They are kept only so older commits and
 docs remain readable. See [`docs/redesign/`](./docs/redesign/) for what replaced
 them.
 

@@ -20,24 +20,55 @@
 <p align="center">
   <a href="./docs/redesign/PRODUCT-BRIEF.md">Product brief</a> ·
   <a href="./examples/">Examples</a> ·
-  <a href="./docs/cli.md">CLI</a> ·
-  <a href="./docs/adr/">Decisions</a>
+  <a href="./docs/cli.md">CLI</a>
 </p>
 
 ---
 
 A gateway sits *in front* of an agent and proxies its traffic. **airlock runs *inside* the loop** — it executes the agent step by step, so you control every step, tool call, and dollar *as the run happens*. Take an agent built in **LangGraph, smolagents, CrewAI, the OpenAI Agents SDK, or the Claude Agent SDK**, declare it in one `worker.yaml`, and ship it behind an OpenAI-compatible URL. Self-hosted; the model stays yours.
 
-## Control the loop
+## Features
+
+### 🔁 Control the loop
+
+The differentiator — only possible from inside the run, not from a gateway in front of it.
 
 - **Operate any step** — pause, retry, resume, or kill at a specific step, not just the whole request.
-- **Loop guards** — cap steps and enforce the token/cost budget *during* the run, before it overshoots.
-- **Mid-run approval** — hold a step for human sign-off before a sensitive tool fires, then continue.
-- **Per-step tool gating** — allow or deny a call from its actual arguments (block the `DELETE`, not the endpoint).
-- **Routing & fallback** — heavy step to a big model, cheap step to a small one; swap a failed tool/model and continue.
-- **Checkpoint, resume & fork** — resume a failed run from the last good step, or fork a past run from step N.
-- **Sandboxed execution** — every tool and code call runs isolated from the host.
-- **Live streaming & per-step cost** — watch each step and tool call as it happens, with cost and latency per step.
+- **Loop guards** — cap max steps, catch runaway loops, and enforce the token/cost budget *during* the run, stopping it before it overshoots instead of billing you after.
+- **Mid-run approval** — hold a step for human sign-off before a sensitive tool fires (send, pay, write), inject guidance, then continue.
+- **Per-step tool gating** — allow or deny a tool call from its actual arguments at the moment it runs (block the `DELETE`, not just the endpoint).
+- **Mid-run routing** — send a heavy reasoning step to a big model and a cheap classification step to a small one, inside one run.
+- **Mid-run fallback** — a tool or model fails at step 3? Swap to a backup and continue instead of failing the whole request.
+- **Checkpoint & resume** — snapshot state at each step; resume a failed run from the last good step instead of re-paying for the whole thing.
+- **Replay & fork** — re-run a past run deterministically, or fork it from step N with one thing changed.
+- **Tool-result reuse** — cache an expensive tool call and reuse it across runs, not just whole-response caching.
+- **Sandboxed execution** — every tool and code call runs isolated, so a bad or hijacked tool can't touch the host.
+- **Live step streaming & per-step cost** — watch each reasoning step and tool call as it happens, with exact cost and latency per step.
+
+### 🧩 Compose the worker
+
+- **One `worker.yaml` manifest** — declarative and version-controlled; the worker is a file, not a pile of glue code.
+- **Built from parts** — bind the harness, tools, skills, and model in config; toggle skills on and off.
+- **Variants & profiles** — ship the same worker in several configurations from one manifest.
+- **Canary + instant rollback** — roll a new version out to a slice of traffic, then promote or revert in one command.
+
+### 🚀 Deploy & expose
+
+- **One command to ship** — `airlock build` produces a reproducible Docker image; `airlock deploy --replicas N` runs a multi-container fleet behind the router.
+- **Internal = external** — flip the same worker from an internal service to a public URL with identical controls, no rewrite.
+- **Multi-tenant** — authenticate each caller, isolate state per tenant, and track usage from the same worker.
+- **Triggers** — fire on a signed webhook, not only on a direct call.
+- **Agentic sharding** — route across many worker variants behind one endpoint by capability, cost, or latency.
+
+### 📐 Shape the contract
+
+- **Controlled input** — guard and validate inbound requests, rejecting junk or injection before the loop spends a token.
+- **Controlled output** — enforce a schema, format, and redaction contract on every call so downstream code can trust the shape.
+
+### 📊 Observe
+
+- **Live step stream** over SSE, **per-step `cost_usd`**, and Prometheus **`/metrics`**.
+- **Operator Console** at `/console` — overview, live runs, traces, approvals, and controls in a local web UI.
 
 ## Quickstart
 
@@ -70,13 +101,6 @@ airlock promote | rollback             # canary → 100%, or instant revert
 
 For a stable URL on your own domain: `airlock tunnel provision` then `airlock up --durable --hostname agent.example.com` ([durable hosting](./docs/durable-hosting.md)).
 
-## More
-
-- **Compose** — one `worker.yaml` binds harness, tools, skills, and model, with variants and per-skill toggles.
-- **Deploy & expose** — flip the same worker from internal service to public URL, no rewrite; multi-tenant with per-caller auth, isolated state, and usage; fires on signed webhooks.
-- **Shape the contract** — validate inbound requests; enforce an output schema + redaction so downstream code can trust the shape.
-- **Observe** — SSE step stream, per-step `cost_usd`, Prometheus `/metrics`, and an Operator Console at `/console`.
-
 ## Harnesses
 
 All five run as **OWN** bindings — airlock extracts the framework's tools and prompt and drives the loop itself, so every harness gets full step-control. `airlock init --detect` picks the harness and entrypoint from your deps — no adapter to write.
@@ -85,7 +109,7 @@ All five run as **OWN** bindings — airlock extracts the framework's tools and 
 
 ## You own the model
 
-airlock **never hosts inference** ([ADR-0019](./docs/adr/0019-inference-stays-external.md)) — a local gguf/vLLM or a remote `OPENAI_API_BASE`, your endpoint and your keys. airlock makes the calls and runs the loop. [`.env.example`](./.env.example) lists every variable it reads.
+airlock **never hosts inference** — a local gguf/vLLM or a remote `OPENAI_API_BASE`, your endpoint and your keys. airlock makes the calls and runs the loop. [`.env.example`](./.env.example) lists every variable it reads.
 
 ## Docs
 
@@ -93,7 +117,6 @@ airlock **never hosts inference** ([ADR-0019](./docs/adr/0019-inference-stays-ex
 | --- | --- |
 | [Product brief](./docs/redesign/PRODUCT-BRIEF.md) | The vision and who it's for. |
 | [CLI reference](./docs/cli.md) | Every command and flag. |
-| [Decisions](./docs/adr/) | ADRs — 0014–0020 record the runtime architecture. |
 | [`airlock-config`](https://github.com/Okohedeki/airlock-config) | Optional buyer-facing descriptor served at `/.well-known`. |
 
 ## License

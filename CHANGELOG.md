@@ -20,16 +20,16 @@ Program of record: [`docs/redesign/`](docs/redesign/README.md). This is a
 breaking release: payments are gone and the runtime/manifest surface is new.
 
 ### Added
-- **Airlock Loop Engine** (`engine/`) — OWN step loop with `StepEvent`/`ControlSignal`, planner protocol, and per-step cost accounting ([ADR-0014](docs/adr/0014-airlock-owns-the-loop.md)).
+- **Airlock Loop Engine** (`engine/`) — OWN step loop with `StepEvent`/`ControlSignal`, planner protocol, and per-step cost accounting.
 - **Loop control & guards** — budget/$ stop, tool gating, and a `hold→decide→resume` approval gate over the control API.
 - **Mid-run routing & fallback** — per-step model routing with model/tool fallback.
-- **State, checkpoint, resume & fork** — pluggable `State Store` (`memory` + `sqlite`) with tenant-first keys, snapshots, run-index, held-runs, usage, and tool-result reuse; resume and fork-by-replay ([ADR-0016](docs/adr/0016-pluggable-state-store-sticky-routing.md)).
+- **State, checkpoint, resume & fork** — pluggable `State Store` (`memory` + `sqlite`) with tenant-first keys, snapshots, run-index, held-runs, usage, and tool-result reuse; resume and fork-by-replay.
 - **Step observability** — SSE step stream, per-step `cost_usd`, `/metrics`, traces, and a local **Operator Console** at `/console` (Overview, Live, Runs+trace, Approvals, Controls).
 - **Sandboxed execution** — subprocess isolation + rlimits + SIGKILL wall-clock cap.
-- **`worker.yaml` manifest** — one JSON-Schema (TS-validated via Ajv), manifest loader, variants/profiles, and per-skill on/off ([ADR-0015](docs/adr/0015-worker-yaml-single-manifest.md), [ADR-0020](docs/adr/0020-worker-yaml-single-schema-source.md)).
+- **`worker.yaml` manifest** — one JSON-Schema (TS-validated via Ajv), manifest loader, variants/profiles, and per-skill on/off.
 - **Versioning controls** — router stage with `promote`/`rollback` control API (canary + instant rollback).
-- **Deploy, expose & fleet router** — reproducible content-hash Docker image, `airlock up --docker`, real multi-container `airlock deploy --replicas N [--canary]`, and a live router service (pipeline + reverse-proxy + control API) ([ADR-0017](docs/adr/0017-fleet-router.md)).
-- **Multi-tenancy & identity** — api-key auth, tenant-scoped state and usage ([ADR-0018](docs/adr/0018-pluggable-caller-auth-multitenancy.md)).
+- **Deploy, expose & fleet router** — reproducible content-hash Docker image, `airlock up --docker`, real multi-container `airlock deploy --replicas N [--canary]`, and a live router service (pipeline + reverse-proxy + control API).
+- **Multi-tenancy & identity** — api-key auth, tenant-scoped state and usage.
 - **Triggers** — signed webhook trigger.
 - **Agentic sharding** — variant routing in the fleet router.
 - **Contract shaping** — input guard, output enforce+redact, real `/skills/<id>` dispatch.
@@ -37,13 +37,13 @@ breaking release: payments are gone and the runtime/manifest surface is new.
 - **Durable tunnel auto-provisioning** — `airlock tunnel provision` zero-interaction creates the Cloudflare tunnel + DNS via the CF API; `up --durable --hostname` with no sudo; `.env` autoload.
 
 ### Changed
-- **airlock owns the loop** — reverses the front-of-agent gateway / "runtime forbidden" framing; the Worker now drives the agent loop itself ([ADR-0014](docs/adr/0014-airlock-owns-the-loop.md)).
-- **Inference stays external** — airlock makes the model calls; the model endpoint remains the Operator's ([ADR-0019](docs/adr/0019-inference-stays-external.md)).
-- `CONTEXT.md` and the ADR ledger rewritten to runtime vocabulary (**Operator** replaces Publisher; Worker, Loop Engine, StepEvent/ControlSignal, Fleet Router, Tenant, State Store).
+- **airlock owns the loop** — reverses the front-of-agent gateway / "runtime forbidden" framing; the Worker now drives the agent loop itself.
+- **Inference stays external** — airlock makes the model calls; the model endpoint remains the Operator's.
+- `CONTEXT.md` rewritten to runtime vocabulary (**Operator** replaces Publisher; Worker, Loop Engine, StepEvent/ControlSignal, Fleet Router, Tenant, State Store).
 
 ### Removed
 - **x402 payments / crypto** — `payment-core`, `payment-workers`, `payment-fly-node`, `python/payment-fly`, the optional buy tool, and `docs/payment.md` (epic 00). `airlock-crypto` is out of scope.
-- **airlock-directory + publisher heartbeat** — directory paused; ADR-0013 retired; the planned `airlock register` CLI is dropped.
+- **airlock-directory + publisher heartbeat** — directory paused; the planned `airlock register` CLI is dropped.
 - Legacy example deploy scaffolds (`agent-template`, `local-llm-agent`) and the Fly/Workers CLI templates.
 
 ### Deferred (not release-blocking)
@@ -59,7 +59,7 @@ First tagged release. Self-host is the supported deploy path; the ecosystem's di
 - **Config-driven harness binding** — `airlock init --detect` autowires smolagents, LangGraph, CrewAI, OpenAI Agents SDK, and Claude Agent SDK; the shared `airlock-agent` runtime drives the native loop.
 - **In-process x402 payment middleware** — Python (`payment-fly`) + TypeScript (`payment-workers`, `payment-fly-node`); flat and per-token (including streamed) pricing; settles via an external Facilitator.
 - **Scale & latency** — latency-aware admission (EWMA + per-request budget → `429 Retry-After`), SSE streaming (Tier A heartbeat across every harness + Tier B `run_stream` mechanism), per-token streamed billing, `/metrics`. Connector tuning via `--cf-protocol` / `--cf-region` / `--cf-metrics`.
-- **Capped-parallel concurrency** — per-call agent isolation (ADR-0010) + bounded queue.
+- **Capped-parallel concurrency** — per-call agent isolation + bounded queue.
 - **Optional buy tool** — `airlock-agent[crypto]` wires the [`airlock-crypto`](https://github.com/Okohedeki/airlock-crypto) wallet so an agent can pay other agents' x402 paywalls.
 - **Dashboard backend** — GitHub OAuth, project registration, inspect store.
 - **Environment-variable docs** in the README — first-class reference for what to set per use case.
