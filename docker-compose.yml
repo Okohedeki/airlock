@@ -17,6 +17,8 @@ services:
       - "3000:3000"
     environment:
       AIRLOCK_LOG_LEVEL: ${AIRLOCK_LOG_LEVEL:-INFO}
+      # Secret for the live-demo's signed webhook trigger (epic 11).
+      HOOK_SECRET: ${HOOK_SECRET:-topsecret}
       # Passthrough for non-stub workers that call a real model endpoint:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_API_BASE: ${OPENAI_API_BASE:-}
@@ -42,6 +44,38 @@ services:
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
     volumes:
       - dashboard-data:/data
+    restart: unless-stopped
+
+  # --- Epic 03 (real model calls + mid-run routing/fallback) --------------------
+  # Off by default. Start with:  docker compose --profile epic03 up -d
+  # Both reuse the worker image (the live-demo files are baked in); the mock model
+  # echoes the binding name so you can SEE which model answered.
+
+  # Deterministic OpenAI-compatible mock model, reachable on the compose network.
+  mock-model:
+    image: airlock-worker:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["epic03"]
+    entrypoint: ["python", "model.py", "--port", "8999"]
+    restart: unless-stopped
+
+  # The same runtime, but driving the `openai` harness against the mock model.
+  # Rewrites the demo's openai manifest to point at the `mock-model` service.
+  worker-openai:
+    image: airlock-worker:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["epic03"]
+    depends_on: [mock-model]
+    ports:
+      - "3001:3000"
+    entrypoint:
+      - sh
+      - -c
+      - "sed 's#127.0.0.1#mock-model#g' worker.openai.yaml > worker.yaml && exec python -m airlock_agent"
     restart: unless-stopped
 
 volumes:

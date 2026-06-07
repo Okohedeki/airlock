@@ -46,9 +46,15 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    import os
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8999)
+    # Bind all interfaces by default so the model is reachable from another
+    # container (e.g. the openai worker over the Docker network). Override with
+    # MOCK_MODEL_HOST=127.0.0.1 to keep it host-local.
+    ap.add_argument("--host", default=os.environ.get("MOCK_MODEL_HOST", "0.0.0.0"))
     args = ap.parse_args()
-    srv = ThreadingHTTPServer(("127.0.0.1", args.port), H)
-    print(f"mock model on http://127.0.0.1:{args.port}/v1/chat/completions", flush=True)
+    srv = ThreadingHTTPServer((args.host, args.port), H)
+    print(f"mock model on http://{args.host}:{args.port}/v1/chat/completions", flush=True)
     srv.serve_forever()
