@@ -1,0 +1,49 @@
+# airlock — run the worker runtime + optional dashboard with only Docker installed.
+#
+#   docker compose up --build
+#     worker     -> http://localhost:3000  (/healthz, /console, /v1/chat/completions, /metrics)
+#     dashboard  -> http://localhost:8787  (optional; GitHub login needs the OAuth env vars)
+#
+# Every toolchain (python, node, pnpm, the C++ build for better-sqlite3) runs inside
+# the image builds — nothing is installed on the host.
+
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: airlock-worker:local
+    ports:
+      - "3000:3000"
+    environment:
+      AIRLOCK_LOG_LEVEL: ${AIRLOCK_LOG_LEVEL:-INFO}
+      # Passthrough for non-stub workers that call a real model endpoint:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-}
+    volumes:
+      # Persist the worker's SQLite state (sessions, run traces, tool-result cache).
+      - worker-state:/app/worker/.airlock
+      # To run YOUR worker instead of the bundled live-demo, mount its dir here:
+      # - ./path/to/your/worker:/app/worker
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: packages/server/Dockerfile
+    image: airlock-dashboard:local
+    ports:
+      - "8787:8787"
+    environment:
+      DB_PATH: /data/airlock.db
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8787}
+      # Optional — only needed for GitHub login; the dashboard + /healthz serve without them:
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+    volumes:
+      - dashboard-data:/data
+    restart: unless-stopped
+
+volumes:
+  worker-state:
+  dashboard-data:

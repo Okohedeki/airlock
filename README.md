@@ -101,6 +101,24 @@ airlock promote | rollback             # canary → 100%, or instant revert
 
 For a stable URL on your own domain: `airlock tunnel provision` then `airlock up --durable --hostname agent.example.com` ([durable hosting](./docs/durable-hosting.md)).
 
+## Run with Docker Compose
+
+No toolchain to install — with only Docker, `docker compose up --build` builds the Python runtime and Node dashboard inside the images and starts both:
+
+```bash
+docker compose up --build
+#   worker    → http://localhost:3000   (/healthz, /console, /v1/chat/completions, /metrics)
+#   dashboard → http://localhost:8787   (optional; GitHub login needs the OAuth env vars)
+```
+
+The worker bundles the `live-demo` stub so it runs with no config. To run **your** worker, mount its dir over `/app/worker` (or uncomment the volume in `docker-compose.yml`):
+
+```bash
+docker run -p 3000:3000 -v "$PWD/my-worker:/app/worker" airlock-worker:local
+```
+
+State persists in named volumes (`worker-state`, `dashboard-data`). Set `OPENAI_API_KEY` / `OPENAI_API_BASE` for workers that call a real model.
+
 ## Harnesses
 
 All five run as **OWN** bindings — airlock extracts the framework's tools and prompt and drives the loop itself, so every harness gets full step-control. `airlock init --detect` picks the harness and entrypoint from your deps — no adapter to write.
