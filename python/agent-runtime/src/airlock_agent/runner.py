@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 import uuid
 from typing import Any, Callable
@@ -30,6 +31,9 @@ from .state import StateStore
 
 # Side-effecting tools are never cached (frozen contract C3 / epic 04).
 NEVER_CACHE = {"send", "pay", "write", "delete", "post", "email"}
+
+# Per-step logger — one line per StepEvent to stdout (docker logs); see __main__.
+log = logging.getLogger("airlock_agent.run")
 
 
 class EngineRunner:
@@ -164,6 +168,14 @@ class EngineRunner:
 
         # Trace persistence (epic 05) + forward to live stream.
         def step_sink(ev: StepEvent) -> None:
+            log.info(
+                "step %d run=%s %s%s%s status=%s tokens=%d %.1fms%s",
+                ev.index, run_id, ev.type.value,
+                f" tool={ev.tool}" if ev.tool else "",
+                f" model={ev.model}" if ev.model else "",
+                ev.status.value, ev.tokens, ev.duration_ms,
+                f" error={ev.error}" if ev.error else "",
+            )
             try:
                 red = shaping.redact(ev.output) if isinstance(ev.output, str) else ev.output
                 scoped.snapshot(f"{session}/{run_id}/trace/{ev.index}", {**ev.to_dict(), "output": red})

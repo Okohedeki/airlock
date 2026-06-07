@@ -58,6 +58,13 @@ def build_app(cwd: str | None = None):
 def main() -> None:
     import uvicorn
 
+    # Stream app + per-step logs to stdout (docker logs). Level via AIRLOCK_LOG_LEVEL
+    # (default INFO); uvicorn's own config runs after and leaves these loggers intact.
+    logging.basicConfig(
+        level=os.environ.get("AIRLOCK_LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
     uvicorn.run(build_app(), host="0.0.0.0", port=int(os.environ.get("PORT", "3000")))
 
 
