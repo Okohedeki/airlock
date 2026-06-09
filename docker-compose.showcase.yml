@@ -1,0 +1,88 @@
+# Production-grade harness showcase — one container per harness, all driven by a REAL
+# local LLM. Prerequisite: run a tool-calling llama-server on the host :11434 (see
+# docs/showcase.md). Each container reaches it via host.docker.internal.
+#
+#   docker compose -f docker-compose.showcase.yml up -d --build          # bring up all harnesses
+#   docker compose -f docker-compose.showcase.yml run --rm harness-tests # green PASS/FAIL matrix
+#   docker compose -f docker-compose.showcase.yml down
+#
+# Ports: langgraph 3101 · smolagents 3102 · crewai 3103 · openai-agents 3104 ·
+#        claude 3105 · custom 3106  (custom is a TERMINAL harness — observe-only).
+
+x-harness-env: &harness-env
+  OPENAI_API_BASE: "http://host.docker.internal:11434/v1"
+  OPENAI_API_KEY: "sk-not-needed"
+  OPENAI_MODEL: "local"
+
+x-harness-hosts: &harness-hosts
+  - "host.docker.internal:host-gateway"
+
+services:
+  langgraph:
+    build: { context: ., dockerfile: Dockerfile.harness, args: { HARNESS_DIR: langgraph-agent } }
+    image: airlock-showcase-langgraph:local
+    ports: ["3101:3000"]
+    environment: *harness-env
+    extra_hosts: *harness-hosts
+    restart: unless-stopped
+
+  smolagents:
+    build: { context: ., dockerfile: Dockerfile.harness, args: { HARNESS_DIR: smolagent-local } }
+    image: airlock-showcase-smolagents:local
+    ports: ["3102:3000"]
+    environment: *harness-env
+    extra_hosts: *harness-hosts
+    restart: unless-stopped
+
+  crewai:
+    build: { context: ., dockerfile: Dockerfile.harness, args: { HARNESS_DIR: crewai-agent } }
+    image: airlock-showcase-crewai:local
+    ports: ["3103:3000"]
+    environment: *harness-env
+    extra_hosts: *harness-hosts
+    restart: unless-stopped
+
+  openai-agents:
+    build: { context: ., dockerfile: Dockerfile.harness, args: { HARNESS_DIR: openai-agents-agent } }
+    image: airlock-showcase-openai-agents:local
+    ports: ["3104:3000"]
+    environment: *harness-env
+    extra_hosts: *harness-hosts
+    restart: unless-stopped
+
+  claude:
+    build: { context: ., dockerfile: Dockerfile.harness, args: { HARNESS_DIR: claude-agent } }
+    image: airlock-showcase-claude:local
+    ports: ["3105:3000"]
+    environment: *harness-env
+    extra_hosts: *harness-hosts
+    restart: unless-stopped
+
+  custom:
+    build: { context: ., dockerfile: Dockerfile.harness, args: { HARNESS_DIR: custom-agent } }
+    image: airlock-showcase-custom:local
+    ports: ["3106:3000"]
+    environment: *harness-env
+    extra_hosts: *harness-hosts
+    restart: unless-stopped
+
+  # Containerized test runner — asserts every harness and prints a PASS/FAIL grid.
+  # Waits for each harness to report healthy, then runs pytest. Exits non-zero on failure.
+  harness-tests:
+    build: { context: ., dockerfile: examples/showcase-tests/Dockerfile }
+    image: airlock-showcase-tests:local
+    environment:
+      LANGGRAPH_URL: "http://langgraph:3000"
+      SMOLAGENTS_URL: "http://smolagents:3000"
+      CREWAI_URL: "http://crewai:3000"
+      OPENAI_AGENTS_URL: "http://openai-agents:3000"
+      CLAUDE_URL: "http://claude:3000"
+      CUSTOM_URL: "http://custom:3000"
+    depends_on:
+      langgraph: { condition: service_healthy }
+      smolagents: { condition: service_healthy }
+      crewai: { condition: service_healthy }
+      openai-agents: { condition: service_healthy }
+      claude: { condition: service_healthy }
+      custom: { condition: service_healthy }
+    restart: "no"
