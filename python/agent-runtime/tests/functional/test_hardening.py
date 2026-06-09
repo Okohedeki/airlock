@@ -146,3 +146,18 @@ def test_run_apis_scope_to_authenticated_tenant_not_query_param(client_factory):
     assert c.post("/v1/runs/ra/resume?tenant=acme", headers=B).status_code == 404
     # acme sees its own run with no query param at all
     assert "ra" in [r["run_id"] for r in c.get("/v1/runs", headers=A).json()["runs"]]
+
+
+# ---- string args from weak models must coerce via the attached schema --------
+def test_coerce_args_uses_attached_schema_for_opaque_wrappers():
+    """Extracted framework tools (smolagents/crewai) are opaque **kw wrappers — their
+    signature has no typed params, so coercion must fall back to the attached OpenAI
+    schema. Otherwise a model that sends {"a":"23"} (string) breaks `a*b`."""
+    from airlock_agent.engine.loop import _coerce_args
+
+    def wrapper(**kw):
+        return kw
+
+    wrapper._airlock_schema = {
+        "parameters": {"properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}}}
+    assert _coerce_args(wrapper, {"a": "23", "b": "19"}) == {"a": 23, "b": 19}
