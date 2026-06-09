@@ -1,7 +1,7 @@
 """The OpenAI-compatible chat surface — written once, reused by every harness.
 
 `POST /v1/chat/completions` runs the agent through the Airlock Loop Engine (airlock
-owns the loop, ADR-0014). With `"stream": true` the surface emits live StepEvents as
+owns the loop). With `"stream": true` the surface emits live StepEvents as
 SSE `event: step` frames (epic 05) interleaved with standard OpenAI `data:` chunks,
 so a watcher sees each model call / tool call / result as it happens. Approval routes
 (epic 02) and typed `/skills/<id>` dispatch (epic 13) live here too.
@@ -24,7 +24,7 @@ from starlette.concurrency import run_in_threadpool
 from .adapter import AgentRunResult
 from .concurrency import BoundedGate, QueueFull
 from .engine.events import StepEvent
-from .io import InputRejected
+from .io import InputRejected, ModelCallError
 from .wellknown import mount_wellknown, read_contract_metadata
 
 HEARTBEAT_S = 12.0
@@ -193,6 +193,17 @@ def create_app(
     def _session(request: Request) -> str:
         return request.headers.get("X-Airlock-Session", "default")
 
+    def _authed_tenant(request: Request):
+        """Resolve the AUTHENTICATED tenant for the run read/replay APIs — never a
+        client-supplied `?tenant=` (which let any caller read or resume ANOTHER tenant's
+        runs). Returns (tenant, None) on success or (None, error_response)."""
+        try:
+            return _tenant(request, _runner_for(request)), None
+        except PermissionError as exc:
+            return None, JSONResponse({"error": str(exc)}, status_code=401)
+        except _UnknownVariant as exc:
+            return None, JSONResponse({"error": str(exc)}, status_code=400)
+
     @app.get("/")
     def info() -> dict[str, Any]:
         gate = getattr(app.state, "run_gate", None)
@@ -273,6 +284,8 @@ def create_app(
             result: AgentRunResult = await run_in_threadpool(run_call, messages, None)
         except InputRejected as exc:
             return JSONResponse({"error": exc.reason}, status_code=exc.status)
+        except ModelCallError as exc:  # upstream model failed → 502, not a bare 500
+            return JSONResponse({"error": exc.reason}, status_code=502)
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=500)
         finally:
@@ -318,6 +331,8 @@ def create_app(
             result = await run_in_threadpool(run_call, messages, None)
         except InputRejected as exc:
             return JSONResponse({"error": exc.reason}, status_code=exc.status)
+        except ModelCallError as exc:  # upstream model failed → 502, not a bare 500
+            return JSONResponse({"error": exc.reason}, status_code=502)
         finally:
             gate.release()
         return JSONResponse({"skill": skill_id, "output": result.content, "units": result.units})
@@ -412,7 +427,9 @@ def create_app(
     async def resume(request: Request, run_id: str):
         if not hasattr(runner, "resume"):
             return JSONResponse({"error": "resume not supported"}, status_code=400)
-        tenant = request.query_params.get("tenant", "default")
+        tenant, err = _authed_tenant(request)
+        if err is not None:
+            return err
         gate = _ensure_gate()
         await gate.acquire()
         try:
@@ -436,7 +453,9 @@ def create_app(
             at_step = int(body.get("at_step", 0))
         except (TypeError, ValueError):
             return JSONResponse({"error": "'at_step' must be an integer"}, status_code=400)
-        tenant = request.query_params.get("tenant", "default")
+        tenant, err = _authed_tenant(request)
+        if err is not None:
+            return err
         gate = _ensure_gate()
         await gate.acquire()
         try:
@@ -490,7 +509,9 @@ def create_app(
 
     @app.get("/v1/runs")
     def list_runs(request: Request):
-        tenant = request.query_params.get("tenant", "default")
+        tenant, err = _authed_tenant(request)
+        if err is not None:
+            return err
         limit = int(request.query_params.get("limit", "50"))
         runs = _runs_for(tenant)[:limit]
         summary = [{k: r.get(k) for k in
@@ -500,7 +521,9 @@ def create_app(
 
     @app.get("/v1/runs/{run_id}")
     def run_detail(run_id: str, request: Request):
-        tenant = request.query_params.get("tenant", "default")
+        tenant, err = _authed_tenant(request)
+        if err is not None:
+            return err
         if store is None:
             return JSONResponse({"error": "no state store"}, status_code=404)
         v = store.scoped(tenant).get(f"_runs/{run_id}")

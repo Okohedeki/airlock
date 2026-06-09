@@ -1,14 +1,16 @@
-"""Harness bindings, keyed by the `harness` config value (epic 01, ADR-0014).
+"""Harness bindings, keyed by the `harness` config value (epic 01).
 
 A Binding exposes a harness as engine-drivable pieces so airlock owns the loop.
-**Every harness is now OWN**: airlock extracts the framework's tools (+ prompt) and
+**Built-in and framework harnesses run OWN**: airlock extracts their tools (+ prompt) and
 drives them through its own loop (the OpenAI-style planner), so the full control set
-applies uniformly:
+applies. `custom` is OWN only if its entrypoint implements `Planner`; a plain callable is
+an opaque WRAP binding that collapses to *terminal* (observe-only). Control is
+feature-derived, not uniform — see CONTEXT.md (OWN / WRAP / Terminal).
 
   stub, openai                              real planner + tools, engine drives the model
   langgraph, smolagents, crewai,            tools extracted (harnesses/extract.py) and
   openai-agents, claude                     driven by airlock's loop — verified live for all 5
-  custom                                    OWN if the callable implements Planner
+  custom                                    OWN if the entrypoint is a Planner, else terminal WRAP
 
 The framework adapters need the framework installed (and Python >=3.10 — the base
 runtime targets 3.9, but the modern agent frameworks require 3.10+). `extract.py` is
@@ -70,9 +72,9 @@ class BindingSpec:
     reentrant: bool  # legacy: matters only for the shared-instance fallback
 
 
-# Per-harness metadata. All harnesses are now OWN: airlock extracts the framework's
-# tools (+ prompt) and drives them through its own loop, so the full control set
-# applies uniformly (frozen contract C1; ADR-0014).
+# Per-harness metadata (frozen contract C1). Built-in + framework harnesses are OWN;
+# `custom` is OWN only with a Planner entrypoint, else a terminal WRAP binding. Control is
+# feature-derived, not uniform — see CONTEXT.md (OWN / WRAP / Terminal).
 SPECS: dict[str, BindingSpec] = {
     "stub": BindingSpec(ControlMode.OWN, reentrant=True),
     "openai": BindingSpec(ControlMode.OWN, reentrant=True),
@@ -105,8 +107,12 @@ def build_binding(
     *,
     tools: dict[str, Any] | None = None,
     entrypoint: Any = None,
+    disabled: set[str] | None = None,
 ) -> Binding:
-    """Construct a per-request Binding for `harness`."""
+    """Construct a per-request Binding for `harness`. `disabled` is the set of tool
+    names backed only by disabled skills — dropped from the binding's tool map so a
+    disabled skill removes its tool from the loop for EXTRACTED tools too, not just
+    declared ones (skills on/off is uniform across harnesses)."""
     if harness == "stub":
         from .stub import StubBinding
 
@@ -124,12 +130,14 @@ def build_binding(
         return LegacyWrapBinding(custom_drive, entrypoint)
     if harness in _LEGACY_NAMES:
         # Extract the framework's tools (+ prompt) and drive them through airlock's
-        # own loop (ADR-0014): the framework contributes pieces, airlock owns the loop.
+        # own loop: the framework contributes pieces, airlock owns the loop.
         from .extract import EXTRACTORS
         from .openai import OpenAIBinding
 
         extracted, prompt = EXTRACTORS[harness](entrypoint)
         merged = {**extracted, **(tools or {})}
+        if disabled:
+            merged = {n: f for n, f in merged.items() if n not in disabled}
         msgs = ([{"role": "system", "content": prompt}] if prompt else []) + messages
         return OpenAIBinding(msgs, merged)
     raise ValueError(f"unknown harness '{harness}'. Known: {', '.join(SPECS)}")

@@ -1,4 +1,4 @@
-"""SQLite state store — the single-box, zero-extra-dependency default (ADR-0016).
+"""SQLite state store — the single-box, zero-extra-dependency default.
 
 JSON-serialized values in one key/value table with optional TTL. Good enough for
 self-host; Redis/Postgres adapters implement the same protocol for scale.

@@ -2,7 +2,7 @@
 and runs its full native loop. Usage is read from THIS run's result
 (`RunResult.token_usage`, summed over the run's own steps) rather than a delta on
 the agent's cumulative `monitor` — the old delta raced under concurrency and
-mis-billed. See ADR-0010.
+mis-billed. See CONTEXT.md (per-call isolation).
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 This is where the engine seams meet the consumer epics: policy (02), routing &
 fallback (03), tool-result cache + snapshots (04), sandbox (06), trace/stream (05),
-and input/output shaping (13). Per-call isolation (ADR-0010): a fresh binding and
+and input/output shaping (13). Per-call isolation: a fresh binding and
 RunContext are built for every request.
 """
 
@@ -44,8 +44,9 @@ class EngineRunner:
         self.m = manifest
         self.store = store
         self.harness = manifest.harness()
-        self.tools = _filter_disabled_skills(manifest.tools(), manifest.skills())
         self.skills = manifest.skills()
+        self._disabled_tools = _disabled_skill_tools(self.skills)
+        self.tools = _filter_disabled_skills(manifest.tools(), self.skills)
         self.entrypoint = self._resolve_entrypoint()
         self.controls = manifest.controls()
         self.routing = manifest.routing()
@@ -157,7 +158,8 @@ class EngineRunner:
 
         run_id = run_id or f"run_{uuid.uuid4().hex[:12]}"
         scoped = self.store.scoped(tenant)
-        binding = build_binding(self.harness, messages, tools=self.tools, entrypoint=self.entrypoint)
+        binding = build_binding(self.harness, messages, tools=self.tools,
+                                entrypoint=self.entrypoint, disabled=self._disabled_tools)
 
         # Give the model the schemas for the binding's ACTUAL tools (incl. framework
         # tools extracted per request), so it can emit tool_calls (tool-chaining).
@@ -294,14 +296,20 @@ def _now() -> float:
     return time.time()
 
 
+def _disabled_skill_tools(skills: dict[str, dict]) -> set[str]:
+    """Tool names backed ONLY by disabled skills — i.e. the tools to remove. A tool
+    backing at least one ENABLED skill (or no skill at all) stays available."""
+    if not skills:
+        return set()
+    enabled = {s["tool"] for s in skills.values() if s.get("enabled", True)}
+    disabled = {s["tool"] for s in skills.values() if not s.get("enabled", True)}
+    return disabled - enabled
+
+
 def _filter_disabled_skills(
     tools: dict[str, Callable], skills: dict[str, dict]
 ) -> dict[str, Callable]:
     """Drop tools that are backed ONLY by disabled skills. Tools not referenced by any
     skill, and tools backing at least one enabled skill, stay available."""
-    if not skills:
-        return tools
-    enabled = {s["tool"] for s in skills.values() if s.get("enabled", True)}
-    disabled = {s["tool"] for s in skills.values() if not s.get("enabled", True)}
-    remove = disabled - enabled
-    return {n: fn for n, fn in tools.items() if n not in remove}
+    remove = _disabled_skill_tools(skills)
+    return {n: fn for n, fn in tools.items() if n not in remove} if remove else tools

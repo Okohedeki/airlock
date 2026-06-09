@@ -1,4 +1,4 @@
-"""The orchestrator loop — airlock owns the agent loop (ADR-0014, epic 01).
+"""The orchestrator loop — airlock owns the agent loop (epic 01).
 
 `run_loop(binding, messages, ctx)` runs:
 
@@ -334,9 +334,17 @@ def _run_wrapped(binding: Binding, messages: list[dict[str, Any]], ctx: RunConte
 
 
 def _last_text(history: list[StepEvent]) -> str:
+    """The last human-readable content (for partial results on max_steps / budget stop).
+    An OWN model step's output is the raw assistant message dict — return its text, never
+    the stringified dict; skip tool-call-only messages (empty content) to the prior text."""
     for ev in reversed(history):
-        if ev.type in (StepType.FINAL, StepType.MODEL) and ev.output:
-            return str(ev.output)
+        if ev.type not in (StepType.FINAL, StepType.MODEL):
+            continue
+        out = ev.output
+        if isinstance(out, dict):
+            out = out.get("content")  # assistant message → its text, not `{'role': ...}`
+        if out:
+            return str(out)
     return ""
 
 

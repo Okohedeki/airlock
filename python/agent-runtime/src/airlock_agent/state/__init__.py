@@ -1,4 +1,4 @@
-"""Pluggable State Store — frozen contract C3 (epic 04, ADR-0016).
+"""Pluggable State Store — frozen contract C3 (epic 04).
 
 Tenant-first hierarchical keys make isolation structural:
 `{tenant}/{session}/{run}/{kind}/{id}` — tenant is always segment 1, so

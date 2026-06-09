@@ -92,3 +92,57 @@ def test_skip_verdict_with_null_result_does_not_run_tool(client_factory):
     r = c.post("/v1/chat/completions", json=body)
     tool_results = [s for s in r.json()["steps"] if s["type"] == "tool_result"]
     assert tool_results and tool_results[0]["output"] is None
+
+
+# ---- an upstream model failure must be a clear 502, not a bare 500 ------------
+def test_upstream_model_failure_returns_502(client_factory):
+    """When the model endpoint is unreachable, the OWN caller used to raise a raw urllib
+    error → the surface returned a bare 500 ("HTTP Error 500"). It must now be a 502 whose
+    message names the endpoint (the Worker is healthy; its model dependency is not)."""
+    cfg = {"harness": "openai",
+           "models": {"default": {"endpoint": "http://127.0.0.1:9/v1/chat/completions", "model": "m"}},
+           "tools": {"echo": "tools:echo"}}
+    c = client_factory(cfg)
+    r = c.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 502
+    assert "model endpoint" in r.json()["error"]
+
+
+# ---- a max_steps/budget stop must return clean text, not the raw model dict ----
+def test_last_text_extracts_text_from_model_message_dict():
+    """On a model-ended run (max_steps), an OWN model step's output is the raw assistant
+    message dict — the partial result must be its text, never the stringified dict, and a
+    tool-call-only message (no content) skips to the prior text."""
+    from airlock_agent.engine.events import StepEvent, StepType
+    from airlock_agent.engine.loop import _last_text
+
+    tool_only = {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}]}
+    history = [
+        StepEvent(index=0, type=StepType.MODEL, output="thinking about it"),
+        StepEvent(index=1, type=StepType.MODEL, output=tool_only),
+    ]
+    assert _last_text(history) == "thinking about it"  # skipped the tool-call-only dict
+
+    with_text = {"role": "assistant", "content": "the answer is 42"}
+    assert _last_text([StepEvent(index=0, type=StepType.MODEL, output=with_text)]) == "the answer is 42"
+
+
+# ---- run read/replay APIs must isolate by the AUTHENTICATED tenant ------------
+def test_run_apis_scope_to_authenticated_tenant_not_query_param(client_factory):
+    """Cross-tenant IDOR regression: a caller may only see/replay their OWN runs; a
+    client-supplied ?tenant= must NOT expose another tenant's runs."""
+    cfg = {"harness": "stub",
+           "auth": {"scheme": "api_key", "required": True},
+           "tenancy": {"keys": {"key-a": "acme", "key-b": "globex"}}}
+    c = client_factory(cfg)
+    A = {"x-api-key": "key-a"}
+    B = {"x-api-key": "key-b"}
+    c.post("/v1/chat/completions",
+           json={"messages": [{"role": "user", "content": "final: secret-a"}], "run_id": "ra"},
+           headers=A)
+    # globex must NOT see acme's run, even passing ?tenant=acme
+    assert "ra" not in [r["run_id"] for r in c.get("/v1/runs?tenant=acme", headers=B).json()["runs"]]
+    assert c.get("/v1/runs/ra?tenant=acme", headers=B).status_code == 404
+    assert c.post("/v1/runs/ra/resume?tenant=acme", headers=B).status_code == 404
+    # acme sees its own run with no query param at all
+    assert "ra" in [r["run_id"] for r in c.get("/v1/runs", headers=A).json()["runs"]]
