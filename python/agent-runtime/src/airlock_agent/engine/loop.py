@@ -323,7 +323,10 @@ def _run_wrapped(binding: Binding, messages: list[dict[str, Any]], ctx: RunConte
                       tokens=res.units, prompt_tokens=res.prompt_tokens,
                       completion_tokens=res.completion_tokens)
     ctx.emit(final)
-    res.steps = (res.steps or []) + [final]
+    # Match the OWN path's contract: result.steps is a list of dicts (runner.run and
+    # the trace layer call .get() on each). WRAP previously appended StepEvent objects.
+    prior = [s.to_dict() if isinstance(s, StepEvent) else s for s in (res.steps or [])]
+    res.steps = prior + [final.to_dict()]
     return res
 
 

@@ -455,7 +455,8 @@ def create_app(
         tenant = request.query_params.get("tenant", "default")
         limit = int(request.query_params.get("limit", "50"))
         runs = _runs_for(tenant)[:limit]
-        summary = [{k: r.get(k) for k in ("run_id", "session", "status", "tokens", "n_steps", "started")}
+        summary = [{k: r.get(k) for k in
+                    ("run_id", "session", "status", "stop_reason", "tokens", "n_steps", "started")}
                    for r in runs]
         return JSONResponse({"runs": summary})
 

@@ -90,9 +90,11 @@ class EngineRunner:
         ep = self.m.entrypoint()
         if not ep:
             return None
-        from .loader import load_entrypoint
+        from .loader import resolve_entrypoint
 
-        return load_entrypoint(ep)
+        # Call factory entrypoints (build_/make_/create_/get_) so the harness
+        # extractors receive the built agent object, not the uncalled factory.
+        return resolve_entrypoint(ep, self.harness)
 
     def _price_per_1k(self) -> float:
         default = self.pricing.get("default") or self.pricing.get("models", {}).get("default") or {}
@@ -148,6 +150,7 @@ class EngineRunner:
         run_id: str | None = None,
         on_step: Callable[[StepEvent], None] | None = None,
         replay: dict[int, dict] | None = None,
+        approval_id: str | None = None,
     ) -> AgentRunResult:
         # Input guard (epic 13) — before any model call.
         shaping.guard_input(messages, self.io_cfg.get("input_guards"))
@@ -191,7 +194,9 @@ class EngineRunner:
             run_id=run_id, session=session, tenant=tenant, max_steps=self.max_steps,
             models=callers,
             control_source=PolicyControlSource(
-                self.controls, run_id=run_id, store=scoped,
+                # approval_id stays stable across resume so a recorded decision is found
+                # under the original run's gate key (resume re-runs under a new run_id).
+                self.controls, run_id=(approval_id or run_id), store=scoped,
                 price_per_1k=self._price_per_1k(),
                 approval_window_s=float(self.controls.get("approval_window_s") or 0),
             ),
@@ -223,8 +228,12 @@ class EngineRunner:
                 status = "blocked"
             elif s.get("status") == "killed" or s.get("stop_reason"):
                 status = status if status == "blocked" else "stopped"
+        # Surface the stop reason (BUDGET_TOKENS / MAX_STEPS / AWAIT_APPROVAL / DENIED…)
+        # at the run level — it was only recorded on the boundary step before.
+        stop_reason = next((s.get("stop_reason") for s in reversed(steps) if s.get("stop_reason")), None)
         scoped.set(f"_runs/{run_id}", {
             "run_id": run_id, "session": session, "tenant": tenant, "status": status,
+            "stop_reason": stop_reason,
             "tokens": result.units, "content": result.content, "steps": steps,
             "messages": messages, "started": _now(), "n_steps": len(steps),
         })
@@ -257,7 +266,8 @@ class EngineRunner:
         replay = self._replay_from(entry.get("steps") or [])
         return self.run(entry.get("messages") or [], tenant=tenant,
                         session=session or entry.get("session", "default"),
-                        run_id=f"{run_id}-resume", on_step=on_step, replay=replay)
+                        run_id=f"{run_id}-resume", on_step=on_step, replay=replay,
+                        approval_id=run_id)
 
     def fork(self, run_id: str, at_step: int, *, tenant: str = "default",
              session: str | None = None, append: str | None = None,
@@ -271,7 +281,8 @@ class EngineRunner:
             messages = messages + [{"role": "user", "content": append}]
         return self.run(messages, tenant=tenant,
                         session=session or entry.get("session", "default"),
-                        run_id=f"{run_id}-fork{at_step}", on_step=on_step, replay=replay)
+                        run_id=f"{run_id}-fork{at_step}", on_step=on_step, replay=replay,
+                        approval_id=run_id)
 
 
 def _tool_hash(name: str, args: dict) -> str:

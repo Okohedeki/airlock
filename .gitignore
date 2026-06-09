@@ -48,3 +48,7 @@ tools/llama.cpp/
 **/.airlock/state.db
 **/.airlock/*.db
 python/agent-runtime/.venv312/
+
+# harness live-test virtualenvs (Plan: prove all harnesses)
+.venv-harness/
+.venv-crewai/

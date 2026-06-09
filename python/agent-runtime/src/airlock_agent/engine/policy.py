@@ -103,7 +103,10 @@ class PolicyControlSource(ControlSource):
                  "deadline": deadline, "gate_key": gate_key},
             )
             return ControlSignal(action="pause", reason=f"AWAIT_APPROVAL:{name}")
-        # A decision exists — apply it.
+        # A decision exists — apply it, then clear the parked entry + decision so the
+        # approval queue reflects resolution and the gate won't re-fire on a re-run.
+        self.store.delete(f"_held/{self.run_id}")
+        self.store.delete(gate_key)
         d = decision if isinstance(decision, dict) else {}
         verdict = d.get("decision")
         if verdict == "approve":
