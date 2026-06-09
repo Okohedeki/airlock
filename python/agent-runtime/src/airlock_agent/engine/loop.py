@@ -232,7 +232,10 @@ def _run_own(binding: Binding, messages: list[dict[str, Any]], ctx: RunContext) 
                 return _finish(history, "", total_tokens, pt, ct, StepStatus.BLOCKED)
             args = sig.override_args if (sig.action == "override" and sig.override_args) else action.args
             t0 = time.monotonic()
-            if sig.action == "override" and sig.override_result is not None:
+            if sig.action == "override" and not sig.override_args:
+                # override / skip: inject the operator's result (which may legitimately
+                # be None for `skip`) and do NOT run the tool. `edit` carries
+                # override_args instead and falls through to a real dispatch below.
                 result, status, err = sig.override_result, StepStatus.OK, None
             else:
                 try:

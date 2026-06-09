@@ -220,9 +220,26 @@ def create_app(
             return PlainTextResponse("\n".join(lines) + "\n")
         return JSONResponse(stats)
 
+    async def _read_json_object(request: Request):
+        """Parse a JSON *object* body. Returns (obj, None) on success, or
+        (None, 400-response) for malformed / empty / non-object bodies — so a bad
+        request never falls through to a 500."""
+        try:
+            body = await request.json()
+        except Exception:
+            return None, JSONResponse({"error": "request body must be valid JSON"}, status_code=400)
+        if not isinstance(body, dict):
+            return None, JSONResponse({"error": "request body must be a JSON object"}, status_code=400)
+        return body, None
+
     async def chat(request: Request):
-        body = await request.json()
+        body, err = await _read_json_object(request)
+        if err is not None:
+            return err
         messages = body.get("messages") or []
+        if not isinstance(messages, list) or not all(isinstance(m, dict) for m in messages):
+            return JSONResponse(
+                {"error": "'messages' must be a list of message objects"}, status_code=400)
         model = body.get("model") or name
         wants_stream = bool(body.get("stream"))
         send_steps = bool(body.get("stream_steps", wants_stream))
@@ -238,8 +255,11 @@ def create_app(
         try:
             await gate.acquire()
         except (QueueFull, asyncio.TimeoutError) as exc:
-            retry_after = getattr(exc, "retry_after", 0.0) or gate.stats().get("est_wait_s", 0.0)
-            headers = {"Retry-After": str(int(math.ceil(retry_after)))} if retry_after > 0 else {}
+            # Always advertise Retry-After on a 429. The wait estimate can be 0 on a
+            # cold burst (no run has finished yet, so EWMA is unknown) — fall back to
+            # 1s so clients always get a backoff hint, per the documented contract.
+            retry_after = getattr(exc, "retry_after", 0.0) or gate.stats().get("est_wait_s", 0.0) or 1.0
+            headers = {"Retry-After": str(max(1, int(math.ceil(retry_after))))}
             return JSONResponse({"error": "agent at capacity, retry shortly"}, status_code=429, headers=headers)
 
         run_call = _run_call(rnr, messages, tenant, session, run_id)
@@ -252,14 +272,15 @@ def create_app(
         try:
             result: AgentRunResult = await run_in_threadpool(run_call, messages, None)
         except InputRejected as exc:
-            gate.release()
             return JSONResponse({"error": exc.reason}, status_code=exc.status)
         except Exception as exc:
-            gate.release()
             return JSONResponse({"error": str(exc)}, status_code=500)
         finally:
-            if not wants_stream:
-                gate.release()
+            # Exactly one release per acquire — the `finally` covers the success AND
+            # the error returns above (a `return` in `except` still runs `finally`).
+            # Releasing in the except blocks too double-counted and drove the
+            # concurrency gauge negative, corrupting 429 admission control.
+            gate.release()
         headers: dict[str, str] = {}
         if result.units and result.units > 0:
             headers["X-Airlock-Units"] = str(result.units)
@@ -270,8 +291,10 @@ def create_app(
 
     # ---- /skills/<id> typed dispatch (epic 13) ------------------------------
     async def skill(request: Request, skill_id: str):
-        body = await request.json()
-        text = body.get("input") if isinstance(body, dict) else None
+        body, err = await _read_json_object(request)
+        if err is not None:
+            return err
+        text = body.get("input")
         messages = [{"role": "user", "content": text if isinstance(text, str) else json.dumps(body)}]
         try:
             rnr = _runner_for(request)
@@ -366,15 +389,22 @@ def create_app(
     async def decide(request: Request, run_id: str):
         if store is None:
             return JSONResponse({"error": "no state store"}, status_code=400)
-        body = await request.json()
+        body, err = await _read_json_object(request)
+        if err is not None:
+            return err
+        verdict = body.get("decision")
+        if verdict not in ("approve", "deny", "edit", "override", "skip"):
+            return JSONResponse(
+                {"error": "'decision' must be one of approve/deny/edit/override/skip"},
+                status_code=400)
         scoped = store.scoped(_tenant(request))
         held_entry = scoped.get(f"_held/{run_id}")
         if not held_entry:
             return JSONResponse({"error": "no such held run"}, status_code=404)
         gate_key = held_entry.get("gate_key") or f"_held/{run_id}/{held_entry.get('tool')}"
-        scoped.set(gate_key, {"decision": body.get("decision"), "args": body.get("args"),
+        scoped.set(gate_key, {"decision": verdict, "args": body.get("args"),
                               "result": body.get("result")})
-        return JSONResponse({"ok": True, "run": run_id, "decision": body.get("decision")})
+        return JSONResponse({"ok": True, "run": run_id, "decision": verdict})
 
     app.add_api_route("/v1/runs/{run_id}/decision", decide, methods=["POST"])
 
@@ -396,8 +426,16 @@ def create_app(
     async def fork(request: Request, run_id: str):
         if not hasattr(runner, "fork"):
             return JSONResponse({"error": "fork not supported"}, status_code=400)
-        body = await request.json()
-        at_step = int(body.get("at_step", 0))
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}  # fork has sensible defaults (at_step=0); empty body is fine
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "request body must be a JSON object"}, status_code=400)
+        try:
+            at_step = int(body.get("at_step", 0))
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "'at_step' must be an integer"}, status_code=400)
         tenant = request.query_params.get("tenant", "default")
         gate = _ensure_gate()
         await gate.acquire()
