@@ -1,6 +1,11 @@
 <h1 align="center">airlock</h1>
 
-<p align="center"><strong>The in-the-loop agent runtime.</strong><br/>Run any agent as a real service — and control every step from inside the loop.</p>
+<p align="center"><strong>ngrok for AI agents.</strong></p>
+
+<p align="center">
+  Expose any agent as a real service in dev, deploy it to your own cloud in prod,<br/>
+  and control every step, tool call, and dollar from inside the loop.
+</p>
 
 <p align="center">
   <a href="https://github.com/Okohedeki/airlock/releases">
@@ -25,29 +30,38 @@
 
 ---
 
-A gateway sits *in front* of an agent and proxies its traffic. **airlock runs *inside* the loop** — it executes the agent step by step, so you control every step, tool call, and dollar *as the run happens*. Take an agent built in **LangGraph, smolagents, CrewAI, the OpenAI Agents SDK, or the Claude Agent SDK**, declare it in one `worker.yaml`, and ship it behind an OpenAI-compatible URL. Self-hosted; the model stays yours.
+Point airlock at an agent you built in **LangGraph, smolagents, CrewAI, the OpenAI Agents SDK, or the Claude Agent SDK**, declare it in one `worker.yaml`, and get back an OpenAI-compatible URL anyone can call. It runs self-hosted, and the model stays yours.
+
+The difference is where airlock sits. Most gateways sit in front of an agent and proxy its traffic. airlock runs the loop itself, one step at a time, so you can act on any step while the run is still happening.
+
+```bash
+npm i -g @airlockhq/cli
+airlock init my-agent --detect    # finds your harness + entrypoint
+airlock up                        # local run + public URL + /console
+#   ✓ live at https://<name>.trycloudflare.com
+```
 
 ## Features
 
 ### 🔁 Control the loop
 
-The differentiator — only possible from inside the run, not from a gateway in front of it.
+Running the loop yourself is what unlocks the rest. A gateway in front of the agent can read the request and the response, and nothing in between.
 
-- **Operate any step** — pause, retry, resume, or kill at a specific step, not just the whole request.
-- **Loop guards** — cap max steps, catch runaway loops, and enforce the token/cost budget *during* the run, stopping it before it overshoots instead of billing you after.
+- **Operate any step** — pause, retry, resume, or kill at a specific step, not the whole request.
+- **Loop guards** — cap max steps, catch runaway loops, and enforce the token and cost budget during the run, so it stops before it overshoots rather than billing you after.
 - **Mid-run approval** — hold a step for human sign-off before a sensitive tool fires (send, pay, write), inject guidance, then continue.
-- **Per-step tool gating** — allow or deny a tool call from its actual arguments at the moment it runs (block the `DELETE`, not just the endpoint).
+- **Per-step tool gating** — allow or deny a tool call from its real arguments at the moment it runs. Inspect the `DELETE` payload, not only the route.
 - **Mid-run routing** — send a heavy reasoning step to a big model and a cheap classification step to a small one, inside one run.
-- **Mid-run fallback** — a tool or model fails at step 3? Swap to a backup and continue instead of failing the whole request.
-- **Checkpoint & resume** — snapshot state at each step; resume a failed run from the last good step instead of re-paying for the whole thing.
+- **Mid-run fallback** — when a tool or model fails at step 3, swap to a backup and continue instead of failing the whole request.
+- **Checkpoint & resume** — snapshot state at each step, then resume a failed run from the last good step instead of re-paying for the whole thing.
 - **Replay & fork** — re-run a past run deterministically, or fork it from step N with one thing changed.
-- **Tool-result reuse** — cache an expensive tool call and reuse it across runs, not just whole-response caching.
-- **Sandboxed execution** — every tool and code call runs isolated, so a bad or hijacked tool can't touch the host.
-- **Live step streaming & per-step cost** — watch each reasoning step and tool call as it happens, with exact cost and latency per step.
+- **Tool-result reuse** — cache an expensive tool call and reuse the result across runs, below the level of whole-response caching.
+- **Sandboxed execution** — every tool and code call runs isolated, so a hijacked tool can't reach the host.
+- **Live step streaming & per-step cost** — watch each reasoning step and tool call as it happens, with exact cost and latency on every step.
 
 ### 🧩 Compose the worker
 
-- **One `worker.yaml` manifest** — declarative and version-controlled; the worker is a file, not a pile of glue code.
+- **One `worker.yaml` manifest** — declarative and version-controlled. The worker is a file, not a pile of glue code.
 - **Built from parts** — bind the harness, tools, skills, and model in config; toggle skills on and off.
 - **Variants & profiles** — ship the same worker in several configurations from one manifest.
 - **Canary + instant rollback** — roll a new version out to a slice of traffic, then promote or revert in one command.
@@ -55,14 +69,14 @@ The differentiator — only possible from inside the run, not from a gateway in 
 ### 🚀 Deploy & expose
 
 - **One command to ship** — `airlock build` produces a reproducible Docker image; `airlock deploy --replicas N` runs a multi-container fleet behind the router.
-- **Internal = external** — flip the same worker from an internal service to a public URL with identical controls, no rewrite.
+- **Internal or external, same worker** — flip an internal service to a public URL with identical controls and no rewrite.
 - **Multi-tenant** — authenticate each caller, isolate state per tenant, and track usage from the same worker.
 - **Triggers** — fire on a signed webhook, not only on a direct call.
 - **Agentic sharding** — route across many worker variants behind one endpoint by capability, cost, or latency.
 
 ### 📐 Shape the contract
 
-- **Controlled input** — guard and validate inbound requests, rejecting junk or injection before the loop spends a token.
+- **Controlled input** — validate inbound requests and reject junk or injection before the loop spends a token.
 - **Controlled output** — enforce a schema, format, and redaction contract on every call so downstream code can trust the shape.
 
 ### 📊 Observe
@@ -82,7 +96,7 @@ airlock up                       # run locally + public URL + /console
 #   ✓ live at https://<name>.trycloudflare.com
 ```
 
-Any OpenAI client can call it — the agent runs its full native loop and returns the result:
+Any OpenAI client can call it. The agent runs its full native loop and returns the result:
 
 ```bash
 curl -s https://<name>.trycloudflare.com/v1/chat/completions \
@@ -99,11 +113,11 @@ airlock deploy --replicas 3 --canary   # multi-container fleet + canary slice
 airlock promote | rollback             # canary → 100%, or instant revert
 ```
 
-For a stable URL on your own domain: `airlock tunnel provision` then `airlock up --durable --hostname agent.example.com` ([durable hosting](./docs/durable-hosting.md)).
+For a stable URL on your own domain: `airlock tunnel provision`, then `airlock up --durable --hostname agent.example.com` ([durable hosting](./docs/durable-hosting.md)).
 
 ## Run with Docker Compose
 
-No toolchain to install — with only Docker, `docker compose up --build` builds the Python runtime and Node dashboard inside the images and starts both:
+With only Docker installed, `docker compose up --build` builds the Python runtime and Node dashboard inside the images and starts both:
 
 ```bash
 docker compose up --build
@@ -111,23 +125,23 @@ docker compose up --build
 #   dashboard → http://localhost:8787   (optional; GitHub login needs the OAuth env vars)
 ```
 
-The worker bundles the `live-demo` stub so it runs with no config. To run **your** worker, mount its dir over `/app/worker` (or uncomment the volume in `docker-compose.yml`):
+The worker bundles the `live-demo` stub, so it runs with no config. To run **your** worker, mount its directory over `/app/worker` (or uncomment the volume in `docker-compose.yml`):
 
 ```bash
 docker run -p 3000:3000 -v "$PWD/my-worker:/app/worker" airlock-worker:local
 ```
 
-State persists in named volumes (`worker-state`, `dashboard-data`). Set `OPENAI_API_KEY` / `OPENAI_API_BASE` for workers that call a real model.
+State persists in named volumes (`worker-state`, `dashboard-data`). Set `OPENAI_API_KEY` and `OPENAI_API_BASE` for workers that call a real model.
 
 ## Harnesses
 
-All five run as **OWN** bindings — airlock extracts the framework's tools and prompt and drives the loop itself, so every harness gets full step-control. `airlock init --detect` picks the harness and entrypoint from your deps — no adapter to write.
+All five run as **OWN** bindings: airlock extracts the framework's tools and prompt and drives the loop itself, so every harness gets full step-control. `airlock init --detect` picks the harness and entrypoint from your dependencies, with no adapter to write.
 
 `langgraph` · `smolagents` · `crewai` · `openai-agents` · `claude` — see [`examples/`](./examples/).
 
 ## You own the model
 
-airlock **never hosts inference** — a local gguf/vLLM or a remote `OPENAI_API_BASE`, your endpoint and your keys. airlock makes the calls and runs the loop. [`.env.example`](./.env.example) lists every variable it reads.
+airlock never hosts inference. Point it at a local gguf/vLLM or a remote `OPENAI_API_BASE` — your endpoint, your keys. airlock makes the calls and runs the loop. [`.env.example`](./.env.example) lists every variable it reads.
 
 ## Docs
 
