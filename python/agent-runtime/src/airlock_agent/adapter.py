@@ -1,6 +1,6 @@
 """The Binding contract — how a Harness plugs into the Airlock Loop Engine.
 
-Airlock owns the loop (ADR-0014). Instead of running the framework's opaque native
+Airlock owns the loop. Instead of running the framework's opaque native
 loop and returning only a final answer (the old `HarnessAdapter.run`), a Binding
 exposes the *pieces* of an agent so the engine can drive it step by step:
 

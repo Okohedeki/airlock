@@ -1,0 +1,2 @@
+Vendored from https://github.com/boraoztunc/skills (skill: ogilvy / ogilvy-copywriting).
+Third-party skill; see the upstream repository for licensing terms.

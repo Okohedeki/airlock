@@ -1,4 +1,4 @@
-"""The orchestrator loop — airlock owns the agent loop (ADR-0014, epic 01).
+"""The orchestrator loop — airlock owns the agent loop (epic 01).
 
 `run_loop(binding, messages, ctx)` runs:
 
@@ -106,25 +106,39 @@ def as_binding(obj: Any) -> Binding:
 
 
 def _coerce_args(tool: Callable[..., Any], args: dict[str, Any]) -> dict[str, Any]:
-    """Coerce args to the tool's annotated types — models often send numbers as
-    strings (e.g. "128"), which would silently misbehave (string concat, etc.)."""
+    """Coerce args to the tool's declared types — models (esp. small ones) often send
+    numbers as strings (e.g. "23"), which would silently misbehave (string concat, etc.).
+    Types come from the tool's signature AND, for EXTRACTED framework tools (whose wrapper
+    has an opaque **kw signature), the attached OpenAI `_airlock_schema` — so coercion is
+    uniform across harnesses, not just the ones that happen to coerce internally."""
     import inspect
 
     if not isinstance(args, dict):
         return args
+    types: dict[str, type] = {}
     try:
-        params = inspect.signature(tool).parameters
+        for name, p in inspect.signature(tool).parameters.items():
+            if p.annotation in (int, float, bool):
+                types[name] = p.annotation
     except (ValueError, TypeError):
-        return args
+        pass
+    schema = getattr(tool, "_airlock_schema", None)
+    if isinstance(schema, dict):
+        props = (schema.get("parameters") or {}).get("properties") or {}
+        _json_t = {"integer": int, "number": float, "boolean": bool}
+        for name, spec in props.items():
+            t = _json_t.get((spec or {}).get("type")) if isinstance(spec, dict) else None
+            if t and name not in types:
+                types[name] = t
     out = dict(args)
     for name, val in args.items():
-        ann = params.get(name).annotation if params.get(name) else None
+        t = types.get(name)
         try:
-            if ann is int and not isinstance(val, bool):
+            if t is int and not isinstance(val, bool):
                 out[name] = int(val)
-            elif ann is float:
+            elif t is float:
                 out[name] = float(val)
-            elif ann is bool and isinstance(val, str):
+            elif t is bool and isinstance(val, str):
                 out[name] = val.strip().lower() in ("1", "true", "yes")
         except (ValueError, TypeError):
             pass
@@ -232,7 +246,10 @@ def _run_own(binding: Binding, messages: list[dict[str, Any]], ctx: RunContext) 
                 return _finish(history, "", total_tokens, pt, ct, StepStatus.BLOCKED)
             args = sig.override_args if (sig.action == "override" and sig.override_args) else action.args
             t0 = time.monotonic()
-            if sig.action == "override" and sig.override_result is not None:
+            if sig.action == "override" and not sig.override_args:
+                # override / skip: inject the operator's result (which may legitimately
+                # be None for `skip`) and do NOT run the tool. `edit` carries
+                # override_args instead and falls through to a real dispatch below.
                 result, status, err = sig.override_result, StepStatus.OK, None
             else:
                 try:
@@ -323,14 +340,25 @@ def _run_wrapped(binding: Binding, messages: list[dict[str, Any]], ctx: RunConte
                       tokens=res.units, prompt_tokens=res.prompt_tokens,
                       completion_tokens=res.completion_tokens)
     ctx.emit(final)
-    res.steps = (res.steps or []) + [final]
+    # Match the OWN path's contract: result.steps is a list of dicts (runner.run and
+    # the trace layer call .get() on each). WRAP previously appended StepEvent objects.
+    prior = [s.to_dict() if isinstance(s, StepEvent) else s for s in (res.steps or [])]
+    res.steps = prior + [final.to_dict()]
     return res
 
 
 def _last_text(history: list[StepEvent]) -> str:
+    """The last human-readable content (for partial results on max_steps / budget stop).
+    An OWN model step's output is the raw assistant message dict — return its text, never
+    the stringified dict; skip tool-call-only messages (empty content) to the prior text."""
     for ev in reversed(history):
-        if ev.type in (StepType.FINAL, StepType.MODEL) and ev.output:
-            return str(ev.output)
+        if ev.type not in (StepType.FINAL, StepType.MODEL):
+            continue
+        out = ev.output
+        if isinstance(out, dict):
+            out = out.get("content")  # assistant message → its text, not `{'role': ...}`
+        if out:
+            return str(out)
     return ""
 
 

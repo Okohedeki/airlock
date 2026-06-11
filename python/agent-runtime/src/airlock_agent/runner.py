@@ -2,7 +2,7 @@
 
 This is where the engine seams meet the consumer epics: policy (02), routing &
 fallback (03), tool-result cache + snapshots (04), sandbox (06), trace/stream (05),
-and input/output shaping (13). Per-call isolation (ADR-0010): a fresh binding and
+and input/output shaping (13). Per-call isolation: a fresh binding and
 RunContext are built for every request.
 """
 
@@ -44,8 +44,9 @@ class EngineRunner:
         self.m = manifest
         self.store = store
         self.harness = manifest.harness()
-        self.tools = _filter_disabled_skills(manifest.tools(), manifest.skills())
         self.skills = manifest.skills()
+        self._disabled_tools = _disabled_skill_tools(self.skills)
+        self.tools = _filter_disabled_skills(manifest.tools(), self.skills)
         self.entrypoint = self._resolve_entrypoint()
         self.controls = manifest.controls()
         self.routing = manifest.routing()
@@ -90,9 +91,11 @@ class EngineRunner:
         ep = self.m.entrypoint()
         if not ep:
             return None
-        from .loader import load_entrypoint
+        from .loader import resolve_entrypoint
 
-        return load_entrypoint(ep)
+        # Call factory entrypoints (build_/make_/create_/get_) so the harness
+        # extractors receive the built agent object, not the uncalled factory.
+        return resolve_entrypoint(ep, self.harness)
 
     def _price_per_1k(self) -> float:
         default = self.pricing.get("default") or self.pricing.get("models", {}).get("default") or {}
@@ -148,13 +151,15 @@ class EngineRunner:
         run_id: str | None = None,
         on_step: Callable[[StepEvent], None] | None = None,
         replay: dict[int, dict] | None = None,
+        approval_id: str | None = None,
     ) -> AgentRunResult:
         # Input guard (epic 13) — before any model call.
         shaping.guard_input(messages, self.io_cfg.get("input_guards"))
 
         run_id = run_id or f"run_{uuid.uuid4().hex[:12]}"
         scoped = self.store.scoped(tenant)
-        binding = build_binding(self.harness, messages, tools=self.tools, entrypoint=self.entrypoint)
+        binding = build_binding(self.harness, messages, tools=self.tools,
+                                entrypoint=self.entrypoint, disabled=self._disabled_tools)
 
         # Give the model the schemas for the binding's ACTUAL tools (incl. framework
         # tools extracted per request), so it can emit tool_calls (tool-chaining).
@@ -191,7 +196,9 @@ class EngineRunner:
             run_id=run_id, session=session, tenant=tenant, max_steps=self.max_steps,
             models=callers,
             control_source=PolicyControlSource(
-                self.controls, run_id=run_id, store=scoped,
+                # approval_id stays stable across resume so a recorded decision is found
+                # under the original run's gate key (resume re-runs under a new run_id).
+                self.controls, run_id=(approval_id or run_id), store=scoped,
                 price_per_1k=self._price_per_1k(),
                 approval_window_s=float(self.controls.get("approval_window_s") or 0),
             ),
@@ -223,8 +230,12 @@ class EngineRunner:
                 status = "blocked"
             elif s.get("status") == "killed" or s.get("stop_reason"):
                 status = status if status == "blocked" else "stopped"
+        # Surface the stop reason (BUDGET_TOKENS / MAX_STEPS / AWAIT_APPROVAL / DENIED…)
+        # at the run level — it was only recorded on the boundary step before.
+        stop_reason = next((s.get("stop_reason") for s in reversed(steps) if s.get("stop_reason")), None)
         scoped.set(f"_runs/{run_id}", {
             "run_id": run_id, "session": session, "tenant": tenant, "status": status,
+            "stop_reason": stop_reason,
             "tokens": result.units, "content": result.content, "steps": steps,
             "messages": messages, "started": _now(), "n_steps": len(steps),
         })
@@ -257,7 +268,8 @@ class EngineRunner:
         replay = self._replay_from(entry.get("steps") or [])
         return self.run(entry.get("messages") or [], tenant=tenant,
                         session=session or entry.get("session", "default"),
-                        run_id=f"{run_id}-resume", on_step=on_step, replay=replay)
+                        run_id=f"{run_id}-resume", on_step=on_step, replay=replay,
+                        approval_id=run_id)
 
     def fork(self, run_id: str, at_step: int, *, tenant: str = "default",
              session: str | None = None, append: str | None = None,
@@ -271,7 +283,8 @@ class EngineRunner:
             messages = messages + [{"role": "user", "content": append}]
         return self.run(messages, tenant=tenant,
                         session=session or entry.get("session", "default"),
-                        run_id=f"{run_id}-fork{at_step}", on_step=on_step, replay=replay)
+                        run_id=f"{run_id}-fork{at_step}", on_step=on_step, replay=replay,
+                        approval_id=run_id)
 
 
 def _tool_hash(name: str, args: dict) -> str:
@@ -283,14 +296,20 @@ def _now() -> float:
     return time.time()
 
 
+def _disabled_skill_tools(skills: dict[str, dict]) -> set[str]:
+    """Tool names backed ONLY by disabled skills — i.e. the tools to remove. A tool
+    backing at least one ENABLED skill (or no skill at all) stays available."""
+    if not skills:
+        return set()
+    enabled = {s["tool"] for s in skills.values() if s.get("enabled", True)}
+    disabled = {s["tool"] for s in skills.values() if not s.get("enabled", True)}
+    return disabled - enabled
+
+
 def _filter_disabled_skills(
     tools: dict[str, Callable], skills: dict[str, dict]
 ) -> dict[str, Callable]:
     """Drop tools that are backed ONLY by disabled skills. Tools not referenced by any
     skill, and tools backing at least one enabled skill, stay available."""
-    if not skills:
-        return tools
-    enabled = {s["tool"] for s in skills.values() if s.get("enabled", True)}
-    disabled = {s["tool"] for s in skills.values() if not s.get("enabled", True)}
-    remove = disabled - enabled
-    return {n: fn for n, fn in tools.items() if n not in remove}
+    remove = _disabled_skill_tools(skills)
+    return {n: fn for n, fn in tools.items() if n not in remove} if remove else tools

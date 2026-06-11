@@ -1,0 +1,32 @@
+# langgraph-showcase — production showcase worker (OWN: airlock extracts the tools and drives the loop).
+worker:
+  name: langgraph-showcase
+  version: 1.0.0
+
+harness: langgraph
+entrypoint: agent:build_agent
+
+models:
+  default:
+    endpoint: "http://host.docker.internal:11434/v1/chat/completions"
+    model: local
+
+# Skills = tools, with an on/off switch (epic 07). `calc` (multiply) is ENABLED; `danger`
+# is DISABLED, so /skills/danger returns 403 AND the danger tool is dropped from the loop.
+skills:
+  calc:   { tool: multiply, enabled: true }
+  danger: { tool: danger,   enabled: false }
+
+controls:
+  max_steps: 8
+  budget:
+    tokens: 4000
+
+io:
+  output:
+    redact: [email]
+
+state:
+  backend: sqlite
+
+expose: public

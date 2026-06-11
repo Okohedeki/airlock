@@ -37,6 +37,18 @@ class InputRejected(ValueError):
         self.status = status
 
 
+class ModelCallError(RuntimeError):
+    """An upstream model endpoint failed (non-2xx, or unreachable). The Worker itself
+    is healthy — its model dependency is not — so the surface maps this to 502, with a
+    message that names the endpoint and the upstream status/reason instead of a bare 500."""
+
+    def __init__(self, reason: str, *, endpoint: str = "", status: int | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.endpoint = endpoint
+        self.status = status
+
+
 def redact(text: Any, classes: list[str] | None = None, rules: dict[str, str] | None = None) -> Any:
     """Mask sensitive substrings. Shared with epic-05 trace persistence."""
     if not isinstance(text, str):

@@ -1,4 +1,4 @@
-"""The Airlock Loop Engine — airlock owns the agent loop (ADR-0014, epic 01).
+"""The Airlock Loop Engine — airlock owns the agent loop (epic 01).
 
 The engine runs `assemble → model-call → parse action → tool-dispatch → StepEvent
 → consult ControlSignal → repeat` so the Operator can control every step. This is

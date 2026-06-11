@@ -14,12 +14,15 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import time
+import urllib.error
 import urllib.request
 from typing import Any, Callable
 
 from ..adapter import AgentRunResult, ControlMode
 from ..engine.events import StepEvent, StepType
 from ..engine.loop import ModelResult
+from ..io import ModelCallError
 from ..engine.planner import Action, Finish, ModelCall, ToolCall
 
 
@@ -69,9 +72,35 @@ def http_model_caller(endpoint: str, model: str, env_key: str = "OPENAI_API_KEY"
         key = os.environ.get(env_key)
         if key:
             headers["Authorization"] = f"Bearer {key}"
-        req = urllib.request.Request(endpoint, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read().decode())
+        # One transient retry — model calls are idempotent (no side effects), so a 5xx
+        # or a dropped connection is worth a second attempt before surfacing a clear,
+        # typed error (mapped to 502 by the surface) instead of a bare 500.
+        data = None
+        last_exc: ModelCallError | None = None
+        for attempt in range(2):
+            try:
+                req = urllib.request.Request(endpoint, data=body, headers=headers, method="POST")
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    data = json.loads(resp.read().decode())
+                break
+            except urllib.error.HTTPError as exc:  # non-2xx from the model endpoint
+                try:
+                    detail = exc.read().decode("utf-8", "replace").strip()[:300]
+                except Exception:
+                    detail = exc.reason or ""
+                last_exc = ModelCallError(
+                    f"model endpoint {endpoint} returned HTTP {exc.code}: {detail}",
+                    endpoint=endpoint, status=exc.code)
+                if exc.code < 500:  # a 4xx won't change on retry — fail fast
+                    raise last_exc
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:  # unreachable
+                last_exc = ModelCallError(
+                    f"model endpoint {endpoint} unreachable: {getattr(exc, 'reason', exc)}",
+                    endpoint=endpoint)
+            if attempt == 0:
+                time.sleep(0.5)
+        if data is None:
+            raise last_exc or ModelCallError(f"model endpoint {endpoint} call failed", endpoint=endpoint)
         choice = (data.get("choices") or [{}])[0]
         msg = choice.get("message", {})
         usage = data.get("usage", {})

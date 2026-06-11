@@ -68,3 +68,23 @@ def test_claude_extract():
     import cl_agent
 
     _check(extract_claude(cl_agent.tools)[0])
+
+
+def test_disabled_skill_drops_extracted_framework_tool():
+    """A disabled skill must remove its tool from the loop for EXTRACTED framework
+    tools too (not just declared `tools:`). Regression for the skills-on/off uniformity
+    fix: build_binding(..., disabled={...}) filters the merged tool map."""
+    pytest.importorskip("langgraph")
+    pytest.importorskip("langchain_openai")
+    import lg_agent
+
+    from airlock_agent.harnesses import build_binding
+
+    msgs = [{"role": "user", "content": "hi"}]
+    # enabled (no disabled set) → the extracted tool is available to the loop
+    assert "get_secret" in build_binding("langgraph", msgs, entrypoint=lg_agent.agent).tools()
+    # disabled → the extracted tool is dropped from the loop
+    dropped = build_binding(
+        "langgraph", msgs, entrypoint=lg_agent.agent, disabled={"get_secret"}
+    ).tools()
+    assert "get_secret" not in dropped
