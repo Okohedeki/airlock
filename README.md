@@ -21,38 +21,57 @@ Pick what you are interested in:
 <h2>Quickstart</h2>
 </summary>
 
-The fastest path needs only Docker. It builds the Python runtime and the dashboard and starts both:
+The whole point of airlock is a controlled agent **on the public web** — not a localhost toy. So the headline path runs your worker and gives it a real public URL:
 
 ```bash
-docker compose up --build
-#   worker    → http://localhost:3000   (/console, /v1/chat/completions, /skills/*, /metrics, /healthz)
-#   dashboard → http://localhost:8787   (optional web UI; GitHub login needs OAuth env vars)
+cd examples/live-demo
+airlock up                       # boots the worker AND opens a real Cloudflare tunnel
+#   ✓ live at        https://<rand>.trycloudflare.com   ← a real public address, no CF account
+#   callers POST to: https://<rand>.trycloudflare.com/v1/chat/completions
+#   console:         http://localhost:3000/console      ← watch every step live
 ```
 
-The worker ships with a no-model demo, so it runs out of the box. Open `http://localhost:3000/console` to watch a run step by step.
-
-Call it over plain HTTP — the agent runs its full loop and returns the result:
+Now call it **over the public internet** — try it from your phone:
 
 ```bash
-curl -s http://localhost:3000/v1/chat/completions \
+export PUBLIC=https://<rand>.trycloudflare.com
+curl -s $PUBLIC/v1/chat/completions \
   -H 'content-type: application/json' \
   -d '{"messages":[{"role":"user","content":"what is 23 times 19?"}]}'
 # → {"choices":[{"message":{"role":"assistant","content":"437"}}], ...}
 ```
 
-To run **your** agent with the CLI:
+**Prove the whole control surface on that public URL** — one command drives a real model loop,
+tool gating, mid-run approval, skill ACLs and streaming over the tunnel, and saves a dated
+transcript under [`docs/proof/`](./docs/proof/):
 
 ```bash
-npm i -g @airlockhq/cli
-airlock init my-agent --detect   # detect your framework + entrypoint
-# write a worker.yaml (see examples/), then:
-airlock up                       # run locally, open a public URL, serve /console
-#   ✓ live at https://<name>.trycloudflare.com
+bash scripts/live-proof.sh        # → PROVED on the public web: https://<rand>.trycloudflare.com
 ```
+
+To run **your** agent: `npm i -g @airlockhq/cli`, then `airlock init my-agent --detect` (detects
+your framework + entrypoint), write a `worker.yaml` (see [`examples/`](./examples/)), and
+`airlock up`. Flip `expose: internal` to keep it private — same worker, same controls, no rebuild.
+
+<details>
+<summary><b>Local / hermetic path (offline, no tunnel)</b></summary>
+
+For CI or offline work, skip the tunnel and use Docker + localhost:
+
+```bash
+docker compose up --build
+#   worker    → http://localhost:3000   (/console, /v1/chat/completions, /skills/*, /metrics, /healthz)
+#   dashboard → http://localhost:8787   (optional web UI; GitHub login needs OAuth env vars)
+# or, no tunnel, native:  airlock up --no-tunnel   → http://localhost:3000
+```
+
+The worker ships with a no-model demo, so it runs out of the box. This is the deterministic path the hermetic test suite uses — the public URL above is the product.
 
 </details>
 
-Only Docker required — the worker comes up with a demo agent and the operator console, no toolchain to install.
+</details>
+
+A self-contained overview of the platform lives in [`site/index.html`](./site/index.html); the live operator console ships at `/console` on every running worker.
 
 <details id="manifest">
 <summary>

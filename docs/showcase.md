@@ -4,6 +4,13 @@ This is a **production-grade, runnable example per harness**, each demonstrating
 full control surface and **skills on/off**, backed by a **real local LLM** and a
 **containerized test runner** that proves every harness green.
 
+> **Prove it on the public web — not just localhost.** The container grid below runs on an
+> internal Docker network (ports 3101–3106) for a hermetic, repeatable matrix. To see the
+> *product* — a worker exposed on a real public URL — run **`bash scripts/live-proof.sh`**: it
+> boots a real model loop, opens a Cloudflare tunnel, drives the whole control surface over the
+> public `https://<rand>.trycloudflare.com` address, and saves a dated transcript under
+> [`docs/proof/`](./proof/). The localhost ports here are the CI view; the public URL is the point.
+
 Each example is a complete worker: `examples/<harness>/` holds `agent.py` (the harness's tools
 + factory), `requirements.txt` (the framework), and `worker.yaml` (the production manifest —
 models, skills, controls, io, state). One container per harness keeps each framework's
