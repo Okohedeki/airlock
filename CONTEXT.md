@@ -231,6 +231,15 @@ exposed, say Worker.
 - The project: `airlock` is the name of this whole repo.
 Context disambiguates.
 
+**"Gateway"**:
+Colloquial "gateway to the web" means a Worker's **public reach** — that is **Expose** +
+**Tunnel** (`expose: public` opens a Cloudflare **Tunnel** to a real public URL), *not* a new
+concept. Avoid "gateway" as a noun for an airlock component: it is the word for the
+**front-of-agent** competitor the moat contrasts against ("a front-of-agent gateway
+structurally cannot copy" controlling the loop), and **Fleet Router** already lists
+`_Avoid_: Gateway`. When you mean "reachable on the public internet," say **Expose** / public
+**Tunnel**.
+
 **"Runtime" is now the correct framing.** airlock *is* an in-the-loop agent runtime:
 it owns the loop and holds per-step state and production traffic by design. (This
 reverses the previous glossary, which forbade "runtime" and asserted "never holds
