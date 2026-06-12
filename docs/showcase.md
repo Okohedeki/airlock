@@ -44,11 +44,15 @@ The showcase drives a **real** OpenAI-compatible, tool-calling model on the host
 `:11434`. For example, with llama.cpp:
 
 ```bash
-llama-server -m ./models/Qwen2.5-3B-Instruct-Q4_K_M.gguf --port 11434 --jinja
+llama-server -m ./models/Qwen2.5-3B-Instruct-Q4_K_M.gguf --port 11434 \
+  --host 0.0.0.0 --jinja --alias local --parallel 6 --cont-batching -c 8192
 ```
 
-A 3B+ model that supports tool/function calling is recommended (a 1B flails at tool use).
-Containers reach the host via `host.docker.internal`.
+A 3B+ model that supports tool/function calling is **required** — a 1B flails at tool use (it
+emits malformed tool-call JSON that the server rejects, and loops without ever stating the
+answer). `--parallel 6 --cont-batching` matters: the six harness containers hit this one server
+concurrently, so without parallel slots some calls queue out and surface as 502s. With the
+above, all **41 grid tests pass**. Containers reach the host via `host.docker.internal`.
 
 To point at a different OpenAI-compatible endpoint instead, edit `OPENAI_API_BASE` in
 `docker-compose.showcase.yml` (and each `worker.yaml` `models.default.endpoint`).
