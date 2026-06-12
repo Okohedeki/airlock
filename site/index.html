@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>airlock — the in-the-loop agent runtime</title>
+<meta name="description" content="airlock runs any AI agent as a controlled HTTP service on your own hardware — and drives the agent's loop itself, so you cap the spend, hold risky actions for a human, route any step, and expose the same worker on a public URL. Apache-2.0, self-hosted, harness-agnostic." />
+<meta property="og:title" content="airlock — the in-the-loop agent runtime" />
+<meta property="og:description" content="Own every step your agent takes. Budget caps, approval gates, model routing, sandboxing — then flip the same worker to a public URL. Six frameworks, one runtime." />
+<meta property="og:type" content="website" />
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c232c; --line:#30363d; --fg:#e6edf3;
+    --mut:#8b949e; --accent:#58a6ff; --teal:#2dd4bf; --ok:#3fb950; --warn:#d29922;
+    --err:#f85149; --blocked:#bc8cff; --maxw:1080px;
+  }
+  * { box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:15px/1.65 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+         -webkit-font-smoothing:antialiased; }
+  code, .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  .wrap { max-width:var(--maxw); margin:0 auto; padding:0 22px; }
+  .mut { color:var(--mut); }
+  .teal { color:var(--teal); }
+
+  /* header */
+  header.top { position:sticky; top:0; z-index:10; background:rgba(13,17,23,.82);
+    backdrop-filter:blur(8px); border-bottom:1px solid var(--line); }
+  header.top .wrap { display:flex; align-items:center; gap:18px; height:56px; }
+  .brand { font-weight:800; letter-spacing:.02em; font-size:16px; display:flex; align-items:center; gap:8px; }
+  .brand .glyph { color:var(--teal); }
+  header.top nav { margin-left:auto; display:flex; gap:20px; align-items:center; }
+  header.top nav a { color:var(--mut); font-size:14px; }
+  header.top nav a:hover { color:var(--fg); text-decoration:none; }
+  .btn { display:inline-block; border:1px solid var(--line); background:var(--panel);
+    color:var(--fg); padding:8px 15px; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; }
+  .btn:hover { border-color:var(--mut); text-decoration:none; }
+  .btn.primary { background:var(--teal); color:#06231f; border-color:var(--teal); }
+  .btn.primary:hover { background:#5eead4; }
+
+  /* hero */
+  .hero { padding:84px 0 56px; border-bottom:1px solid var(--line);
+    background:
+      radial-gradient(60% 80% at 80% -10%, rgba(45,212,191,.10), transparent 60%),
+      radial-gradient(50% 60% at 0% 0%, rgba(88,166,255,.08), transparent 55%); }
+  .pill { display:inline-block; font-size:12px; color:var(--teal); border:1px solid #2dd4bf55;
+    background:#2dd4bf12; padding:4px 11px; border-radius:999px; margin-bottom:22px; letter-spacing:.02em; }
+  .hero h1 { font-size:clamp(32px,5vw,52px); line-height:1.08; margin:0 0 18px; font-weight:800; letter-spacing:-.02em; }
+  .hero h1 .em { background:linear-gradient(92deg,var(--teal),var(--accent)); -webkit-background-clip:text;
+    background-clip:text; color:transparent; }
+  .hero .lead { font-size:clamp(17px,2.2vw,21px); color:#c9d4e0; max-width:760px; margin:0 0 30px; }
+  .hero .cta { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  .hero .sub { margin-top:18px; font-size:13px; }
+
+  section { padding:64px 0; border-bottom:1px solid var(--line); }
+  h2.sec { font-size:13px; text-transform:uppercase; letter-spacing:.12em; color:var(--teal); margin:0 0 8px; }
+  h3.big { font-size:clamp(24px,3.2vw,32px); margin:0 0 14px; font-weight:800; letter-spacing:-.01em; }
+  .sec-lead { color:#c9d4e0; max-width:720px; font-size:17px; margin:0 0 34px; }
+
+  .grid { display:grid; gap:16px; }
+  .g3 { grid-template-columns:repeat(3,1fr); }
+  .g2 { grid-template-columns:repeat(2,1fr); }
+  @media (max-width:860px){ .g3,.g2 { grid-template-columns:1fr; } header.top nav a.navlink{display:none;} }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; }
+  .card h4 { margin:0 0 7px; font-size:16px; }
+  .card.feat .ic { width:30px;height:30px;border-radius:8px;display:grid;place-items:center;
+    background:#2dd4bf16; color:var(--teal); margin-bottom:12px; font-size:16px; }
+  .card p { margin:0; color:var(--mut); font-size:14.5px; }
+
+  /* split */
+  .split { display:grid; grid-template-columns:1.05fr 1fr; gap:40px; align-items:center; }
+  @media (max-width:860px){ .split { grid-template-columns:1fr; gap:26px; } }
+  ul.checks { list-style:none; padding:0; margin:18px 0 0; }
+  ul.checks li { padding:7px 0 7px 28px; position:relative; color:#c9d4e0; }
+  ul.checks li::before { content:"▸"; color:var(--teal); position:absolute; left:6px; }
+  ul.checks li b { color:var(--fg); }
+
+  /* console-style step trace */
+  .console { background:#0a0e14; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .console .bar { display:flex; align-items:center; gap:8px; padding:9px 13px; border-bottom:1px solid var(--line);
+    background:var(--panel); font-size:12px; color:var(--mut); }
+  .console .bar .d { width:10px;height:10px;border-radius:50%; }
+  .console .body { padding:13px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; }
+  .step { display:flex; gap:10px; align-items:flex-start; padding:8px 10px; border:1px solid var(--line);
+    border-left:3px solid var(--mut); border-radius:7px; margin:7px 0; background:var(--panel); }
+  .step.model { border-left-color:var(--accent); }
+  .step.tool { border-left-color:var(--ok); }
+  .step.final { border-left-color:var(--fg); }
+  .step.killed { border-left-color:var(--err); }
+  .step.blocked { border-left-color:var(--blocked); }
+  .step .idx { color:var(--mut); min-width:22px; }
+  .step .ty { font-weight:700; }
+  .step .meta { color:var(--mut); font-size:11.5px; }
+  .badge { font-size:10.5px; padding:1px 7px; border-radius:10px; border:1px solid var(--line); color:var(--mut); }
+  .badge.ok { color:var(--ok); border-color:var(--ok); }
+  .badge.killed { color:var(--err); border-color:var(--err); }
+  .badge.blocked { color:var(--blocked); border-color:var(--blocked); }
+
+  /* harness matrix */
+  table.matrix { width:100%; border-collapse:collapse; font-size:14px; }
+  table.matrix th, table.matrix td { text-align:left; padding:11px 12px; border-bottom:1px solid var(--line); }
+  table.matrix th { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.06em; }
+  table.matrix td.mono { font-family:ui-monospace,Menlo,monospace; }
+  .tag { font-size:11px; padding:2px 9px; border-radius:999px; border:1px solid var(--line); white-space:nowrap; }
+  .tag.own { color:var(--ok); border-color:#3fb95055; background:#3fb95012; }
+  .tag.wrap { color:var(--warn); border-color:#d2992255; background:#d2992212; }
+  .tag.term { color:var(--mut); }
+
+  /* code block */
+  pre.code { background:#0a0e14; border:1px solid var(--line); border-radius:12px; padding:18px;
+    overflow:auto; font-size:13px; line-height:1.6; }
+  pre.code .c { color:var(--mut); } pre.code .k { color:var(--teal); } pre.code .s { color:#a5d6ff; }
+  .steps-num { counter-reset:s; display:grid; gap:14px; }
+  .stepn { display:flex; gap:14px; align-items:flex-start; }
+  .stepn .n { flex:none; width:26px;height:26px;border-radius:50%; border:1px solid var(--teal); color:var(--teal);
+    display:grid;place-items:center; font-size:13px; font-weight:700; }
+
+  footer { padding:40px 0; color:var(--mut); font-size:13.5px; }
+  footer .wrap { display:flex; gap:18px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <span class="brand"><span class="glyph">▲</span> airlock</span>
+    <nav>
+      <a class="navlink" href="#how">How it works</a>
+      <a class="navlink" href="#control">Control surface</a>
+      <a class="navlink" href="#harness">Harnesses</a>
+      <a class="navlink" href="#expose">Expose</a>
+      <a href="https://github.com/Okohedeki/airlock">GitHub</a>
+      <a class="btn" href="#start">Quickstart</a>
+    </nav>
+  </div>
+</header>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="wrap">
+    <span class="pill">▲ in-the-loop agent runtime · Apache-2.0 · self-hosted</span>
+    <h1>Own <span class="em">every step</span> your agent takes.</h1>
+    <p class="lead">
+      You built an agent. It works in a notebook. Putting it in front of real callers is the hard part.
+      airlock runs the agent you already built as an HTTP service on your own hardware — and it doesn't sit
+      <em>in front of</em> the agent, it <b>drives the agent's loop itself</b>. So you can cap the spend, hold a
+      risky action for a human, route or retry a single step, and watch every move as it happens.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="#start">Run it in 60 seconds</a>
+      <a class="btn" href="#how">See how it works</a>
+      <a class="btn" href="https://github.com/Okohedeki/airlock">★ Star on GitHub</a>
+    </div>
+    <p class="sub mut">Six frameworks, one runtime · the same worker internal or public · the model stays yours (airlock never hosts inference)</p>
+  </div>
+</div>
+
+<!-- THE IDEA -->
+<section id="how">
+  <div class="wrap">
+    <div class="split">
+      <div>
+        <h2 class="sec">The keystone</h2>
+        <h3 class="big">Control the loop — a gateway can't.</h3>
+        <p class="sec-lead">
+          Most "agent gateways" sit in front of a black-box loop: they see the request and the final answer, nothing
+          in between. airlock is a <b>runtime</b>. Its Loop Engine makes the model calls and dispatches the tools
+          <em>itself</em>, emitting a <code>StepEvent</code> per iteration and consuming <code>ControlSignal</code>s
+          between steps. That's the only place step-level control exists — and it's why a front-of-agent gateway
+          structurally can't copy it.
+        </p>
+        <ul class="checks">
+          <li><b>model → tool_result → final</b>, one ordered step at a time</li>
+          <li>Every step carries <b>tokens, cost, duration, status</b> — recorded live</li>
+          <li>Between any two steps: <b>continue · pause · retry · kill · override</b></li>
+        </ul>
+      </div>
+      <div class="console" aria-label="example step trace">
+        <div class="bar"><span class="d" style="background:#f85149"></span><span class="d" style="background:#d29922"></span><span class="d" style="background:#3fb950"></span>
+          <span style="margin-left:6px">POST /v1/chat/completions · run live</span></div>
+        <div class="body">
+          <div class="step model"><span class="idx">#0</span><div><span class="ty">model</span> <span class="badge ok">ok</span><div class="meta">binding=primary · 38 tok · 410ms</div></div></div>
+          <div class="step tool"><span class="idx">#1</span><div><span class="ty">tool_result</span> <span class="badge ok">ok</span><div class="meta">multiply(23,19) → 437 · sandboxed · 12ms</div></div></div>
+          <div class="step blocked"><span class="idx">#2</span><div><span class="ty">tool_call</span> <span class="badge blocked">held</span><div class="meta">send → awaiting human approval</div></div></div>
+          <div class="step killed"><span class="idx">#3</span><div><span class="ty">tool_call</span> <span class="badge killed">killed</span><div class="meta">echo "rm -rf /" → denied by tool gate</div></div></div>
+          <div class="step final"><span class="idx">#4</span><div><span class="ty">final</span> <span class="badge ok">ok</span><div class="meta">email redacted · 1,204 tok total</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CONTROL SURFACE -->
+<section id="control">
+  <div class="wrap">
+    <h2 class="sec">Control surface</h2>
+    <h3 class="big">Production controls, applied per step.</h3>
+    <p class="sec-lead">Declared once in <code>worker.yaml</code>, enforced by the engine on every iteration of the loop.</p>
+    <div class="grid g3">
+      <div class="card feat"><div class="ic">⏿</div><h4>Budget &amp; step caps</h4><p>Hard token / step / dollar ceilings. A run that blows the budget stops mid-loop with a recorded <code>stop_reason</code> — not after the bill.</p></div>
+      <div class="card feat"><div class="ic">⛋</div><h4>Tool gating &amp; approval</h4><p>Gate a tool by its arguments, or hold a side-effecting call for a human to approve, deny, edit, or override — then resume the exact run.</p></div>
+      <div class="card feat"><div class="ic">⇄</div><h4>Model routing &amp; fallback</h4><p>A per-run default, whole-run variant switching, and automatic retry-then-backup when a model binding fails. Heavy step to a big model, cheap step to a small one.</p></div>
+      <div class="card feat"><div class="ic">▤</div><h4>Sandboxed execution</h4><p>Every tool runs in a subprocess with CPU / memory / wall-clock limits and no host network unless you grant it. A runaway tool is killed, not trusted.</p></div>
+      <div class="card feat"><div class="ic">◷</div><h4>State, cache &amp; resume</h4><p>Pluggable state store (SQLite by default) keyed tenant-first. Tool-result cache, session continuity, and resume / fork of a paused run.</p></div>
+      <div class="card feat"><div class="ic">⛨</div><h4>I/O contract</h4><p>Input guards (prompt-injection denylist) reject before any model call; output redaction scrubs the answer. Typed <code>/skills/&lt;id&gt;</code> surface with on/off ACLs.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- HARNESS MATRIX -->
+<section id="harness">
+  <div class="wrap">
+    <h2 class="sec">Harness-agnostic</h2>
+    <h3 class="big">Bring the framework you already use.</h3>
+    <p class="sec-lead">
+      airlock extracts a framework's tools, planner, and prompt assembly and runs the loop itself — so the
+      <b>full</b> control set applies no matter who wrote the agent. How much control a harness gets is
+      <em>feature-derived</em>: it depends on how much of the loop airlock can own.
+    </p>
+    <table class="matrix">
+      <thead><tr><th>Harness</th><th>What it is</th><th>Control mode</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">langgraph</td><td>LangGraph agents</td><td><span class="tag own">OWN · full control</span></td></tr>
+        <tr><td class="mono">smolagents</td><td>HF smolagents</td><td><span class="tag own">OWN · full control</span></td></tr>
+        <tr><td class="mono">crewai</td><td>CrewAI crews</td><td><span class="tag own">OWN · full control</span></td></tr>
+        <tr><td class="mono">openai-agents</td><td>OpenAI Agents SDK</td><td><span class="tag own">OWN · full control</span></td></tr>
+        <tr><td class="mono">claude</td><td>Claude Agent SDK</td><td><span class="tag own">OWN · full control</span></td></tr>
+        <tr><td class="mono">openai</td><td>airlock's own loop over any OpenAI-compatible endpoint</td><td><span class="tag own">OWN · full control</span></td></tr>
+        <tr><td class="mono">stub</td><td>deterministic, scriptable test binding</td><td><span class="tag own">OWN · full control</span></td></tr>
+        <tr><td class="mono">custom</td><td>your own callable, or a <code>Planner</code></td><td><span class="tag term">Terminal / WRAP · observe-only*</span></td></tr>
+      </tbody>
+    </table>
+    <p class="mut" style="font-size:13px;margin-top:12px">*A plain <code>custom</code> callable is opaque, so airlock sees only the final result. Implement the <code>Planner</code> protocol or expose extractable tools and it becomes <span class="tag own" style="font-size:10px">OWN</span> — the full control set applies.</p>
+  </div>
+</section>
+
+<!-- EXPOSE -->
+<section id="expose">
+  <div class="wrap">
+    <div class="split">
+      <div>
+        <h2 class="sec">Internal = external</h2>
+        <h3 class="big">Flip the same worker to the public web.</h3>
+        <p class="sec-lead">
+          A worker runs as a stable internal service other agents and apps call. Set <code>expose: public</code>
+          and airlock opens a Cloudflare <b>Tunnel</b> — the same worker, same routes, same controls, now on a real
+          public <code>https://</code> URL. No rebuild. Internal vs external differs only in network binding + auth.
+        </p>
+        <ul class="checks">
+          <li><b>Internal:</b> a stable service in your private network</li>
+          <li><b>Public:</b> a real <code>*.trycloudflare.com</code> URL (zero account) or your own domain (durable tunnel)</li>
+          <li>The model stays yours — airlock <b>never hosts inference</b></li>
+        </ul>
+      </div>
+      <div>
+        <pre class="code"><span class="c"># the same worker.yaml — one line decides reach</span>
+<span class="k">harness</span>: openai
+<span class="k">expose</span>: public        <span class="c"># ← internal | public</span>
+
+<span class="k">controls</span>:
+  <span class="k">budget</span>: { <span class="k">tokens</span>: <span class="s">40000</span> }
+  <span class="k">approvals</span>: [{ <span class="k">tool</span>: send }]
+
+<span class="c"># then:</span>
+<span class="s">$ airlock up</span>
+<span class="c">✓ live at  https://&lt;rand&gt;.trycloudflare.com</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- QUICKSTART -->
+<section id="start">
+  <div class="wrap">
+    <h2 class="sec">Quickstart</h2>
+    <h3 class="big">From clone to a public agent.</h3>
+    <div class="split" style="align-items:start">
+      <div class="steps-num">
+        <div class="stepn"><span class="n">1</span><div><b>Describe the worker.</b> One <code>worker.yaml</code>: harness, model bindings, tools/skills, controls, and <code>expose</code>.</div></div>
+        <div class="stepn"><span class="n">2</span><div><b>Run it.</b> <code>airlock up</code> boots the worker on your hardware and opens a real Cloudflare quick tunnel — no account needed.</div></div>
+        <div class="stepn"><span class="n">3</span><div><b>Watch it.</b> Open <code>/console</code> to drive a run step-by-step, inspect traces, and clear approval holds live.</div></div>
+        <div class="stepn"><span class="n">4</span><div><b>Prove it.</b> <code>bash scripts/live-proof.sh</code> drives the whole control surface over the public URL and saves a dated transcript.</div></div>
+      </div>
+      <div>
+        <pre class="code"><span class="c"># install the runtime + CLI</span>
+<span class="s">$ cd python/agent-runtime && pip install -e ".[dev]"</span>
+<span class="s">$ cd packages/cli && npm install && npm run build</span>
+
+<span class="c"># boot a worker + go public</span>
+<span class="s">$ cd examples/live-demo && airlock up</span>
+<span class="c">✓ live at  https://&lt;rand&gt;.trycloudflare.com</span>
+<span class="c">  console:  http://localhost:3000/console</span>
+
+<span class="c"># prove the whole surface on the public web</span>
+<span class="s">$ bash scripts/live-proof.sh</span></pre>
+        <div style="margin-top:14px" class="row">
+          <a class="btn primary" href="https://github.com/Okohedeki/airlock">Get airlock on GitHub</a>
+          <a class="btn" href="https://github.com/Okohedeki/airlock-showcase">See the 6-harness showcase</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span><span class="teal">▲ airlock</span> — an in-the-loop agent runtime. Apache-2.0. The model stays yours.</span>
+    <span><a href="https://github.com/Okohedeki/airlock">GitHub</a> · <a href="#how">How it works</a> · <a href="#start">Quickstart</a></span>
+  </div>
+</footer>
+
+</body>
+</html>

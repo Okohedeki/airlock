@@ -80,6 +80,7 @@ cleanup() {
     echo ">> --keep: leaving worker (pid $UP_PID) + tunnel running. Ctrl-C to stop."
     wait "$UP_PID" 2>/dev/null
   fi
+  [ -n "${DEV_PID:-}" ] && kill "$DEV_PID" 2>/dev/null
   [ -n "$UP_PID" ] && kill "$UP_PID" 2>/dev/null
   [ -n "$MODEL_PID" ] && kill "$MODEL_PID" 2>/dev/null
   if [ "$RESTORE_WORKER" = "1" ]; then
@@ -113,30 +114,56 @@ else
   sleep 1
 fi
 
-# --- boot the worker + open the public tunnel --------------------------------------------
+# --- 1) boot the worker locally (reliable) -----------------------------------------------
+# We DECOUPLE the worker from the tunnel: `airlock up` can do both in one command for
+# interactive use, but free Cloudflare quick-tunnel hostnames propagate flakily (some never
+# resolve). So we boot the worker once and then open a tunnel with retry — restarting the
+# *tunnel* (not the worker) until a hostname actually resolves. Same product, robust proof.
 UP_LOG="$(mktemp -t live-proof-up.XXXXXX)"
-echo ">> airlock up (opening a real Cloudflare quick tunnel — first run downloads cloudflared)…"
+echo ">> booting the worker on :$PORT (airlock up --no-tunnel)…"
 ( cd "$PROOF_WORKER_DIR" && PYTHONPATH="$PROOF_WORKER_DIR" AIRLOCK_PYTHON="$PYBIN" \
-    node "$CLI" up --port "$PORT" ) >"$UP_LOG" 2>&1 &
+    node "$CLI" up --port "$PORT" --no-tunnel ) >"$UP_LOG" 2>&1 &
 UP_PID=$!
-
-# Wait for the public URL to appear in the up output (up prints "✓ live at  <url>").
-PUBLIC=""
-for _ in $(seq 1 90); do
-  if ! kill -0 "$UP_PID" 2>/dev/null; then
-    echo "!! airlock up exited early. Log:" >&2; cat "$UP_LOG" >&2; exit 1
-  fi
-  PUBLIC="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$UP_LOG" | head -n1 || true)"
-  [ -n "$PUBLIC" ] && break
+for _ in $(seq 1 60); do
+  curl -fsS --max-time 4 "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && break
+  kill -0 "$UP_PID" 2>/dev/null || { echo "!! worker exited early. Log:" >&2; cat "$UP_LOG" >&2; exit 1; }
   sleep 1
 done
-[ -n "$PUBLIC" ] || { echo "!! never saw a public URL. Log:" >&2; cat "$UP_LOG" >&2; exit 1; }
+curl -fsS --max-time 4 "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 \
+  || { echo "!! worker never became healthy. Log:" >&2; cat "$UP_LOG" >&2; exit 1; }
+echo ">> worker healthy on http://127.0.0.1:$PORT"
 
-# Wait for the tunnel to actually serve (edge propagation can lag a few seconds).
-for _ in $(seq 1 30); do
-  curl -fsS "$PUBLIC/healthz" >/dev/null 2>&1 && break
-  sleep 2
+# --- 2) open a public Cloudflare tunnel, retrying until a hostname actually resolves ------
+DEV_PID=""; PUBLIC=""
+open_tunnel() {  # prints URL on success, serves within ~45s, else fails
+  local log; log="$(mktemp -t live-proof-dev.XXXXXX)"
+  ( cd "$PROOF_WORKER_DIR" && node "$CLI" dev --port "$PORT" ) >"$log" 2>&1 &
+  DEV_PID=$!
+  local url=""
+  for _ in $(seq 1 20); do
+    url="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$log" | head -n1 || true)"
+    [ -n "$url" ] && break
+    kill -0 "$DEV_PID" 2>/dev/null || break
+    sleep 1
+  done
+  [ -n "$url" ] || { kill "$DEV_PID" 2>/dev/null; DEV_PID=""; return 1; }
+  for _ in $(seq 1 15); do                          # ~45s for THIS hostname to resolve
+    if curl -fsS --max-time 5 "$url/healthz" >/dev/null 2>&1; then PUBLIC="$url"; return 0; fi
+    sleep 3
+  done
+  kill "$DEV_PID" 2>/dev/null; DEV_PID=""; return 1  # bad hostname — caller retries fresh
+}
+echo ">> opening a real Cloudflare quick tunnel (first run downloads cloudflared)…"
+for attempt in 1 2 3 4 5; do
+  echo ">> tunnel attempt ${attempt} of 5"
+  if open_tunnel; then echo ">> tunnel serving: $PUBLIC"; break; fi
+  echo ">> that hostname didn't propagate — retrying with a fresh tunnel."
 done
+[ -n "$PUBLIC" ] || { echo "!! could not get a resolving quick tunnel after 5 attempts (Cloudflare free-tier propagation). The worker is fine locally; re-run, or use --model-url with your own durable tunnel." >&2; exit 1; }
+
+# From here a transient curl failure must NOT abort the proof — we want the transcript to
+# capture whatever the public URL returns. Teardown still runs via the EXIT trap.
+set +e
 
 # --- transcript helpers ------------------------------------------------------------------
 : > "$TRANSCRIPT"
