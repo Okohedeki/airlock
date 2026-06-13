@@ -158,6 +158,9 @@ for attempt in 1 2 3 4 5; do
   echo ">> tunnel attempt ${attempt} of 5"
   if open_tunnel; then echo ">> tunnel serving: $PUBLIC"; break; fi
   echo ">> that hostname didn't propagate — retrying with a fresh tunnel."
+  # Back off between attempts: Cloudflare throttles RAPID quick-tunnel creation, so
+  # hammering fresh hostnames makes propagation *worse*. A short pause lets it recover.
+  [ "$attempt" -lt 5 ] && sleep 10
 done
 [ -n "$PUBLIC" ] || { echo "!! could not get a resolving quick tunnel after 5 attempts (Cloudflare free-tier propagation). The worker is fine locally; re-run, or use --model-url with your own durable tunnel." >&2; exit 1; }
 
