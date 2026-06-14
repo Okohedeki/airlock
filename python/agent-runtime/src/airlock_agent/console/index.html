@@ -48,6 +48,27 @@
   pre.cfg { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .final-out { margin-top:12px; padding:12px; background:var(--panel); border:1px solid var(--line); border-radius:8px; white-space:pre-wrap; }
+  /* control plane */
+  .ctl-sec { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; margin:0 0 14px; }
+  .ctl-sec h3 { margin:0 0 10px; font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); }
+  .ctl-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); }
+  .ctl-row:last-child { border-bottom:none; }
+  .ctl-row .name { font-weight:600; }
+  .ctl-row .sub { color:var(--mut); font-size:12px; }
+  .ctl-row .spacer { flex:1; }
+  .ovr { font-size:10px; color:var(--warn); border:1px solid var(--warn); border-radius:9px; padding:0 6px; }
+  /* toggle switch */
+  .sw { position:relative; width:38px; height:21px; flex:none; cursor:pointer; }
+  .sw input { opacity:0; width:0; height:0; }
+  .sw .tr { position:absolute; inset:0; background:var(--line); border-radius:21px; transition:.15s; }
+  .sw .tr:before { content:''; position:absolute; height:15px; width:15px; left:3px; top:3px; background:#c9d4e0; border-radius:50%; transition:.15s; }
+  .sw input:checked + .tr { background:var(--ok); }
+  .sw input:checked + .tr:before { transform:translateX(17px); background:#fff; }
+  .ctl-in { width:90px; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:5px; padding:5px 8px; font:inherit; }
+  select.ctl-in { width:auto; }
+  .pill2 { font-size:11px; padding:2px 9px; border-radius:999px; border:1px solid var(--line); color:var(--mut); }
+  .pill2.pub { color:var(--ok); border-color:var(--ok); } .pill2.own { color:var(--accent); border-color:var(--accent); }
+  .saved { font-size:11px; color:var(--ok); opacity:0; transition:opacity .2s; } .saved.show { opacity:1; }
 </style>
 </head>
 <body>
@@ -95,9 +116,13 @@ final: all done</textarea>
   </section>
 
   <section id="controls" class="hidden">
-    <p class="mut">Active guards from <code>worker.yaml</code> (read-only here — edit the manifest and
-      <code>airlock</code> re-validates through the one schema).</p>
-    <pre class="cfg" id="controlsView">…</pre>
+    <div class="row" style="margin-bottom:10px">
+      <button class="sm" id="refreshCtl">↻ refresh</button>
+      <span class="mut">live control plane — changes apply to the next run. <code>worker.yaml</code> on disk is untouched; restart reverts.</span>
+      <span class="spacer" style="flex:1"></span>
+      <span id="ctlSaved" class="saved">✓ applied</span>
+    </div>
+    <div id="controlPanel"><p class="mut">loading…</p></div>
   </section>
 </main>
 
@@ -216,11 +241,89 @@ async function refreshHeldCount() {
 }
 $('#refreshHeld').onclick = loadHeld;
 
-// ---- Controls ----
-async function loadControls() {
-  const m = await j('/v1/manifest');
-  $('#controlsView').textContent = JSON.stringify({controls:m.controls, routing:m.routing}, null, 2);
+// ---- Control plane (interactive) ----
+let CTL = null;
+function ctlSaved(){ const e=$('#ctlSaved'); e.classList.add('show'); setTimeout(()=>e.classList.remove('show'),1200); }
+async function ctlPost(url, body){
+  const r = await fetch(url, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)});
+  if(!r.ok){ const e=await r.json().catch(()=>({})); alert('failed: '+(e.error||r.status)); }
+  else ctlSaved();
+  await loadControls();
 }
+window.ctlSkill   = (id, el)   => ctlPost('/v1/control/skills/'+encodeURIComponent(id), {enabled: el.checked});
+window.ctlRouting = (el)       => ctlPost('/v1/control/routing', {default: el.value});
+window.ctlNum     = (key, el)  => ctlPost('/v1/control/controls', {[key]: el.value===''?false:Number(el.value)});
+window.ctlApprove = (tool, el) => ctlPost('/v1/control/controls', {approval:{tool, on: el.checked}});
+
+function sw(checked, handler){ return `<label class="sw"><input type="checkbox" ${checked?'checked':''} ${handler}><span class="tr"></span></label>`; }
+function ovr(on){ return on?'<span class="ovr">override</span>':''; }
+
+async function loadControls(){
+  let c; try { c = await j('/v1/control'); } catch(e){ $('#controlPanel').innerHTML='<p class="mut">control plane unavailable.</p>'; return; }
+  CTL = c;
+  const o = c.overrides||{skills:{},controls:{},routing:{}};
+  const met = c.metrics||{};
+  const allTools = c.tools||[];
+  const approvals = new Set(c.controls.approvals||[]);
+  const b = c.controls.budget||{};
+  const panel = `
+  <div class="ctl-sec">
+    <h3>Worker</h3>
+    <div class="ctl-row"><span class="name">${esc(c.worker.name)} <span class="mut">v${esc(c.worker.version)}</span></span>
+      <span class="spacer"></span>
+      <span class="pill2 own">${esc(c.harness)} · ${esc(c.control_mode).toUpperCase()}</span>
+      <span class="pill2 ${c.expose==='public'?'pub':''}">${esc(c.expose)}</span></div>
+    <div class="ctl-row"><span class="sub">live</span><span class="spacer"></span>
+      <span class="sub">running ${met.running??0}/${met.max_concurrency??'—'} · waiting ${met.waiting??0}</span></div>
+  </div>
+
+  <div class="ctl-sec">
+    <h3>Model routing ${ovr(o.routing&&o.routing.default)}</h3>
+    <div class="ctl-row"><span class="name">Default binding</span><span class="spacer"></span>
+      <select class="ctl-in" onchange="ctlRouting(this)">
+        ${c.models.bindings.map(bd=>`<option value="${esc(bd.name)}" ${bd.name===c.models.default?'selected':''}>${esc(bd.name)} — ${esc(bd.model)}</option>`).join('')}
+      </select></div>
+    ${c.models.bindings.map(bd=>`<div class="ctl-row"><span class="name">${esc(bd.name)} ${bd.name===c.models.default?'<span class="pill2 own">active</span>':''}</span>
+      <span class="spacer"></span><span class="sub">${esc(bd.model)} · ${esc(bd.endpoint)}</span></div>`).join('')}
+  </div>
+
+  <div class="ctl-sec">
+    <h3>Skills <span class="sub">(off = tool dropped from the loop AND /skills/&lt;id&gt; → 403)</span></h3>
+    ${c.skills.length? c.skills.map(s=>`<div class="ctl-row">
+      <span class="name">${esc(s.id)}</span> <span class="sub">→ ${esc(s.tool)}</span> ${ovr(o.skills&&s.id in o.skills)}
+      <span class="spacer"></span>${sw(s.enabled, `onchange="ctlSkill('${esc(s.id)}',this)"`)}</div>`).join('')
+      : '<p class="mut">no skills declared (all tools available).</p>'}
+  </div>
+
+  <div class="ctl-sec">
+    <h3>Guards</h3>
+    <div class="ctl-row"><span class="name">Max steps</span> ${ovr(o.controls&&'max_steps' in o.controls)}<span class="spacer"></span>
+      <input class="ctl-in" type="number" min="1" value="${c.controls.max_steps??''}" onchange="ctlNum('max_steps',this)"></div>
+    <div class="ctl-row"><span class="name">Budget · tokens</span> ${ovr(o.controls&&'budget.tokens' in o.controls)}<span class="spacer"></span>
+      <input class="ctl-in" type="number" min="0" placeholder="none" value="${b.tokens??''}" onchange="ctlNum('budget.tokens',this)"></div>
+    <div class="ctl-row"><span class="name">Budget · USD</span> ${ovr(o.controls&&'budget.usd' in o.controls)}<span class="spacer"></span>
+      <input class="ctl-in" type="number" min="0" step="0.01" placeholder="none" value="${b.usd??''}" onchange="ctlNum('budget.usd',this)"></div>
+  </div>
+
+  <div class="ctl-sec">
+    <h3>Approvals <span class="sub">(hold a tool for a human before it runs)</span></h3>
+    ${allTools.length? allTools.map(t=>`<div class="ctl-row"><span class="name">${esc(t)}</span>
+      <span class="spacer"></span>${sw(approvals.has(t), `onchange="ctlApprove('${esc(t)}',this)"`)}</div>`).join('')
+      : '<p class="mut">no tools.</p>'}
+  </div>
+
+  ${(c.controls.tool_gates&&c.controls.tool_gates.length)?`<div class="ctl-sec">
+    <h3>Tool gates <span class="sub">(argument-level deny — edit in worker.yaml)</span></h3>
+    <pre class="cfg">${esc(JSON.stringify(c.controls.tool_gates,null,2))}</pre></div>`:''}
+
+  <div class="ctl-sec">
+    <h3>I/O contract</h3>
+    <div class="ctl-row"><span class="name">Input guards</span><span class="spacer"></span><span class="pill2 ${c.io.input_guards?'own':''}">${c.io.input_guards?'on':'off'}</span></div>
+    <div class="ctl-row"><span class="name">Output redaction</span><span class="spacer"></span><span class="sub">${(c.io.redact||[]).join(', ')||'none'}</span></div>
+  </div>`;
+  $('#controlPanel').innerHTML = panel;
+}
+$('#refreshCtl').onclick = loadControls;
 
 loadOverview();
 setInterval(refreshHeldCount, 5000);

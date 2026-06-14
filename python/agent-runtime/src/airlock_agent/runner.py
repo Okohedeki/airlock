@@ -87,6 +87,117 @@ class EngineRunner:
         s = self.skills.get(skill_id)
         return None if s is None else bool(s.get("enabled", True))
 
+    # ---- runtime control plane (live overrides) ---------------------------
+    # worker.yaml stays the frozen, CLI-validated source of truth (the loader
+    # contract). These methods layer EPHEMERAL runtime overrides on top — they
+    # change how the running worker behaves for SUBSEQUENT runs without rewriting
+    # the manifest. Think Docker Desktop toggles: the file on disk is untouched;
+    # a restart reverts to it. Each override is recorded in `self.overrides` so the
+    # control surface can show what diverges from the manifest.
+    overrides: dict[str, Any]
+
+    def _ensure_overrides(self) -> None:
+        if not hasattr(self, "overrides") or self.overrides is None:
+            self.overrides = {"skills": {}, "controls": {}, "routing": {}}
+
+    def _recompute_skill_tools(self) -> None:
+        """Re-derive the loop's available tools from the FULL manifest tool set and
+        the CURRENT (possibly overridden) skill enable/disable state."""
+        self._disabled_tools = _disabled_skill_tools(self.skills)
+        self.tools = _filter_disabled_skills(self.m.tools(), self.skills)
+
+    def set_skill_enabled(self, skill_id: str, enabled: bool) -> bool | None:
+        """Enable/disable a skill live. Returns the new state, or None if unknown."""
+        if skill_id not in self.skills:
+            return None
+        self.skills[skill_id]["enabled"] = bool(enabled)
+        self._recompute_skill_tools()
+        self._ensure_overrides()
+        self.overrides["skills"][skill_id] = bool(enabled)
+        return bool(enabled)
+
+    def set_control(self, key: str, value: Any) -> dict[str, Any]:
+        """Adjust a guard live: `max_steps`, `budget.tokens`, `budget.usd`,
+        `approval_window_s`. Dotted keys nest into `controls`."""
+        self._ensure_overrides()
+        if key == "max_steps":
+            self.controls["max_steps"] = int(value)
+            self.max_steps = int(value)
+        elif key in ("budget.tokens", "budget.usd"):
+            field = key.split(".", 1)[1]
+            budget = dict(self.controls.get("budget") or {})
+            if value in (None, "", False):
+                budget.pop(field, None)
+            else:
+                budget[field] = (int(value) if field == "tokens" else float(value))
+            self.controls["budget"] = budget
+        elif key == "approval_window_s":
+            self.controls["approval_window_s"] = float(value or 0)
+        else:
+            raise ValueError(f"unknown control '{key}'")
+        self.overrides["controls"][key] = value
+        return self.controls
+
+    def set_approval(self, tool: str, on: bool) -> list[dict]:
+        """Hold-for-human a tool (on) or stop holding it (off), live."""
+        approvals = [a for a in (self.controls.get("approvals") or []) if a.get("tool") != tool]
+        if on:
+            approvals.append({"tool": tool})
+        self.controls["approvals"] = approvals
+        self._ensure_overrides()
+        self.overrides["controls"][f"approval:{tool}"] = bool(on)
+        return approvals
+
+    def set_routing_default(self, name: str) -> str:
+        """Switch which model binding answers, live (epic 03 whole-run routing)."""
+        if name not in self.m.models_config():
+            raise ValueError(f"unknown model binding '{name}'")
+        self.routing = {**(self.routing or {}), "default": name}
+        self.select_binding = build_select_binding(self.routing)
+        self._ensure_overrides()
+        self.overrides["routing"]["default"] = name
+        return name
+
+    def control_state(self) -> dict[str, Any]:
+        """The full effective control-plane state for the operator UI — manifest
+        values with live overrides applied, plus which values diverge."""
+        self._ensure_overrides()
+        models = self.m.models_config()
+        routing = self.routing or {}
+        gates = self.controls.get("tool_gates") or []
+        approvals = {a.get("tool") for a in (self.controls.get("approvals") or [])}
+        return {
+            "worker": {"name": self.m.worker_name(), "version": self.m.worker_version()},
+            "harness": self.harness,
+            "control_mode": control_mode(self.harness).value,
+            "expose": self.m.expose(),
+            "models": {
+                "bindings": [
+                    {"name": n, "model": (c or {}).get("model") or n,
+                     "endpoint": (c or {}).get("endpoint") or "(stub/echo)"}
+                    for n, c in models.items()
+                ],
+                "default": routing.get("default") or "default",
+            },
+            "skills": [
+                {"id": sid, "tool": s.get("tool"), "enabled": bool(s.get("enabled", True))}
+                for sid, s in self.skills.items()
+            ],
+            "controls": {
+                "max_steps": self.max_steps,
+                "budget": self.controls.get("budget") or {},
+                "approvals": sorted(approvals),
+                "tool_gates": gates,
+                "approval_window_s": self.controls.get("approval_window_s") or 0,
+            },
+            "io": {
+                "input_guards": bool((self.io_cfg.get("input_guards"))),
+                "redact": (self.io_cfg.get("output") or {}).get("redact") or [],
+            },
+            "tools": sorted(self.tools.keys()),
+            "overrides": self.overrides,
+        }
+
     def _resolve_entrypoint(self) -> Any:
         ep = self.m.entrypoint()
         if not ep:

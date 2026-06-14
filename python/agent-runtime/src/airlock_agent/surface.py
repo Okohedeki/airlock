@@ -495,6 +495,66 @@ def create_app(
             "auth": (m.auth().get("scheme") if m.auth() else None),
         })
 
+    # ---- control plane (live overrides for the operator console) ------------
+    # Read + mutate the RUNNING worker without rewriting worker.yaml (the frozen,
+    # CLI-validated source of truth). Changes apply to subsequent runs; a restart
+    # reverts to the manifest. This is the operator surface behind /console.
+    @app.get("/v1/control")
+    def control_get(request: Request):
+        try:
+            rnr = _runner_for(request)
+        except _UnknownVariant as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        if not hasattr(rnr, "control_state"):
+            return JSONResponse({"error": "control plane unavailable"}, status_code=501)
+        state = rnr.control_state()
+        try:
+            state["metrics"] = _ensure_gate().stats()
+        except Exception:
+            pass
+        return JSONResponse(state)
+
+    async def control_skill(request: Request, skill_id: str):
+        body, err = await _read_json_object(request)
+        if err is not None:
+            return err
+        rnr = _runner_for(request)
+        res = rnr.set_skill_enabled(skill_id, bool(body.get("enabled", True)))
+        if res is None:
+            return JSONResponse({"error": f"unknown skill '{skill_id}'"}, status_code=404)
+        return JSONResponse({"skill": skill_id, "enabled": res})
+
+    async def control_controls(request: Request):
+        body, err = await _read_json_object(request)
+        if err is not None:
+            return err
+        rnr = _runner_for(request)
+        try:
+            if "approval" in body:  # {"approval": {"tool": "send", "on": true}}
+                a = body["approval"]
+                rnr.set_approval(str(a.get("tool")), bool(a.get("on", True)))
+            for key in ("max_steps", "budget.tokens", "budget.usd", "approval_window_s"):
+                if key in body:
+                    rnr.set_control(key, body[key])
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse(rnr.control_state()["controls"])
+
+    async def control_routing(request: Request):
+        body, err = await _read_json_object(request)
+        if err is not None:
+            return err
+        rnr = _runner_for(request)
+        try:
+            rnr.set_routing_default(str(body.get("default")))
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse(rnr.control_state()["models"])
+
+    app.add_api_route("/v1/control/skills/{skill_id}", control_skill, methods=["POST"])
+    app.add_api_route("/v1/control/controls", control_controls, methods=["POST"])
+    app.add_api_route("/v1/control/routing", control_routing, methods=["POST"])
+
     def _runs_for(tenant: str) -> list[dict]:
         if store is None:
             return []

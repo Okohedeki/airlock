@@ -197,6 +197,18 @@ beyond the queue bound, or who wait too long, get HTTP 429. Per-Worker, about
 simultaneous Callers — distinct from per-Tenant limits.
 _Avoid_: Throughput, rate limit (that's request-rate over time), pool size
 
+**Control plane** *(runtime override)*:
+The operator surface for changing a **running** Worker's behavior **without rewriting
+`worker.yaml`** — toggle a Skill on/off, switch the model **Variant**/binding, adjust guards
+(step/budget caps, approvals) live. Served at `/v1/control[/*]` and driven from `/console`.
+_Decision (in force):_ overrides are **ephemeral and layered** — `worker.yaml` stays the frozen,
+CLI-validated source of truth and the **loader contract is unchanged** (boot still reads the
+manifest alone); a restart reverts to it. This does **not** contradict the frozen-manifest rule:
+boot is frozen; live *operation* is controllable, and each override is reported as a delta from
+the manifest.
+_Avoid_: editing the manifest at runtime (overrides never persist to `worker.yaml`); calling it a
+config reload
+
 ## Relationships
 
 Cardinality and boundaries between the core terms (the seams the redesign must keep clean):
