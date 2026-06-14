@@ -16,8 +16,8 @@
 # approval are demonstrable deterministically over a real model.
 
 worker:
-  name: live-proof
-  version: 0.1.0
+  name: atlas
+  version: 1.0.0
 
 harness: openai
 

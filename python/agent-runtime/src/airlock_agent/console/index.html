@@ -3,330 +3,501 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>airlock console</title>
+<title>airlock · mission control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --mut:#8b949e;
-          --accent:#58a6ff; --ok:#3fb950; --warn:#d29922; --err:#f85149; --blocked:#bc8cff; }
-  * { box-sizing:border-box; }
-  body { margin:0; font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--bg); color:var(--fg); }
-  header { display:flex; align-items:center; gap:16px; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel); }
-  header .name { font-weight:700; }
-  header .dot { width:8px; height:8px; border-radius:50%; background:var(--ok); display:inline-block; margin-right:6px; }
-  header .url { color:var(--mut); font-size:12px; }
-  nav { display:flex; gap:4px; padding:8px 12px; border-bottom:1px solid var(--line); }
-  nav button { background:none; border:1px solid transparent; color:var(--mut); padding:6px 12px; border-radius:6px; cursor:pointer; font:inherit; }
-  nav button.active { color:var(--fg); border-color:var(--line); background:var(--bg); }
-  main { padding:16px; max-width:1000px; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; }
-  .card h3 { margin:0 0 4px; font-size:11px; text-transform:uppercase; color:var(--mut); letter-spacing:.05em; }
-  .card .big { font-size:20px; }
-  textarea { width:100%; min-height:90px; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:10px; font:inherit; resize:vertical; }
-  button.go { background:var(--accent); color:#0d1117; border:none; padding:8px 16px; border-radius:6px; font:inherit; font-weight:700; cursor:pointer; }
-  button.sm { font-size:12px; padding:3px 9px; border-radius:5px; border:1px solid var(--line); background:var(--bg); color:var(--fg); cursor:pointer; }
-  .step { display:flex; gap:10px; align-items:flex-start; padding:8px 10px; border:1px solid var(--line); border-left:3px solid var(--mut); border-radius:6px; margin:6px 0; background:var(--panel); }
-  .step.model { border-left-color:var(--accent); }
-  .step.tool_call,.step.tool_result { border-left-color:var(--ok); }
-  .step.final { border-left-color:var(--fg); }
-  .step.s-error { border-left-color:var(--err); }
-  .step.s-killed { border-left-color:var(--err); }
-  .step.s-blocked { border-left-color:var(--blocked); }
-  .step .idx { color:var(--mut); min-width:24px; }
-  .step .body { flex:1; min-width:0; }
-  .step .ty { font-weight:700; }
-  .step .meta { color:var(--mut); font-size:12px; }
-  .step .out { white-space:pre-wrap; word-break:break-word; margin-top:4px; color:var(--fg); }
-  .badge { font-size:11px; padding:1px 7px; border-radius:10px; border:1px solid var(--line); color:var(--mut); }
-  .badge.ok { color:var(--ok); border-color:var(--ok); }
-  .badge.blocked { color:var(--blocked); border-color:var(--blocked); }
-  .badge.stopped,.badge.error,.badge.killed { color:var(--err); border-color:var(--err); }
-  table { width:100%; border-collapse:collapse; }
-  th,td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); font-size:13px; }
-  th { color:var(--mut); font-weight:600; font-size:11px; text-transform:uppercase; }
-  tr.run { cursor:pointer; } tr.run:hover { background:var(--panel); }
-  .mut { color:var(--mut); } .hidden { display:none; }
-  pre.cfg { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; }
-  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .final-out { margin-top:12px; padding:12px; background:var(--panel); border:1px solid var(--line); border-radius:8px; white-space:pre-wrap; }
-  /* control plane */
-  .ctl-sec { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; margin:0 0 14px; }
-  .ctl-sec h3 { margin:0 0 10px; font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); }
-  .ctl-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); }
-  .ctl-row:last-child { border-bottom:none; }
-  .ctl-row .name { font-weight:600; }
-  .ctl-row .sub { color:var(--mut); font-size:12px; }
-  .ctl-row .spacer { flex:1; }
-  .ovr { font-size:10px; color:var(--warn); border:1px solid var(--warn); border-radius:9px; padding:0 6px; }
-  /* toggle switch */
-  .sw { position:relative; width:38px; height:21px; flex:none; cursor:pointer; }
-  .sw input { opacity:0; width:0; height:0; }
-  .sw .tr { position:absolute; inset:0; background:var(--line); border-radius:21px; transition:.15s; }
-  .sw .tr:before { content:''; position:absolute; height:15px; width:15px; left:3px; top:3px; background:#c9d4e0; border-radius:50%; transition:.15s; }
-  .sw input:checked + .tr { background:var(--ok); }
-  .sw input:checked + .tr:before { transform:translateX(17px); background:#fff; }
-  .ctl-in { width:90px; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:5px; padding:5px 8px; font:inherit; }
-  select.ctl-in { width:auto; }
-  .pill2 { font-size:11px; padding:2px 9px; border-radius:999px; border:1px solid var(--line); color:var(--mut); }
-  .pill2.pub { color:var(--ok); border-color:var(--ok); } .pill2.own { color:var(--accent); border-color:var(--accent); }
-  .saved { font-size:11px; color:var(--ok); opacity:0; transition:opacity .2s; } .saved.show { opacity:1; }
+  :root{
+    --bg:#06080c; --bg2:#0a0e14; --panel:#0e131b; --panel2:#131a24; --raise:#172030;
+    --line:#1a222e; --line2:#28323f; --fg:#eaf0f7; --mut:#7e8a9c; --dim:#4d5969;
+    --accent:#2dd4bf; --accent2:#5eead4; --glow:rgba(45,212,191,.16);
+    --go:#34d399; --hold:#f5b53f; --kill:#fb7185; --model:#8b93f8;
+    --display:'Archivo',-apple-system,system-ui,sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+    --rail:228px;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--display);
+    font-size:14px;-webkit-font-smoothing:antialiased;overflow:hidden;}
+  /* grain + chamber glow atmosphere */
+  body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:radial-gradient(120% 90% at 78% -20%, var(--glow), transparent 55%),
+               radial-gradient(80% 60% at 0% 110%, rgba(139,147,248,.07), transparent 60%);}
+  body::after{content:"";position:fixed;inset:0;z-index:9999;pointer-events:none;opacity:.035;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+  code,.mono{font-family:var(--mono);}
+  ::-webkit-scrollbar{width:9px;height:9px;} ::-webkit-scrollbar-thumb{background:var(--line2);border-radius:6px;}
+  ::selection{background:rgba(45,212,191,.25);}
+
+  .app{position:relative;z-index:1;display:grid;grid-template-columns:var(--rail) 1fr;height:100vh;}
+
+  /* ---- command rail ---- */
+  .rail{border-right:1px solid var(--line);background:linear-gradient(180deg,var(--bg2),var(--bg));
+    display:flex;flex-direction:column;padding:18px 14px;gap:6px;}
+  .brand{display:flex;align-items:center;gap:10px;padding:6px 8px 18px;}
+  .brand .mk{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;
+    background:linear-gradient(140deg,var(--accent),#0e7c70);color:#04201c;font-weight:900;box-shadow:0 0 18px var(--glow);}
+  .brand .wm{font-weight:800;letter-spacing:.14em;font-size:13px;text-transform:uppercase;}
+  .brand .wm small{display:block;font-size:8.5px;letter-spacing:.32em;color:var(--mut);font-weight:600;margin-top:2px;}
+  .nav{display:flex;flex-direction:column;gap:2px;margin-top:4px;}
+  .nav button{display:flex;align-items:center;gap:11px;width:100%;text-align:left;
+    background:none;border:1px solid transparent;color:var(--mut);padding:9px 11px;border-radius:9px;
+    cursor:pointer;font:inherit;font-weight:500;font-size:13px;transition:.13s;}
+  .nav button .ic{width:16px;text-align:center;opacity:.8;font-size:14px;}
+  .nav button:hover{color:var(--fg);background:var(--panel);}
+  .nav button.on{color:var(--fg);background:var(--panel2);border-color:var(--line2);
+    box-shadow:inset 2px 0 0 var(--accent);}
+  .nav .badge{margin-left:auto;font-family:var(--mono);font-size:10px;background:var(--hold);color:#241a02;
+    padding:1px 6px;border-radius:8px;font-weight:700;}
+  .nav .badge:empty{display:none;}
+  .rail .grow{flex:1;}
+  .wstat{border:1px solid var(--line);border-radius:11px;padding:11px;background:var(--panel);}
+  .wstat .nm{font-weight:700;font-size:13px;display:flex;align-items:center;gap:7px;}
+  .wstat .sub{font-family:var(--mono);font-size:10.5px;color:var(--mut);margin-top:5px;letter-spacing:.02em;}
+
+  /* live dot */
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--go);box-shadow:0 0 0 0 rgba(52,211,153,.6);
+    animation:pulse 2s infinite;flex:none;}
+  .dot.amber{background:var(--hold);} .dot.dim{background:var(--dim);animation:none;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(52,211,153,.55);}70%{box-shadow:0 0 0 7px rgba(52,211,153,0);}100%{box-shadow:0 0 0 0 rgba(52,211,153,0);}}
+
+  /* ---- main ---- */
+  main{display:flex;flex-direction:column;min-width:0;overflow:hidden;}
+  .topbar{display:flex;align-items:center;gap:16px;padding:0 24px;height:60px;flex:none;
+    border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(20,27,37,.5),transparent);backdrop-filter:blur(6px);}
+  .topbar .title{font-weight:800;font-size:16px;letter-spacing:-.01em;}
+  .topbar .crumb{font-family:var(--mono);font-size:11px;color:var(--mut);}
+  .topbar .right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+  .chip{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;
+    border:1px solid var(--line2);border-radius:999px;padding:5px 11px;color:var(--mut);background:var(--panel);}
+  .chip b{color:var(--fg);font-weight:700;}
+  .chip.live{color:var(--go);border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.07);}
+  .chip.pub{color:var(--accent);border-color:rgba(45,212,191,.4);}
+  .scroll{flex:1;overflow-y:auto;padding:26px;}
+  .view{display:none;animation:rise .4s cubic-bezier(.2,.7,.2,1) both;}
+  .view.on{display:block;}
+  @keyframes rise{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:none;}}
+  .stagger>*{animation:rise .5s cubic-bezier(.2,.7,.2,1) both;}
+  .stagger>*:nth-child(1){animation-delay:.03s;} .stagger>*:nth-child(2){animation-delay:.08s;}
+  .stagger>*:nth-child(3){animation-delay:.13s;} .stagger>*:nth-child(4){animation-delay:.18s;}
+  .stagger>*:nth-child(5){animation-delay:.23s;} .stagger>*:nth-child(6){animation-delay:.28s;}
+
+  h2.sec{font-size:11px;text-transform:uppercase;letter-spacing:.18em;color:var(--mut);margin:0 0 14px;font-weight:700;}
+  .hl{color:var(--accent);}
+
+  /* panels + tiles */
+  .panel{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);
+    border-radius:14px;padding:18px;}
+  .panel + .panel{margin-top:16px;}
+  .panel-h{display:flex;align-items:center;gap:10px;margin:-2px 0 14px;}
+  .panel-h h3{margin:0;font-size:13px;font-weight:700;letter-spacing:.01em;}
+  .panel-h .hint{font-size:11px;color:var(--dim);font-family:var(--mono);}
+  .panel-h .sp{flex:1;}
+
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;}
+  .tile{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);
+    border-radius:14px;padding:16px 16px 15px;position:relative;overflow:hidden;}
+  .tile::after{content:"";position:absolute;left:0;top:0;height:2px;width:100%;background:linear-gradient(90deg,var(--accent),transparent);opacity:.5;}
+  .tile .k{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--mut);font-weight:700;}
+  .tile .v{font-size:26px;font-weight:800;margin-top:8px;letter-spacing:-.02em;font-family:var(--mono);}
+  .tile .v small{font-size:13px;color:var(--mut);font-weight:600;}
+  .tile .v.t{font-size:18px;font-family:var(--display);}
+
+  /* hero */
+  .hero{display:flex;align-items:center;gap:20px;padding:22px;border:1px solid var(--line);border-radius:16px;
+    background:radial-gradient(120% 160% at 100% 0%, rgba(45,212,191,.10), transparent 55%), linear-gradient(180deg,var(--panel2),var(--bg2));margin-bottom:18px;}
+  .hero .seal{width:66px;height:66px;border-radius:16px;flex:none;display:grid;place-items:center;
+    background:conic-gradient(from 140deg,var(--accent),#0e7c70,var(--model),var(--accent));
+    color:#03201c;font-weight:900;font-size:26px;box-shadow:0 0 30px var(--glow);}
+  .hero .nm{font-size:24px;font-weight:800;letter-spacing:-.02em;display:flex;align-items:center;gap:12px;}
+  .hero .meta{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+
+  /* rows + toggles (control board) */
+  .row{display:flex;align-items:center;gap:12px;padding:13px 2px;border-top:1px solid var(--line);}
+  .row:first-of-type{border-top:none;}
+  .row .nm{font-weight:600;}
+  .row .sub{font-family:var(--mono);font-size:11px;color:var(--mut);}
+  .row .sp{flex:1;}
+  .ovr{font-family:var(--mono);font-size:9px;letter-spacing:.08em;color:var(--hold);border:1px solid rgba(245,181,63,.5);
+    border-radius:7px;padding:1px 6px;text-transform:uppercase;}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;border:1px solid var(--line2);
+    border-radius:999px;padding:3px 10px;color:var(--mut);}
+  .pill.go{color:var(--go);border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.06);}
+  .pill.ac{color:var(--accent);border-color:rgba(45,212,191,.4);background:rgba(45,212,191,.06);}
+  .pill.mdl{color:var(--model);border-color:rgba(139,147,248,.4);background:rgba(139,147,248,.06);}
+
+  .sw{position:relative;width:42px;height:23px;flex:none;cursor:pointer;}
+  .sw input{opacity:0;width:0;height:0;}
+  .sw .tr{position:absolute;inset:0;background:var(--raise);border:1px solid var(--line2);border-radius:23px;transition:.18s;}
+  .sw .tr::before{content:"";position:absolute;height:17px;width:17px;left:2px;top:2px;background:#aeb9c8;border-radius:50%;transition:.18s cubic-bezier(.4,1.6,.5,1);}
+  .sw input:checked + .tr{background:linear-gradient(90deg,#0e7c70,var(--accent));border-color:var(--accent);box-shadow:0 0 12px var(--glow);}
+  .sw input:checked + .tr::before{transform:translateX(19px);background:#eafff9;}
+
+  .inp{font-family:var(--mono);width:96px;background:var(--bg);color:var(--fg);border:1px solid var(--line2);
+    border-radius:8px;padding:7px 10px;font-size:13px;text-align:right;transition:.13s;}
+  .inp:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--glow);}
+  select.inp{text-align:left;width:auto;min-width:180px;}
+
+  button.btn{font-family:var(--display);font-weight:600;font-size:13px;border-radius:9px;cursor:pointer;
+    border:1px solid var(--line2);background:var(--panel2);color:var(--fg);padding:8px 14px;transition:.13s;}
+  button.btn:hover{border-color:var(--mut);}
+  button.btn.go{background:linear-gradient(120deg,var(--accent),#0e9484);color:#04201c;border:none;box-shadow:0 4px 18px var(--glow);}
+  button.btn.go:hover{filter:brightness(1.08);}
+  button.btn.sm{padding:5px 11px;font-size:12px;}
+  button.btn.ok{border-color:rgba(52,211,153,.5);color:var(--go);}
+  button.btn.no{border-color:rgba(251,113,133,.5);color:var(--kill);}
+  .saved{font-family:var(--mono);font-size:11px;color:var(--go);opacity:0;transition:opacity .2s;}
+  .saved.show{opacity:1;}
+
+  textarea{width:100%;min-height:96px;background:var(--bg);color:var(--fg);border:1px solid var(--line2);
+    border-radius:11px;padding:13px;font-family:var(--mono);font-size:13px;resize:vertical;line-height:1.6;}
+  textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--glow);}
+
+  /* telemetry step stream */
+  .stream{display:flex;flex-direction:column;gap:9px;}
+  .step{display:grid;grid-template-columns:34px 1fr;gap:12px;align-items:start;padding:12px 14px;border-radius:11px;
+    background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--dim);
+    animation:stepin .35s cubic-bezier(.2,.7,.2,1) both;}
+  @keyframes stepin{from{opacity:0;transform:translateX(-8px);}to{opacity:1;transform:none;}}
+  .step.model{border-left-color:var(--model);} .step.tool_call,.step.tool_result{border-left-color:var(--accent);}
+  .step.final{border-left-color:var(--go);} .step.s-killed,.step.s-error{border-left-color:var(--kill);}
+  .step.s-blocked{border-left-color:var(--hold);}
+  .step .idx{font-family:var(--mono);color:var(--dim);font-size:12px;text-align:center;padding-top:1px;}
+  .step .ty{font-weight:700;font-size:13px;text-transform:capitalize;}
+  .step .meta{font-family:var(--mono);font-size:11px;color:var(--mut);margin-top:3px;}
+  .step .out{font-family:var(--mono);font-size:11.5px;margin-top:7px;white-space:pre-wrap;word-break:break-word;
+    color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:7px 9px;max-height:140px;overflow:auto;}
+  .bdg{font-family:var(--mono);font-size:10px;padding:1px 8px;border-radius:8px;border:1px solid var(--line2);color:var(--mut);text-transform:uppercase;letter-spacing:.04em;}
+  .bdg.ok{color:var(--go);border-color:rgba(52,211,153,.4);} .bdg.killed,.bdg.error,.bdg.stopped{color:var(--kill);border-color:rgba(251,113,133,.4);}
+  .bdg.blocked{color:var(--hold);border-color:rgba(245,181,63,.4);}
+  .final-out{margin-top:14px;padding:15px;border-radius:12px;border:1px solid rgba(52,211,153,.3);
+    background:rgba(52,211,153,.05);white-space:pre-wrap;font-size:14px;line-height:1.6;}
+
+  table{width:100%;border-collapse:collapse;}
+  th,td{text-align:left;padding:11px 10px;border-bottom:1px solid var(--line);font-size:13px;}
+  th{color:var(--mut);font-size:10px;text-transform:uppercase;letter-spacing:.1em;font-weight:700;}
+  tr.run{cursor:pointer;} tr.run:hover{background:var(--panel2);}
+  td.mono{font-family:var(--mono);font-size:12px;}
+  .empty{color:var(--dim);font-size:13px;padding:24px 6px;text-align:center;}
+  pre.cfg{font-family:var(--mono);font-size:11.5px;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:12px;overflow:auto;color:var(--mut);}
+  .mut{color:var(--mut);} .hidden{display:none;}
+  .lead{color:var(--mut);font-size:13px;margin:0 0 16px;max-width:620px;line-height:1.6;}
 </style>
 </head>
 <body>
-<header>
-  <span class="name">▲ airlock</span>
-  <span id="worker" class="mut">…</span>
-  <span style="flex:1"></span>
-  <span><span class="dot"></span><span id="expose" class="url">internal</span></span>
-</header>
-<nav>
-  <button data-tab="overview" class="active">Overview</button>
-  <button data-tab="live">Live</button>
-  <button data-tab="runs">Runs</button>
-  <button data-tab="approvals">Approvals <span id="heldCount" class="badge"></span></button>
-  <button data-tab="controls">Controls</button>
-</nav>
-<main>
-  <section id="overview"></section>
-
-  <section id="live" class="hidden">
-    <p class="mut">Send a request and watch the loop run step-by-step. Stub harness script:
-      <code>say: text</code> · <code>tool: name {"json":"args"}</code> · <code>final: text</code></p>
-    <textarea id="msg">say: thinking it through…
-tool: echo {"text":"hello from the console"}
-final: all done</textarea>
-    <div class="row" style="margin:8px 0;">
-      <button class="go" id="run">▶ Run</button>
-      <label class="mut">tenant <input id="tenant" value="default" style="width:90px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:3px;"></label>
-      <span id="runStatus" class="mut"></span>
+<div class="app">
+  <!-- command rail -->
+  <aside class="rail">
+    <div class="brand">
+      <div class="mk">▲</div>
+      <div class="wm">airlock<small>mission control</small></div>
     </div>
-    <div id="liveSteps"></div>
-    <div id="liveFinal"></div>
-  </section>
-
-  <section id="runs" class="hidden">
-    <div class="row"><button class="sm" id="refreshRuns">↻ refresh</button><span class="mut">recent runs (tenant: default)</span></div>
-    <table><thead><tr><th>run</th><th>session</th><th>status</th><th>tokens</th><th>steps</th></tr></thead>
-      <tbody id="runsBody"></tbody></table>
-    <div id="runDetail"></div>
-  </section>
-
-  <section id="approvals" class="hidden">
-    <div class="row"><button class="sm" id="refreshHeld">↻ refresh</button><span class="mut">runs awaiting your decision</span></div>
-    <div id="heldList"></div>
-  </section>
-
-  <section id="controls" class="hidden">
-    <div class="row" style="margin-bottom:10px">
-      <button class="sm" id="refreshCtl">↻ refresh</button>
-      <span class="mut">live control plane — changes apply to the next run. <code>worker.yaml</code> on disk is untouched; restart reverts.</span>
-      <span class="spacer" style="flex:1"></span>
-      <span id="ctlSaved" class="saved">✓ applied</span>
+    <div class="nav">
+      <button data-v="overview" class="on"><span class="ic">◆</span> Overview</button>
+      <button data-v="playground"><span class="ic">▶</span> Playground</button>
+      <button data-v="controls"><span class="ic">⚙</span> Control board</button>
+      <button data-v="approvals"><span class="ic">✋</span> Approvals <span id="heldBadge" class="badge"></span></button>
+      <button data-v="runs"><span class="ic">≣</span> Runs</button>
     </div>
-    <div id="controlPanel"><p class="mut">loading…</p></div>
-  </section>
-</main>
+    <div class="grow"></div>
+    <div class="wstat">
+      <div class="nm"><span id="railDot" class="dot"></span><span id="railName">—</span></div>
+      <div class="sub" id="railSub">connecting…</div>
+    </div>
+  </aside>
+
+  <!-- main -->
+  <main>
+    <div class="topbar">
+      <div>
+        <div class="title" id="tbTitle">Overview</div>
+        <div class="crumb" id="tbCrumb">airlock runtime</div>
+      </div>
+      <div class="right">
+        <span class="chip mdl" id="tbModel" style="display:none"></span>
+        <span class="chip" id="tbExpose">—</span>
+        <span class="chip live" id="tbLive"><span class="dot"></span> LIVE</span>
+      </div>
+    </div>
+
+    <div class="scroll">
+      <!-- OVERVIEW -->
+      <section id="overview" class="view on">
+        <div class="hero">
+          <div class="seal" id="heroSeal">▲</div>
+          <div style="flex:1;min-width:0">
+            <div class="nm" id="heroName">loading…</div>
+            <div class="meta" id="heroMeta"></div>
+          </div>
+        </div>
+        <div class="tiles stagger" id="ovTiles"></div>
+      </section>
+
+      <!-- PLAYGROUND -->
+      <section id="playground" class="view">
+        <p class="lead">Send a request and watch airlock drive the agent's loop <span class="hl">step by step</span> —
+          every model call, tool dispatch, guard and approval, streamed live.</p>
+        <div class="panel">
+          <div class="panel-h"><h3>Request</h3><span class="sp"></span>
+            <span class="hint" id="pgHint"></span></div>
+          <textarea id="pgMsg">What is 23 times 19? Use a tool if you have one.</textarea>
+          <div class="row" style="border:none;padding:14px 0 2px">
+            <button class="btn go" id="pgRun">▶ Run agent</button>
+            <span class="sub">tenant</span>
+            <input class="inp" id="pgTenant" value="default" style="width:110px;text-align:left">
+            <span class="sp"></span>
+            <span class="sub" id="pgStatus"></span>
+          </div>
+        </div>
+        <div class="panel" id="pgTracePanel" style="display:none">
+          <div class="panel-h"><h3>Telemetry</h3><span class="hint">live step stream</span></div>
+          <div class="stream" id="pgSteps"></div>
+          <div id="pgFinal"></div>
+        </div>
+      </section>
+
+      <!-- CONTROL BOARD -->
+      <section id="controls" class="view">
+        <p class="lead">Pilot the running worker live. Changes apply to the next run —
+          <span class="hl">worker.yaml on disk is never touched</span>; a restart reverts. Anything you
+          override is flagged.</p>
+        <div id="ctlBody"><div class="empty">loading control board…</div></div>
+      </section>
+
+      <!-- APPROVALS -->
+      <section id="approvals" class="view">
+        <p class="lead">Runs that hit an approval gate and parked for a human. Approve, deny, or skip — the
+          run resumes from exactly where it paused.</p>
+        <div class="panel">
+          <div class="panel-h"><h3>Holding</h3><span class="sp"></span><button class="btn sm" id="apRefresh">↻ refresh</button></div>
+          <div id="apList"></div>
+        </div>
+      </section>
+
+      <!-- RUNS -->
+      <section id="runs" class="view">
+        <p class="lead">Every run airlock has executed, with its full step trace.</p>
+        <div class="panel">
+          <div class="panel-h"><h3>History</h3><span class="sp"></span><button class="btn sm" id="rnRefresh">↻ refresh</button></div>
+          <table><thead><tr><th>Run</th><th>Session</th><th>Status</th><th>Tokens</th><th>Steps</th></tr></thead>
+            <tbody id="rnBody"></tbody></table>
+        </div>
+        <div id="rnDetail"></div>
+      </section>
+    </div>
+  </main>
+</div>
 
 <script>
 const $ = s => document.querySelector(s);
-const esc = s => String(s==null?'':s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-let TENANT = 'default';
+const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const j = async (u,o) => (await fetch(u,o)).json();
+const TITLES = {overview:'Overview',playground:'Playground',controls:'Control board',approvals:'Approvals',runs:'Runs'};
+let TENANT='default';
 
-document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
-  b.classList.add('active');
-  ['overview','live','runs','approvals','controls'].forEach(t => $('#'+t).classList.toggle('hidden', t!==b.dataset.tab));
-  if (b.dataset.tab==='runs') loadRuns();
-  if (b.dataset.tab==='approvals') loadHeld();
-  if (b.dataset.tab==='controls') loadControls();
+// ---- navigation ----
+document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');
+  const v=b.dataset.v;
+  document.querySelectorAll('.view').forEach(s=>s.classList.toggle('on',s.id===v));
+  $('#tbTitle').textContent=TITLES[v];
+  if(v==='controls')loadControls();
+  if(v==='approvals')loadHeld();
+  if(v==='runs')loadRuns();
+  if(v==='overview')loadOverview();
 });
 
-async function j(url, opts) { const r = await fetch(url, opts); return r.json(); }
-
-// ---- Overview ----
-async function loadOverview() {
-  const m = await j('/v1/manifest');
-  $('#worker').textContent = m.name + (m.version?(' v'+m.version):'') + ' · ' + (m.harness||'');
-  $('#expose').textContent = m.expose || 'internal';
-  $('.dot').style.background = m.expose==='public' ? 'var(--ok)' : 'var(--warn)';
-  let met = {}; try { met = await j('/metrics'); } catch(e){}
-  $('#overview').innerHTML = `<div class="grid">
-    <div class="card"><h3>Harness</h3><div class="big">${esc(m.harness)}</div></div>
-    <div class="card"><h3>Expose</h3><div class="big">${esc(m.expose)}</div></div>
-    <div class="card"><h3>Models</h3><div class="big">${(m.models||[]).join(', ')||'—'}</div></div>
-    <div class="card"><h3>Tools</h3><div class="big">${(m.tools||[]).join(', ')||'—'}</div></div>
-    <div class="card"><h3>Running</h3><div class="big">${met.running??0}/${met.max_concurrency??'—'}</div></div>
-    <div class="card"><h3>Waiting</h3><div class="big">${met.waiting??0}</div></div>
-    <div class="card"><h3>Auth</h3><div class="big">${esc(m.auth||'open')}</div></div>
-    <div class="card"><h3>Tenants</h3><div class="big">${(m.tenants||[]).join(', ')||'default'}</div></div>
-  </div>`;
-  refreshHeldCount();
+// ---- shared header / status ----
+function setStatus(c){
+  const name=c.worker?.name||'worker', ver=c.worker?.version?(' v'+c.worker.version):'';
+  $('#railName').textContent=name;
+  $('#railSub').textContent=`${c.harness||''} · ${(c.control_mode||'').toUpperCase()}`;
+  $('#tbExpose').innerHTML = c.expose==='public'
+    ? '<span class="dot" style="width:7px;height:7px"></span> PUBLIC'
+    : '🔒 INTERNAL';
+  $('#tbExpose').className = 'chip '+(c.expose==='public'?'pub':'');
+  const def=c.models?.default; if(def){ $('#tbModel').style.display=''; $('#tbModel').innerHTML='◊ '+esc(def); }
+  $('#tbCrumb').textContent=`${name}${ver} · airlock runtime`;
+  $('#heroSeal').textContent=(name[0]||'▲').toUpperCase();
 }
 
-function stepCard(s) {
-  const cls = ['step', s.type, 's-'+(s.status||'ok')].join(' ');
-  const out = s.output!=null ? `<div class="out">${esc(typeof s.output==='object'?JSON.stringify(s.output):s.output).slice(0,400)}</div>` : '';
-  const meta = [s.model&&('model='+s.model), s.tool&&('tool='+s.tool),
-                s.tokens?(s.tokens+' tok'):null, s.cost_usd?('$'+Number(s.cost_usd).toFixed(4)):null,
-                s.duration_ms?(Math.round(s.duration_ms)+'ms'):null,
-                s.stop_reason].filter(Boolean).join(' · ');
-  return `<div class="${cls}"><div class="idx">#${s.index}</div><div class="body">
-     <span class="ty">${esc(s.type)}</span> <span class="badge ${s.status}">${esc(s.status||'ok')}</span>
-     <div class="meta">${esc(meta)}</div>${out}</div></div>`;
+// ---- OVERVIEW ----
+async function loadOverview(){
+  let c; try{ c=await j('/v1/control'); }catch(e){ return; }
+  setStatus(c);
+  const m=c.metrics||{};
+  $('#heroName').innerHTML=`${esc(c.worker.name)} <span class="pill go"><span class="dot" style="width:6px;height:6px"></span> live</span>`;
+  $('#heroMeta').innerHTML=[
+    `<span class="pill mdl">◊ ${esc(c.models.default)}</span>`,
+    `<span class="pill ac">${esc(c.harness)} · ${esc(c.control_mode).toUpperCase()}</span>`,
+    `<span class="pill ${c.expose==='public'?'go':''}">${c.expose==='public'?'public URL':'internal'}</span>`,
+    `<span class="pill">${(c.skills||[]).filter(s=>s.enabled).length}/${(c.skills||[]).length} skills on</span>`,
+  ].join('');
+  const enabledTools=(c.tools||[]).length, gates=(c.controls.tool_gates||[]).length, appr=(c.controls.approvals||[]).length;
+  const tiles=[
+    ['Running', `${m.running??0}<small>/${m.max_concurrency??'∞'}</small>`],
+    ['Waiting', `${m.waiting??0}`],
+    ['Active tools', `${enabledTools}`],
+    ['Guards', `${(c.controls.max_steps??'—')}<small> steps</small>`],
+    ['Approvals', `${appr}`],
+    ['Redaction', `<span class="v t">${(c.io.redact||[]).join(', ')||'none'}</span>`],
+  ];
+  $('#ovTiles').innerHTML=tiles.map(([k,v])=>`<div class="tile"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  refreshHeld();
 }
 
-// ---- Live playground (SSE over fetch) ----
-$('#run').onclick = async () => {
-  TENANT = $('#tenant').value || 'default';
-  $('#liveSteps').innerHTML = ''; $('#liveFinal').innerHTML = '';
-  $('#runStatus').textContent = 'running…';
-  const body = { messages:[{role:'user', content:$('#msg').value}], stream:true, stream_steps:true };
-  const resp = await fetch('/v1/chat/completions', {method:'POST',
-    headers:{'content-type':'application/json','X-Airlock-Tenant':TENANT}, body:JSON.stringify(body)});
-  const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf='';
-  while (true) {
-    const {value, done} = await reader.read(); if (done) break;
-    buf += dec.decode(value, {stream:true});
-    let i; while ((i = buf.indexOf('\n\n')) >= 0) { handleFrame(buf.slice(0,i)); buf = buf.slice(i+2); }
-  }
-  $('#runStatus').textContent = 'done';
-  loadOverview();
+// ---- step card ----
+function stepCard(s){
+  const cls=['step',s.type,'s-'+(s.status||'ok')].join(' ');
+  const meta=[s.model&&('model '+s.model),s.tool&&('tool '+s.tool),s.tokens?(s.tokens+' tok'):null,
+    s.cost_usd?('$'+Number(s.cost_usd).toFixed(4)):null,s.duration_ms?(Math.round(s.duration_ms)+'ms'):null,
+    s.stop_reason].filter(Boolean).join('  ·  ');
+  const out=s.output!=null?`<div class="out">${esc(typeof s.output==='object'?JSON.stringify(s.output,null,1):s.output).slice(0,500)}</div>`:'';
+  return `<div class="${cls}"><div class="idx">${s.index??''}</div><div>
+    <span class="ty">${esc(s.type)}</span> <span class="bdg ${s.status}">${esc(s.status||'ok')}</span>
+    <div class="meta">${esc(meta)}</div>${out}</div></div>`;
+}
+
+// ---- PLAYGROUND ----
+$('#pgRun').onclick=async()=>{
+  TENANT=$('#pgTenant').value||'default';
+  $('#pgTracePanel').style.display=''; $('#pgSteps').innerHTML=''; $('#pgFinal').innerHTML='';
+  $('#pgStatus').textContent='running…'; $('#pgRun').disabled=true;
+  try{
+    const resp=await fetch('/v1/chat/completions',{method:'POST',
+      headers:{'content-type':'application/json','X-Airlock-Tenant':TENANT},
+      body:JSON.stringify({messages:[{role:'user',content:$('#pgMsg').value}],stream:true,stream_steps:true})});
+    const rd=resp.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){ const {value,done}=await rd.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true}); let i;
+      while((i=buf.indexOf('\n\n'))>=0){ frame(buf.slice(0,i)); buf=buf.slice(i+2); } }
+  }catch(e){ $('#pgStatus').textContent='error: '+e.message; }
+  $('#pgRun').disabled=false;
 };
-function handleFrame(frame) {
-  const lines = frame.split('\n'); let ev=null, data=null;
-  for (const ln of lines) { if (ln.startsWith('event:')) ev=ln.slice(6).trim();
-    else if (ln.startsWith('data:')) data=ln.slice(5).trim(); }
-  if (!data || data==='[DONE]') return;
-  let obj; try { obj = JSON.parse(data); } catch(e) { return; }
-  if (ev === 'step') { $('#liveSteps').insertAdjacentHTML('beforeend', stepCard(obj)); window.scrollTo(0,document.body.scrollHeight); }
-  else if (obj.choices) { const d = obj.choices[0].delta||{}; if (d.content) $('#liveFinal').innerHTML = `<div class="final-out">${esc(d.content)}</div>`;
-    if (obj.usage) $('#runStatus').textContent = 'done · '+obj.usage.total_tokens+' tokens'; }
+function frame(f){
+  let ev=null,data=null;
+  for(const ln of f.split('\n')){ if(ln.startsWith('event:'))ev=ln.slice(6).trim(); else if(ln.startsWith('data:'))data=ln.slice(5).trim(); }
+  if(!data||data==='[DONE]')return;
+  let o; try{o=JSON.parse(data);}catch(e){return;}
+  if(ev==='step'){ const el=$('#pgSteps'); el.insertAdjacentHTML('beforeend',stepCard(o)); el.lastElementChild.scrollIntoView({block:'nearest'}); }
+  else if(o.choices){ const d=o.choices[0].delta||{}; if(d.content)$('#pgFinal').innerHTML=`<div class="final-out">${esc(d.content)}</div>`;
+    if(o.usage)$('#pgStatus').textContent=`done · ${o.usage.total_tokens} tokens`; }
 }
 
-// ---- Runs ----
-async function loadRuns() {
-  const {runs} = await j('/v1/runs?tenant='+encodeURIComponent('default'));
-  $('#runsBody').innerHTML = (runs||[]).map(r => `<tr class="run" data-id="${esc(r.run_id)}">
-    <td>${esc(r.run_id)}</td><td>${esc(r.session)}</td>
-    <td><span class="badge ${r.status}">${esc(r.status)}</span></td>
-    <td>${r.tokens??0}</td><td>${r.n_steps??0}</td></tr>`).join('') || '<tr><td colspan=5 class="mut">no runs yet — try the Live tab</td></tr>';
-  document.querySelectorAll('tr.run').forEach(tr => tr.onclick = () => showRun(tr.dataset.id));
-}
-async function showRun(id) {
-  const r = await j('/v1/runs/'+encodeURIComponent(id)+'?tenant=default');
-  $('#runDetail').innerHTML = `<h3 style="margin-top:18px">${esc(id)} <span class="badge ${r.status}">${esc(r.status)}</span></h3>`
-    + (r.steps||[]).map(stepCard).join('')
-    + (r.content?`<div class="final-out">${esc(r.content)}</div>`:'');
-}
-$('#refreshRuns').onclick = loadRuns;
-
-// ---- Approvals ----
-async function loadHeld() {
-  const {held} = await j('/v1/runs/held');
-  $('#heldList').innerHTML = (held||[]).map(h => `<div class="card" style="margin:8px 0">
-    <div class="row"><b>${esc(h.tool)}</b><span class="mut">run ${esc(h.run)}</span></div>
-    <pre class="cfg">${esc(JSON.stringify(h.args,null,2))}</pre>
-    <div class="row">
-      <button class="sm" onclick="decide('${esc(h.run)}','approve')">✓ approve</button>
-      <button class="sm" onclick="decide('${esc(h.run)}','deny')">✗ deny</button>
-      <button class="sm" onclick="decide('${esc(h.run)}','skip')">⤼ skip</button>
-    </div></div>`).join('') || '<p class="mut">nothing waiting.</p>';
-}
-async function decide(run, decision) {
-  await fetch('/v1/runs/'+encodeURIComponent(run)+'/decision',
-    {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({decision})});
-  loadHeld(); refreshHeldCount();
-}
-async function refreshHeldCount() {
-  try { const {held} = await j('/v1/runs/held'); $('#heldCount').textContent = held&&held.length?held.length:''; } catch(e){}
-}
-$('#refreshHeld').onclick = loadHeld;
-
-// ---- Control plane (interactive) ----
-let CTL = null;
-function ctlSaved(){ const e=$('#ctlSaved'); e.classList.add('show'); setTimeout(()=>e.classList.remove('show'),1200); }
-async function ctlPost(url, body){
-  const r = await fetch(url, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)});
+// ---- CONTROL BOARD ----
+let CTL=null;
+function ctlSaved(){ const tag=$('#ctlSavedTag'); if(tag){tag.classList.add('show');setTimeout(()=>tag.classList.remove('show'),1200);} }
+async function ctlPost(u,b){
+  const r=await fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});
   if(!r.ok){ const e=await r.json().catch(()=>({})); alert('failed: '+(e.error||r.status)); }
   else ctlSaved();
   await loadControls();
 }
-window.ctlSkill   = (id, el)   => ctlPost('/v1/control/skills/'+encodeURIComponent(id), {enabled: el.checked});
-window.ctlRouting = (el)       => ctlPost('/v1/control/routing', {default: el.value});
-window.ctlNum     = (key, el)  => ctlPost('/v1/control/controls', {[key]: el.value===''?false:Number(el.value)});
-window.ctlApprove = (tool, el) => ctlPost('/v1/control/controls', {approval:{tool, on: el.checked}});
-
-function sw(checked, handler){ return `<label class="sw"><input type="checkbox" ${checked?'checked':''} ${handler}><span class="tr"></span></label>`; }
-function ovr(on){ return on?'<span class="ovr">override</span>':''; }
+window.ctlSkill=(id,el)=>ctlPost('/v1/control/skills/'+encodeURIComponent(id),{enabled:el.checked});
+window.ctlRouting=el=>ctlPost('/v1/control/routing',{default:el.value});
+window.ctlNum=(k,el)=>ctlPost('/v1/control/controls',{[k]:el.value===''?false:Number(el.value)});
+window.ctlApprove=(t,el)=>ctlPost('/v1/control/controls',{approval:{tool:t,on:el.checked}});
+const sw=(on,h)=>`<label class="sw"><input type="checkbox" ${on?'checked':''} ${h}><span class="tr"></span></label>`;
+const ovr=on=>on?'<span class="ovr">override</span>':'';
 
 async function loadControls(){
-  let c; try { c = await j('/v1/control'); } catch(e){ $('#controlPanel').innerHTML='<p class="mut">control plane unavailable.</p>'; return; }
-  CTL = c;
-  const o = c.overrides||{skills:{},controls:{},routing:{}};
-  const met = c.metrics||{};
-  const allTools = c.tools||[];
-  const approvals = new Set(c.controls.approvals||[]);
-  const b = c.controls.budget||{};
-  const panel = `
-  <div class="ctl-sec">
-    <h3>Worker</h3>
-    <div class="ctl-row"><span class="name">${esc(c.worker.name)} <span class="mut">v${esc(c.worker.version)}</span></span>
-      <span class="spacer"></span>
-      <span class="pill2 own">${esc(c.harness)} · ${esc(c.control_mode).toUpperCase()}</span>
-      <span class="pill2 ${c.expose==='public'?'pub':''}">${esc(c.expose)}</span></div>
-    <div class="ctl-row"><span class="sub">live</span><span class="spacer"></span>
-      <span class="sub">running ${met.running??0}/${met.max_concurrency??'—'} · waiting ${met.waiting??0}</span></div>
-  </div>
+  let c; try{c=await j('/v1/control');}catch(e){ $('#ctlBody').innerHTML='<div class="empty">control plane unavailable.</div>'; return; }
+  CTL=c; setStatus(c);
+  const o=c.overrides||{skills:{},controls:{},routing:{}};
+  const b=c.controls.budget||{}; const appr=new Set(c.controls.approvals||[]); const allTools=c.tools||[];
+  $('#ctlBody').innerHTML=`
+  <div style="display:flex;justify-content:flex-end;margin-bottom:8px"><span id="ctlSavedTag" class="saved">✓ applied to next run</span></div>
 
-  <div class="ctl-sec">
-    <h3>Model routing ${ovr(o.routing&&o.routing.default)}</h3>
-    <div class="ctl-row"><span class="name">Default binding</span><span class="spacer"></span>
-      <select class="ctl-in" onchange="ctlRouting(this)">
+  <div class="panel">
+    <div class="panel-h"><h3>Model routing</h3>${ovr(o.routing&&o.routing.default)}<span class="sp"></span>
+      <span class="hint">which binding answers</span></div>
+    <div class="row"><span class="nm">Active model</span><span class="sp"></span>
+      <select class="inp" onchange="ctlRouting(this)">
         ${c.models.bindings.map(bd=>`<option value="${esc(bd.name)}" ${bd.name===c.models.default?'selected':''}>${esc(bd.name)} — ${esc(bd.model)}</option>`).join('')}
       </select></div>
-    ${c.models.bindings.map(bd=>`<div class="ctl-row"><span class="name">${esc(bd.name)} ${bd.name===c.models.default?'<span class="pill2 own">active</span>':''}</span>
-      <span class="spacer"></span><span class="sub">${esc(bd.model)} · ${esc(bd.endpoint)}</span></div>`).join('')}
+    ${c.models.bindings.map(bd=>`<div class="row"><span class="nm">${esc(bd.name)}</span>
+      ${bd.name===c.models.default?'<span class="pill mdl">active</span>':''}<span class="sp"></span>
+      <span class="sub">${esc(bd.model)} · ${esc(bd.endpoint)}</span></div>`).join('')}
   </div>
 
-  <div class="ctl-sec">
-    <h3>Skills <span class="sub">(off = tool dropped from the loop AND /skills/&lt;id&gt; → 403)</span></h3>
-    ${c.skills.length? c.skills.map(s=>`<div class="ctl-row">
-      <span class="name">${esc(s.id)}</span> <span class="sub">→ ${esc(s.tool)}</span> ${ovr(o.skills&&s.id in o.skills)}
-      <span class="spacer"></span>${sw(s.enabled, `onchange="ctlSkill('${esc(s.id)}',this)"`)}</div>`).join('')
-      : '<p class="mut">no skills declared (all tools available).</p>'}
+  <div class="panel">
+    <div class="panel-h"><h3>Skills</h3><span class="sp"></span>
+      <span class="hint">off → tool leaves the loop &amp; /skills/&lt;id&gt; returns 403</span></div>
+    ${c.skills.length?c.skills.map(s=>`<div class="row">
+      <span class="nm">${esc(s.id)}</span><span class="sub">→ ${esc(s.tool)}</span>${ovr(o.skills&&s.id in o.skills)}
+      <span class="sp"></span>${sw(s.enabled,`onchange="ctlSkill('${esc(s.id)}',this)"`)}</div>`).join('')
+      :'<div class="empty">no skills declared — all tools available.</div>'}
   </div>
 
-  <div class="ctl-sec">
-    <h3>Guards</h3>
-    <div class="ctl-row"><span class="name">Max steps</span> ${ovr(o.controls&&'max_steps' in o.controls)}<span class="spacer"></span>
-      <input class="ctl-in" type="number" min="1" value="${c.controls.max_steps??''}" onchange="ctlNum('max_steps',this)"></div>
-    <div class="ctl-row"><span class="name">Budget · tokens</span> ${ovr(o.controls&&'budget.tokens' in o.controls)}<span class="spacer"></span>
-      <input class="ctl-in" type="number" min="0" placeholder="none" value="${b.tokens??''}" onchange="ctlNum('budget.tokens',this)"></div>
-    <div class="ctl-row"><span class="name">Budget · USD</span> ${ovr(o.controls&&'budget.usd' in o.controls)}<span class="spacer"></span>
-      <input class="ctl-in" type="number" min="0" step="0.01" placeholder="none" value="${b.usd??''}" onchange="ctlNum('budget.usd',this)"></div>
+  <div class="panel">
+    <div class="panel-h"><h3>Guards</h3><span class="sp"></span><span class="hint">budget &amp; loop limits</span></div>
+    <div class="row"><span class="nm">Max steps</span>${ovr(o.controls&&'max_steps' in o.controls)}<span class="sp"></span>
+      <input class="inp" type="number" min="1" value="${c.controls.max_steps??''}" onchange="ctlNum('max_steps',this)"></div>
+    <div class="row"><span class="nm">Budget · tokens</span>${ovr(o.controls&&'budget.tokens' in o.controls)}<span class="sp"></span>
+      <input class="inp" type="number" min="0" placeholder="none" value="${b.tokens??''}" onchange="ctlNum('budget.tokens',this)"></div>
+    <div class="row"><span class="nm">Budget · USD</span>${ovr(o.controls&&'budget.usd' in o.controls)}<span class="sp"></span>
+      <input class="inp" type="number" min="0" step="0.01" placeholder="none" value="${b.usd??''}" onchange="ctlNum('budget.usd',this)"></div>
   </div>
 
-  <div class="ctl-sec">
-    <h3>Approvals <span class="sub">(hold a tool for a human before it runs)</span></h3>
-    ${allTools.length? allTools.map(t=>`<div class="ctl-row"><span class="name">${esc(t)}</span>
-      <span class="spacer"></span>${sw(approvals.has(t), `onchange="ctlApprove('${esc(t)}',this)"`)}</div>`).join('')
-      : '<p class="mut">no tools.</p>'}
+  <div class="panel">
+    <div class="panel-h"><h3>Approvals</h3><span class="sp"></span><span class="hint">hold a tool for a human</span></div>
+    ${allTools.length?allTools.map(t=>`<div class="row"><span class="nm">${esc(t)}</span><span class="sp"></span>
+      ${sw(appr.has(t),`onchange="ctlApprove('${esc(t)}',this)"`)}</div>`).join(''):'<div class="empty">no tools.</div>'}
   </div>
 
-  ${(c.controls.tool_gates&&c.controls.tool_gates.length)?`<div class="ctl-sec">
-    <h3>Tool gates <span class="sub">(argument-level deny — edit in worker.yaml)</span></h3>
+  ${(c.controls.tool_gates&&c.controls.tool_gates.length)?`<div class="panel">
+    <div class="panel-h"><h3>Tool gates</h3><span class="sp"></span><span class="hint">argument-level deny · edit in worker.yaml</span></div>
     <pre class="cfg">${esc(JSON.stringify(c.controls.tool_gates,null,2))}</pre></div>`:''}
 
-  <div class="ctl-sec">
-    <h3>I/O contract</h3>
-    <div class="ctl-row"><span class="name">Input guards</span><span class="spacer"></span><span class="pill2 ${c.io.input_guards?'own':''}">${c.io.input_guards?'on':'off'}</span></div>
-    <div class="ctl-row"><span class="name">Output redaction</span><span class="spacer"></span><span class="sub">${(c.io.redact||[]).join(', ')||'none'}</span></div>
+  <div class="panel">
+    <div class="panel-h"><h3>I/O contract</h3></div>
+    <div class="row"><span class="nm">Input guards</span><span class="sp"></span><span class="pill ${c.io.input_guards?'go':''}">${c.io.input_guards?'on':'off'}</span></div>
+    <div class="row"><span class="nm">Output redaction</span><span class="sp"></span><span class="sub">${(c.io.redact||[]).join(', ')||'none'}</span></div>
   </div>`;
-  $('#controlPanel').innerHTML = panel;
 }
-$('#refreshCtl').onclick = loadControls;
+
+// ---- APPROVALS ----
+async function loadHeld(){
+  const {held}=await j('/v1/runs/held');
+  $('#apList').innerHTML=(held&&held.length)?held.map(h=>`<div class="row" style="align-items:flex-start;border-top:1px solid var(--line)">
+    <div style="flex:1"><div class="nm">${esc(h.tool)} <span class="sub">run ${esc(h.run)}</span></div>
+      <pre class="cfg" style="margin-top:8px">${esc(JSON.stringify(h.args,null,2))}</pre></div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap;padding-top:2px">
+      <button class="btn sm ok" onclick="decide('${esc(h.run)}','approve')">✓ approve</button>
+      <button class="btn sm no" onclick="decide('${esc(h.run)}','deny')">✗ deny</button>
+      <button class="btn sm" onclick="decide('${esc(h.run)}','skip')">⤼ skip</button></div>
+  </div>`).join(''):'<div class="empty">nothing holding — guarded tools will appear here when a run pauses.</div>';
+}
+window.decide=async(run,decision)=>{
+  await fetch('/v1/runs/'+encodeURIComponent(run)+'/decision',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({decision})});
+  loadHeld(); refreshHeld();
+};
+async function refreshHeld(){ try{ const {held}=await j('/v1/runs/held'); $('#heldBadge').textContent=held&&held.length?held.length:''; }catch(e){} }
+
+// ---- RUNS ----
+async function loadRuns(){
+  const {runs}=await j('/v1/runs?tenant='+encodeURIComponent(TENANT));
+  $('#rnBody').innerHTML=(runs&&runs.length)?runs.map(r=>`<tr class="run" data-id="${esc(r.run_id)}">
+    <td class="mono">${esc(r.run_id)}</td><td class="mono">${esc(r.session)}</td>
+    <td><span class="bdg ${r.status}">${esc(r.status)}</span></td><td class="mono">${r.tokens??0}</td><td class="mono">${r.n_steps??0}</td></tr>`).join('')
+    :'<tr><td colspan="5" class="empty">no runs yet — try the Playground.</td></tr>';
+  document.querySelectorAll('tr.run').forEach(tr=>tr.onclick=()=>showRun(tr.dataset.id));
+}
+async function showRun(id){
+  const r=await j('/v1/runs/'+encodeURIComponent(id)+'?tenant='+encodeURIComponent(TENANT));
+  $('#rnDetail').innerHTML=`<div class="panel"><div class="panel-h"><h3>${esc(id)}</h3>
+    <span class="bdg ${r.status}">${esc(r.status)}</span></div>
+    <div class="stream">${(r.steps||[]).map(stepCard).join('')}</div>
+    ${r.content?`<div class="final-out">${esc(r.content)}</div>`:''}</div>`;
+  $('#rnDetail').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+$('#apRefresh').onclick=loadHeld; $('#rnRefresh').onclick=loadRuns;
 
 loadOverview();
-setInterval(refreshHeldCount, 5000);
+setInterval(refreshHeld,5000);
 </script>
 </body>
 </html>
