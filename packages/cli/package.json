@@ -15,7 +15,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run copy-assets",
-    "copy-assets": "mkdir -p dist/worker-schema && cp src/worker-schema/*.json dist/worker-schema/",
+    "copy-assets": "mkdir -p dist/worker-schema dist/control && cp src/worker-schema/*.json dist/worker-schema/ && cp src/control/app.html dist/control/",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },

@@ -14,6 +14,7 @@ import { runUp } from './commands/up.js';
 import { NotLoggedInError, runWhoami } from './commands/whoami.js';
 import { readConfig } from './config-file.js';
 import { runMigrate } from './migrate.js';
+import { startControlServer } from './control/server.js';
 import {
   buildDelete,
   buildDeploy,
@@ -505,6 +506,21 @@ async function main() {
         process.exit(2);
       }
       process.exit(await runDev(port));
+    });
+
+  program
+    .command('control')
+    .description('Open the airlock control app — operate workers (start/stop/detect/skills/yaml) from a local web UI')
+    .option('-p, --port <port>', 'port for the control app', '8788')
+    .option('--root <dir>', 'workspace directory to scan for workers', process.cwd())
+    .option('--python <bin>', 'python executable used to launch workers (respects a venv)')
+    .action((opts: { port: string; root: string; python?: string }) => {
+      const port = Number.parseInt(opts.port, 10);
+      if (!Number.isFinite(port) || port <= 0) {
+        console.error(`error: invalid --port "${opts.port}"`);
+        process.exit(2);
+      }
+      startControlServer({ root: opts.root, port, python: opts.python });
     });
 
   await program.parseAsync(process.argv);
