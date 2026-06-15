@@ -51,9 +51,14 @@ function parseCookies(req: IncomingMessage): Record<string, string> {
 export function currentUser(store: ControlStore, req: IncomingMessage): SessionUser | null {
   const tok = parseCookies(req)[COOKIE];
   const s = tok && sessions.get(tok);
-  if (!s) return null;
-  const u = store.users().find((x) => x.email === s.email);
-  return u ? { name: u.name, email: u.email, role: u.role } : null;
+  if (s) {
+    const u = store.users().find((x) => x.email === s.email);
+    if (u) return { name: u.name, email: u.email, role: u.role };
+  }
+  // No login wall (for now): an unauthenticated request defaults to the Owner. RBAC is still
+  // enforced and you can switch identity from the account menu to exercise lower roles.
+  const def = store.users().find((u) => u.role === 'owner') || store.users()[0];
+  return def ? { name: def.name, email: def.email, role: def.role } : null;
 }
 
 export interface LoginResult { ok: boolean; error?: string; user?: SessionUser; }

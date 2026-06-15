@@ -86,8 +86,8 @@ window.doLogin = async (email) => {
 /* ---- header / env ---- */
 async function boot() {
   const me = await (await fetch('/api/me')).json();
-  if (!me.user) { ME = null; return renderLogin(); }
-  ME = me.user;
+  ME = me.user; // no login wall — the server defaults to the Owner; identity is switchable below
+  if (!ME) return renderLogin();
   $('#acctName').textContent = ME.name;
   $('#acctAv').textContent = ME.name.split(' ').map((p) => p[0]).join('').slice(0, 2);
   $('#acctRole').textContent = ME.role; $('#acctOrg').textContent = 'Acme Corp · ' + ME.email;
@@ -113,7 +113,7 @@ function accountMenu() {
   });
   setTimeout(() => document.addEventListener('click', function h(e) { if (!m.contains(e.target) && !$('.acct').contains(e.target)) { m.remove(); document.removeEventListener('click', h); } }), 0);
 }
-window.signout = async () => { await fetch('/api/logout', { method: 'POST' }); ME = null; const m = $('#acctMenu'); if (m) m.remove(); renderLogin(); };
+window.signout = async () => { await fetch('/api/logout', { method: 'POST' }); const m = $('#acctMenu'); if (m) m.remove(); boot(); toast('reset to Owner'); };
 window.switchUser = async (email) => { await fetch('/api/logout', { method: 'POST' }); const m = $('#acctMenu'); if (m) m.remove(); doLogin(email); };
 async function refreshCounts() {
   const w = await j('/api/workers'); WORKERS = w.workers || []; $('#wsPath').textContent = (w.root || '').split('/').slice(-1)[0];
