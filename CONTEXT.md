@@ -209,6 +209,34 @@ the manifest.
 _Avoid_: editing the manifest at runtime (overrides never persist to `worker.yaml`); calling it a
 config reload
 
+**Control Plane (dashboard)** *(enterprise console)*:
+The fleet-wide operations console — the `airlock control` web app — for governing many Workers
+across **Environments** and **Tenants**: fleet health/observability, the **Runs** explorer,
+the **Approvals** queue, cost/usage, versioning/exposure, and **Access control**. It composes
+the per-Worker runtime surfaces (`/v1/control`, `/v1/runs`, `/metrics`, approvals) into a
+fleet view; control actions proxy to the owning Worker. _Decision (in force):_ the dashboard is
+the **Operator's** surface; it owns no agent state — it aggregates and proxies.
+_Avoid_: confusing it with the per-Worker `/console`; calling it the runtime.
+
+**Environment**:
+A deployment stage a Worker belongs to — **prod / staging / dev** — used to scope the dashboard
+and gate change control (e.g. prod requires 2-person approval). _Status:_ **representative today**
+(the runtime is single-stage); a real multi-environment backend is a planned feature.
+_Avoid_: conflating with **Variant** (a config overlay) or **Version** (a release).
+
+**Role / RBAC**:
+The permission set a dashboard user holds — Owner / Operator / Approver / Auditor / Viewer —
+resolved (with SSO) to authorize operator actions. _Status:_ **representative today**; real
+RBAC/SSO enforcement is a planned backend feature.
+_Avoid_: confusing a Role (dashboard user permission) with a **Tenant** (a Caller identity).
+
+**Audit log**:
+The immutable record of every privileged action — control change, approval decision, version
+promote/rollback, exposure flip — with actor, target, environment, and time. _Status:_ live
+control-plane actions are recorded in-process; durable/seeded history is **representative** until
+a persistent audit store ships.
+_Avoid_: confusing with the per-run **StepEvent** trace (that records the agent loop, not operator actions).
+
 ## Relationships
 
 Cardinality and boundaries between the core terms (the seams the redesign must keep clean):

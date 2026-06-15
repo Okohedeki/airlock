@@ -20,6 +20,10 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 import { runUp, type UpHandle } from '../commands/up.js';
 import { scanRepo } from '../scan.js';
 import { validateWorker } from '../worker-schema/validate.js';
+import {
+  ENVIRONMENTS, ROLES, USERS, SSO, type AuditEvent,
+  auditSeed, fleet as seedFleet, sampleRuns, series, tenants as seedTenants,
+} from './seed.js';
 
 const LOG_CAP = 4000; // ring-buffer lines per worker
 const PORT_BASE = 3030; // first port handed to a launched worker
@@ -53,6 +57,36 @@ export function startControlServer(opts: ControlOptions) {
   const root = resolve(opts.root);
   const workers = new Map<string, Worker>();
   let nextPort = PORT_BASE;
+
+  // Audit log: seeded history + live events appended as the operator acts (newest first).
+  const liveAudit: AuditEvent[] = [];
+  let auditN = 0;
+  const OPERATOR = USERS[0]?.name || 'operator'; // signed-in operator (RBAC is representative)
+  const audit = (actor: string, action: string, target: string, detail: string, env = 'dev') =>
+    liveAudit.unshift({ id: `live-${auditN++}`, tsMins: 0, actor, action, target, detail, env });
+
+  // Deterministic sample metrics for a worker id (real workers have no local traffic, so RPS/
+  // p95/error/cost are representative — marked sample in the UI).
+  const sampleMetrics = (id: string) => {
+    let s = 0;
+    for (const c of id) s = (Math.imul(s, 31) + c.charCodeAt(0)) >>> 0;
+    const r = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
+    const errPct = Math.round(r() * 25) / 10;
+    return { rps: Math.round(r() * 60 * 10) / 10, p95: 240 + Math.floor(r() * 1800), errPct,
+      cost24h: Math.round(r() * 120 * 100) / 100, tenants: 1 + Math.floor(r() * 6),
+      health: errPct > 4 ? 'degraded' : 'healthy' };
+  };
+
+  const fetchJSON = (port: number, path: string): Promise<any> =>
+    new Promise((res) => {
+      const rq = httpRequest({ host: '127.0.0.1', port, path, method: 'GET' }, (up) => {
+        const c: Buffer[] = [];
+        up.on('data', (x) => c.push(x as Buffer));
+        up.on('end', () => { try { res(JSON.parse(Buffer.concat(c).toString())); } catch { res(null); } });
+      });
+      rq.on('error', () => res(null));
+      rq.end();
+    });
 
   const slug = (dir: string) =>
     (relative(root, dir) || dir.split('/').pop() || 'worker').replace(/[\\/]/g, ':') || 'root';
@@ -192,11 +226,20 @@ export function startControlServer(opts: ControlOptions) {
       req.on('data', (x) => c.push(x as Buffer));
       req.on('end', () => r(Buffer.concat(c).toString()));
     });
-  const view = (w: Worker) => ({
-    id: w.id, name: w.name, harness: w.harness, expose: w.expose, status: w.status,
-    port: w.port, url: w.url, dir: relative(root, w.dir) || '.', startedAt: w.startedAt,
-    exitCode: w.exitCode, lastError: w.lastError,
-  });
+  const view = (w: Worker) => {
+    const m = readManifest(w.file);
+    const wk = (m.worker as Record<string, unknown>) || {};
+    const sm = sampleMetrics(w.id);
+    return {
+      id: w.id, name: w.name, harness: w.harness, expose: w.expose, status: w.status,
+      port: w.port, url: w.url, dir: relative(root, w.dir) || '.', startedAt: w.startedAt,
+      exitCode: w.exitCode, lastError: w.lastError,
+      env: 'dev', version: 'v' + String(wk.version || '0.0.0'),
+      operable: true, sampleMetrics: true,
+      health: w.status === 'running' ? sm.health : w.status === 'error' ? 'error' : 'idle',
+      rps: sm.rps, p95: sm.p95, errPct: sm.errPct, cost24h: sm.cost24h, tenants: sm.tenants,
+    };
+  };
 
   /** Reverse-proxy /api/workers/:id/proxy/<path> → the worker's own HTTP surface. */
   function proxy(w: Worker, subpath: string, req: IncomingMessage, res: ServerResponse): void {
@@ -219,17 +262,97 @@ export function startControlServer(opts: ControlOptions) {
       if (path === '/' || path === '/index.html') {
         return send(res, 200, readFileSync(join(HERE, 'app.html'), 'utf8'), 'text/html');
       }
+      if (path === '/app.css') return send(res, 200, readFileSync(join(HERE, 'app.css'), 'utf8'), 'text/css');
+      if (path === '/app.js') return send(res, 200, readFileSync(join(HERE, 'app.js'), 'utf8'), 'text/javascript');
       if (path === '/healthz') return send(res, 200, { ok: true });
 
       if (path === '/api/workers' && req.method === 'GET') {
         discover();
-        return send(res, 200, { root, workers: [...workers.values()].map(view) });
+        const real = [...workers.values()].map(view); // operable, real lifecycle
+        return send(res, 200, { root, environments: ENVIRONMENTS, workers: [...real, ...seedFleet()] });
       }
       if (path === '/api/detect' && req.method === 'POST') {
         const { dir } = JSON.parse((await readBody(req)) || '{}');
         const target = resolve(root, dir || '.');
         const scan = await scanRepo(target);
         return send(res, 200, { dir: relative(root, target) || '.', ...scan });
+      }
+      if (path === '/api/environments') return send(res, 200, { environments: ENVIRONMENTS });
+
+      // ---- fleet aggregation (live ⊕ seeded representative data) -----------
+      if (path === '/api/overview' && req.method === 'GET') {
+        discover();
+        const now = Date.now();
+        const real = [...workers.values()];
+        const fl = seedFleet();
+        const tns = seedTenants();
+        const liveRunning = real.filter((w) => w.status === 'running').length;
+        const kpi = {
+          workersLive: liveRunning + fl.filter((w) => w.health !== 'error').length,
+          workersTotal: real.length + fl.length,
+          runs24h: tns.reduce((a, t) => a + t.runs24h, 0),
+          errorRatePct: Math.round((fl.reduce((a, w) => a + w.errPct, 0) / fl.length) * 10) / 10,
+          p95: Math.round(fl.reduce((a, w) => a + w.p95, 0) / fl.length),
+          spend24h: Math.round(fl.reduce((a, w) => a + w.cost24h, 0) * 100) / 100,
+          pendingApprovals: 3,
+        };
+        return send(res, 200, {
+          kpi, environments: ENVIRONMENTS,
+          runVolume: series(now, 24, 3200, 900, 0x11),
+          latency: series(now, 24, 900, 280, 0x22),
+          cost: series(now, 24, 320, 90, 0x33),
+          topTenants: tns.slice().sort((a, b) => b.costMtd - a.costMtd).slice(0, 6),
+          alerts: [
+            { sev: 'crit', worker: 'sanctions-screen', msg: '2 runs held > 30m awaiting approval', env: 'prod' },
+            { sev: 'warn', worker: 'fraud-review', msg: 'error rate 4.2% over 1h (SLO 2%)', env: 'prod' },
+            { sev: 'info', worker: 'kyc-screening', msg: 'canary v2.5.0 at 10% — nominal', env: 'prod' },
+          ],
+          sample: true,
+        });
+      }
+      if (path === '/api/runs' && req.method === 'GET') {
+        discover();
+        const live: unknown[] = [];
+        for (const w of workers.values()) {
+          if (w.status === 'running' && w.port) {
+            const d = await fetchJSON(w.port, '/v1/runs?tenant=default');
+            for (const r of (d?.runs || [])) live.push({
+              id: r.run_id, worker: w.name, workerId: w.id, tenant: r.tenant || 'default',
+              status: r.status, steps: r.n_steps, tokens: r.tokens, costUsd: 0, ageMins: 0, live: true,
+            });
+          }
+        }
+        return send(res, 200, { runs: [...live, ...sampleRuns(40)] });
+      }
+      if (path === '/api/approvals' && req.method === 'GET') {
+        discover();
+        const held: unknown[] = [];
+        for (const w of workers.values()) {
+          if (w.status === 'running' && w.port) {
+            const d = await fetchJSON(w.port, '/v1/runs/held');
+            for (const h of (d?.held || [])) held.push({ ...h, worker: w.name, workerId: w.id, live: true });
+          }
+        }
+        const seeded = [
+          { run: 'run_8c21', tool: 'send', args: { to: 'customer@globex.com', body: 'claim approved' }, worker: 'claims-adjudicator', ageMins: 41, env: 'prod', sample: true },
+          { run: 'run_4f0a', tool: 'transfer', args: { amount: 12500, acct: '****8842' }, worker: 'sanctions-screen', ageMins: 33, env: 'prod', sample: true },
+          { run: 'run_2b7e', tool: 'refund', args: { order: 'SO-77213', usd: 480 }, worker: 'returns-resolver', ageMins: 9, env: 'staging', sample: true },
+        ];
+        return send(res, 200, { held: [...held, ...seeded] });
+      }
+      if (path === '/api/tenants' && req.method === 'GET') return send(res, 200, { tenants: seedTenants(), sample: true });
+      if (path === '/api/access' && req.method === 'GET')
+        return send(res, 200, { users: USERS, roles: ROLES, sso: SSO, environments: ENVIRONMENTS, sample: true });
+      if (path === '/api/audit' && req.method === 'GET')
+        return send(res, 200, { events: [...liveAudit, ...auditSeed()], sample: true });
+      if (path === '/api/cost' && req.method === 'GET') {
+        const now = Date.now();
+        return send(res, 200, {
+          series: series(now, 30, 7600, 1800, 0x44),
+          tenants: seedTenants().slice().sort((a, b) => b.costMtd - a.costMtd),
+          byEnv: [{ env: 'prod', cost: 18420.55 }, { env: 'staging', cost: 2110.2 }, { env: 'dev', cost: 340.18 }],
+          budget: 32000, sample: true,
+        });
       }
 
       const m = path.match(/^\/api\/workers\/([^/]+)(\/.*)?$/);
@@ -243,10 +366,12 @@ export function startControlServer(opts: ControlOptions) {
         if (sub === '/start' && req.method === 'POST') {
           const body = JSON.parse((await readBody(req)) || '{}');
           await start(w, body.port);
+          audit(OPERATOR, 'worker.start', w.name, `started on :${w.port}`);
           return send(res, 200, view(w));
         }
         if (sub === '/stop' && req.method === 'POST') {
           await stop(w);
+          audit(OPERATOR, 'worker.stop', w.name, 'stopped');
           return send(res, 200, view(w));
         }
         if (sub === '/logs' && req.method === 'GET') return send(res, 200, { logs: w.logs.slice(-600) });
@@ -267,9 +392,17 @@ export function startControlServer(opts: ControlOptions) {
           if (!v.ok) return send(res, 400, { valid: false, errors: v.errors });
           writeFileSync(w.file, yaml);
           discover();
+          audit(OPERATOR, 'config.save', w.name, 'edited worker.yaml');
           return send(res, 200, { valid: true, errors: [], saved: true });
         }
-        if (sub.startsWith('/proxy/')) return proxy(w, sub.slice('/proxy/'.length), req, res);
+        if (sub.startsWith('/proxy/')) {
+          const subpath = sub.slice('/proxy/'.length);
+          if (req.method === 'POST' && subpath.includes('v1/control')) {
+            const act = subpath.replace('v1/control/', 'control.').replace(/\/.*$/, '') || 'control.update';
+            audit(OPERATOR, act.startsWith('control') ? act : 'control.update', w.name, subpath);
+          }
+          return proxy(w, subpath, req, res);
+        }
       }
 
       send(res, 404, { error: 'not found' });

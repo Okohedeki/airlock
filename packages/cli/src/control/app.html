@@ -3,297 +3,57 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>airlock control</title>
-<style>
-  :root{
-    --bg:#eef1f4; --surface:#ffffff; --ink:#1b2430; --mut:#5b6675; --faint:#8a95a3;
-    --line:#dce1e7; --line2:#c7cfd8; --nav:#1d2530; --nav2:#283342;
-    --accent:#0d9488; --accent-d:#0b7d72; --blue:#1f6feb;
-    --run:#16a34a; --stop:#94a3b8; --err:#dc2626; --warn:#d97706;
-    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
-  }
-  *{box-sizing:border-box;}
-  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13.5px;line-height:1.45;}
-  a{color:var(--blue);text-decoration:none;} a:hover{text-decoration:underline;}
-  code,.mono{font-family:var(--mono);font-size:12px;}
-  /* top nav */
-  .nav{background:var(--nav);color:#dfe5ec;display:flex;align-items:center;gap:18px;height:48px;padding:0 18px;}
-  .nav .brand{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:.02em;}
-  .nav .brand .mk{width:22px;height:22px;border-radius:5px;background:var(--accent);color:#04201c;display:grid;place-items:center;font-weight:900;font-size:13px;}
-  .nav .brand small{color:var(--faint);font-weight:600;font-size:11px;border-left:1px solid #3a4453;padding-left:9px;margin-left:2px;}
-  .nav .tabs{display:flex;gap:2px;margin-left:8px;}
-  .nav .tabs button{background:none;border:none;color:#aab4c2;font:inherit;font-weight:600;padding:6px 12px;border-radius:6px;cursor:pointer;}
-  .nav .tabs button:hover{background:var(--nav2);color:#fff;}
-  .nav .tabs button.on{background:var(--nav2);color:#fff;}
-  .nav .sp{flex:1;}
-  .nav .ws{font-family:var(--mono);font-size:11px;color:var(--faint);}
-  .nav .ws b{color:#cdd6e0;}
-  /* layout */
-  .wrap{max-width:1280px;margin:0 auto;padding:20px 18px 60px;}
-  .bar{display:flex;align-items:center;gap:12px;margin:0 0 12px;}
-  .bar h1{font-size:16px;margin:0;font-weight:700;}
-  .bar .count{font-family:var(--mono);font-size:12px;color:var(--mut);background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:2px 10px;}
-  .bar .sp{flex:1;}
-  .btn{font:inherit;font-weight:600;font-size:12.5px;border:1px solid var(--line2);background:var(--surface);color:var(--ink);
-    border-radius:6px;padding:6px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;}
-  .btn:hover{border-color:var(--faint);background:#f6f8fa;}
-  .btn.p{background:var(--accent);border-color:var(--accent);color:#fff;} .btn.p:hover{background:var(--accent-d);}
-  .btn.d{color:var(--err);border-color:#e7b7b7;} .btn.d:hover{background:#fdecec;}
-  .btn.sm{padding:4px 9px;font-size:12px;}
-  .btn:disabled{opacity:.5;cursor:not-allowed;}
-  /* table */
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:9px;overflow:hidden;}
-  table{width:100%;border-collapse:collapse;}
-  th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:middle;}
-  th{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);font-weight:700;background:#f7f9fb;position:sticky;top:0;}
-  tbody tr:last-child td{border-bottom:none;}
-  tbody tr:hover{background:#f7fafc;}
-  td .nm{font-weight:600;cursor:pointer;} td .nm:hover{color:var(--accent-d);text-decoration:underline;}
-  td.mono{font-family:var(--mono);font-size:12px;color:var(--mut);}
-  .st{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:12px;}
-  .dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--stop);}
-  .dot.running{background:var(--run);box-shadow:0 0 0 3px rgba(22,163,74,.18);}
-  .dot.starting{background:var(--warn);} .dot.error,.dot.exited{background:var(--err);}
-  .tag{font-family:var(--mono);font-size:11px;border:1px solid var(--line2);border-radius:5px;padding:1px 7px;color:var(--mut);background:#f7f9fb;}
-  .tag.pub{color:var(--accent-d);border-color:#9fd8d1;background:#e9f7f5;}
-  .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
-  .empty{padding:40px;text-align:center;color:var(--faint);}
-  .lead{color:var(--mut);margin:0 0 16px;max-width:680px;}
-  .hidden{display:none;}
-  /* detect */
-  .field{display:flex;gap:8px;align-items:center;margin-bottom:14px;}
-  input.txt{font:inherit;border:1px solid var(--line2);border-radius:6px;padding:7px 10px;min-width:280px;}
-  input.txt:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(13,148,136,.15);}
-  .kv{display:grid;grid-template-columns:130px 1fr;gap:8px 14px;font-size:13px;}
-  .kv .k{color:var(--mut);font-weight:600;} .kv .v{font-family:var(--mono);font-size:12.5px;}
-  /* drawer */
-  .scrim{position:fixed;inset:0;background:rgba(20,28,38,.4);opacity:0;pointer-events:none;transition:.15s;z-index:40;}
-  .scrim.on{opacity:1;pointer-events:auto;}
-  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(720px,92vw);background:var(--surface);border-left:1px solid var(--line2);
-    transform:translateX(100%);transition:transform .2s cubic-bezier(.2,.7,.2,1);z-index:50;display:flex;flex-direction:column;box-shadow:-12px 0 40px rgba(20,28,38,.18);}
-  .drawer.on{transform:none;}
-  .drawer .dh{display:flex;align-items:center;gap:12px;padding:15px 18px;border-bottom:1px solid var(--line);}
-  .drawer .dh .nm{font-size:16px;font-weight:700;}
-  .drawer .dh .x{margin-left:auto;cursor:pointer;color:var(--mut);font-size:20px;border:none;background:none;}
-  .drawer .dtabs{display:flex;gap:2px;padding:8px 14px 0;border-bottom:1px solid var(--line);}
-  .drawer .dtabs button{background:none;border:none;border-bottom:2px solid transparent;color:var(--mut);font:inherit;font-weight:600;padding:8px 12px;cursor:pointer;}
-  .drawer .dtabs button.on{color:var(--ink);border-bottom-color:var(--accent);}
-  .drawer .dbody{flex:1;overflow:auto;padding:18px;}
-  textarea.yaml{width:100%;height:48vh;font-family:var(--mono);font-size:12.5px;line-height:1.55;border:1px solid var(--line2);
-    border-radius:8px;padding:12px;resize:vertical;tab-size:2;background:#fbfcfd;}
-  textarea.yaml:focus{outline:none;border-color:var(--accent);}
-  .valid{font-size:12px;font-family:var(--mono);padding:8px 11px;border-radius:6px;margin-top:10px;}
-  .valid.ok{background:#e9f7ef;color:#15803d;border:1px solid #b6e3c8;}
-  .valid.bad{background:#fdecec;color:#b91c1c;border:1px solid #f0bcbc;white-space:pre-wrap;}
-  .logbox{background:#10151c;color:#cdd6e0;font-family:var(--mono);font-size:11.5px;line-height:1.5;border-radius:8px;
-    padding:12px;height:56vh;overflow:auto;white-space:pre-wrap;word-break:break-word;}
-  .srow{display:flex;align-items:center;gap:12px;padding:11px 2px;border-top:1px solid var(--line);}
-  .srow:first-child{border-top:none;} .srow .sp{flex:1;}
-  .srow .nm{font-weight:600;} .srow .sub{font-family:var(--mono);font-size:11.5px;color:var(--mut);}
-  .sw{position:relative;width:38px;height:21px;flex:none;cursor:pointer;}
-  .sw input{opacity:0;width:0;height:0;} .sw .tr{position:absolute;inset:0;background:var(--line2);border-radius:21px;transition:.15s;}
-  .sw .tr::before{content:"";position:absolute;height:15px;width:15px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.15s;box-shadow:0 1px 2px rgba(0,0,0,.3);}
-  .sw input:checked + .tr{background:var(--accent);} .sw input:checked + .tr::before{transform:translateX(17px);}
-  .sectit{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);font-weight:700;margin:18px 0 6px;}
-  .sectit:first-child{margin-top:0;}
-  .inp{font-family:var(--mono);width:90px;border:1px solid var(--line2);border-radius:6px;padding:5px 9px;text-align:right;}
-  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--nav);color:#fff;font-size:12.5px;
-    padding:9px 16px;border-radius:8px;opacity:0;transition:.2s;z-index:60;}
-  .toast.on{opacity:1;}
-</style>
+<title>airlock · Control Plane</title>
+<link rel="stylesheet" href="/app.css" />
 </head>
 <body>
-<div class="nav">
-  <div class="brand"><span class="mk">▲</span> airlock <small>CONTROL</small></div>
-  <div class="tabs">
-    <button data-v="workers" class="on">Workers</button>
-    <button data-v="detect">Detect</button>
-  </div>
-  <div class="sp"></div>
-  <div class="ws">workspace <b id="wsPath">…</b></div>
+<div class="app">
+  <!-- top bar -->
+  <header class="top">
+    <div class="brand"><span class="mk">▲</span> airlock <small>Control Plane</small></div>
+    <div class="search"><input id="globalSearch" placeholder="Search workers, runs, tenants…" /></div>
+    <div class="sp"></div>
+    <label class="envsel"><span class="envdot" id="envDot"></span>
+      <select id="envSel"><option value="all">All environments</option></select></label>
+    <div class="acct">
+      <div class="avatar" id="acctAv">AO</div>
+      <div class="who"><b id="acctName">Amaya Okonkwo</b><span id="acctOrg">Acme Corp · prod</span></div>
+      <span class="rolechip" id="acctRole">Owner</span>
+    </div>
+  </header>
+
+  <!-- left rail -->
+  <nav class="rail">
+    <div class="grp">Operate</div>
+    <a class="nav" data-route="overview"><span class="ic">◰</span> Overview</a>
+    <a class="nav" data-route="workers"><span class="ic">▦</span> Workers <span class="ct" id="ctWorkers"></span></a>
+    <a class="nav" data-route="runs"><span class="ic">≣</span> Runs</a>
+    <a class="nav" data-route="approvals"><span class="ic">✋</span> Approvals <span class="ct" id="ctApprovals"></span></a>
+    <div class="grp">Govern</div>
+    <a class="nav" data-route="tenants"><span class="ic">⧉</span> Tenants</a>
+    <a class="nav" data-route="cost"><span class="ic">$</span> Cost &amp; usage</a>
+    <a class="nav" data-route="audit"><span class="ic">⎙</span> Audit log</a>
+    <a class="nav" data-route="access"><span class="ic">⛨</span> Access control</a>
+    <div class="foot">airlock runtime · workspace <span id="wsPath" class="mono"></span></div>
+  </nav>
+
+  <!-- main -->
+  <main class="main">
+    <div class="bcrumb" id="bcrumb"></div>
+    <div class="page" id="page"><div class="empty">loading…</div></div>
+  </main>
 </div>
 
-<div class="wrap">
-  <!-- WORKERS -->
-  <section id="workers">
-    <div class="bar">
-      <h1>Workers</h1><span class="count" id="wkCount">0</span>
-      <div class="sp"></div>
-      <button class="btn sm" id="wkRefresh">↻ Refresh</button>
-    </div>
-    <div class="card">
-      <table>
-        <thead><tr><th style="width:160px">Status</th><th>Name</th><th>Harness</th><th>Expose</th><th>Directory</th><th>Port</th><th style="text-align:right">Actions</th></tr></thead>
-        <tbody id="wkBody"><tr><td colspan="7" class="empty">scanning workspace…</td></tr></tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- DETECT -->
-  <section id="detect" class="hidden">
-    <div class="bar"><h1>Detect a project</h1></div>
-    <p class="lead">Point airlock at a project directory and it inspects the dependencies and source to
-      identify the agent framework (harness) and entrypoint — the same scan behind <code>airlock init --detect</code>.</p>
-    <div class="card" style="padding:18px">
-      <div class="field">
-        <input class="txt" id="dtDir" placeholder="path relative to workspace (e.g. examples/langgraph-agent)" value=".">
-        <button class="btn p" id="dtRun">Detect</button>
-      </div>
-      <div id="dtResult"></div>
-    </div>
-  </section>
-</div>
-
-<!-- DRAWER -->
 <div class="scrim" id="scrim"></div>
 <aside class="drawer" id="drawer">
-  <div class="dh"><span class="dot" id="dStatus"></span><span class="nm" id="dName">—</span>
-    <span class="tag" id="dHarness"></span><button class="x" id="dClose">×</button></div>
-  <div class="dtabs">
-    <button data-d="config" class="on">Config</button>
-    <button data-d="skills">Skills &amp; guards</button>
-    <button data-d="logs">Logs</button>
-  </div>
-  <div class="dbody">
-    <div id="dconfig">
-      <textarea class="yaml" id="dYaml" spellcheck="false"></textarea>
-      <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
-        <button class="btn p sm" id="dSave">Validate &amp; save</button>
-        <span class="mono" style="font-size:11px;color:var(--faint)">edits worker.yaml on disk · restart the worker to apply</span>
-      </div>
-      <div id="dValid"></div>
-    </div>
-    <div id="dskills" class="hidden"></div>
-    <div id="dlogs" class="hidden"><div class="logbox" id="dLogbox">—</div></div>
-  </div>
+  <div class="dh"><span class="dot" id="dwDot"></span><span class="nm" id="dwName">—</span>
+    <span class="env" id="dwEnv"></span><span class="tag" id="dwHarness"></span>
+    <button class="x" id="dwClose">×</button></div>
+  <div class="dtabs" id="dwTabs"></div>
+  <div class="dbody" id="dwBody"></div>
 </aside>
 <div class="toast" id="toast"></div>
 
-<script>
-const $=s=>document.querySelector(s);
-const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-const j=async(u,o)=>{const r=await fetch(u,o);return r.json().catch(()=>({}));};
-let CUR=null, logTimer=null;
-function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),1600);}
-
-// nav
-document.querySelectorAll('.nav .tabs button').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('.nav .tabs button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
-  document.querySelectorAll('.wrap > section').forEach(s=>s.classList.toggle('hidden',s.id!==b.dataset.v));
-});
-
-// ---- workers table ----
-async function loadWorkers(){
-  const d=await j('/api/workers'); $('#wsPath').textContent=d.root||'';
-  const ws=d.workers||[]; $('#wkCount').textContent=ws.length;
-  $('#wkBody').innerHTML = ws.length ? ws.map(w=>{
-    const running=w.status==='running';
-    return `<tr>
-      <td><span class="st"><span class="dot ${w.status}"></span>${w.status}${w.exitCode!=null&&w.status==='exited'?(' ('+w.exitCode+')'):''}</span></td>
-      <td><span class="nm" onclick="openDrawer('${esc(w.id)}')">${esc(w.name)}</span></td>
-      <td class="mono">${esc(w.harness)}</td>
-      <td><span class="tag ${w.expose==='public'?'pub':''}">${esc(w.expose)}</span></td>
-      <td class="mono">${esc(w.dir)}</td>
-      <td class="mono">${w.port||'—'}</td>
-      <td><div class="acts">
-        ${running
-          ? `<button class="btn d sm" onclick="act('${esc(w.id)}','stop',this)">■ Stop</button>
-             <a class="btn sm" href="http://localhost:${w.port}/console" target="_blank">Console ↗</a>`
-          : `<button class="btn p sm" onclick="act('${esc(w.id)}','start',this)">▶ Start</button>`}
-        <button class="btn sm" onclick="openDrawer('${esc(w.id)}')">Edit</button>
-        <button class="btn sm" onclick="openDrawer('${esc(w.id)}','logs')">Logs</button>
-      </div></td></tr>`;
-  }).join('') : `<tr><td colspan="7" class="empty">no worker.yaml found under the workspace.</td></tr>`;
-}
-window.act=async(id,action,btn)=>{
-  if(btn){btn.disabled=true;btn.textContent=action==='start'?'starting…':'stopping…';}
-  await fetch(`/api/workers/${encodeURIComponent(id)}/${action}`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
-  toast(action==='start'?'worker started':'worker stopped');
-  await loadWorkers();
-};
-$('#wkRefresh').onclick=loadWorkers;
-
-// ---- drawer ----
-window.openDrawer=async(id,tab)=>{
-  CUR=id; const w=await j('/api/workers/'+encodeURIComponent(id));
-  $('#dName').textContent=w.name; $('#dHarness').textContent=w.harness;
-  $('#dStatus').className='dot '+w.status;
-  $('#scrim').classList.add('on'); $('#drawer').classList.add('on');
-  dTab(tab||'config');
-};
-function closeDrawer(){$('#scrim').classList.remove('on');$('#drawer').classList.remove('on');CUR=null;if(logTimer){clearInterval(logTimer);logTimer=null;}}
-$('#dClose').onclick=closeDrawer; $('#scrim').onclick=closeDrawer;
-document.querySelectorAll('.dtabs button').forEach(b=>b.onclick=()=>dTab(b.dataset.d));
-function dTab(name){
-  document.querySelectorAll('.dtabs button').forEach(b=>b.classList.toggle('on',b.dataset.d===name));
-  ['config','skills','logs'].forEach(t=>$('#d'+t).classList.toggle('hidden',t!==name));
-  if(logTimer){clearInterval(logTimer);logTimer=null;}
-  if(name==='config')loadYaml();
-  if(name==='skills')loadSkills();
-  if(name==='logs'){loadLogs();logTimer=setInterval(loadLogs,1500);}
-}
-async function loadYaml(){
-  const d=await j('/api/workers/'+encodeURIComponent(CUR)+'/yaml');
-  $('#dYaml').value=d.yaml||''; showValid(d);
-}
-function showValid(d){
-  $('#dValid').innerHTML = d.valid
-    ? `<div class="valid ok">✓ valid worker.yaml</div>`
-    : `<div class="valid bad">✗ ${esc((d.errors||['invalid']).join('\n'))}</div>`;
-}
-$('#dSave').onclick=async()=>{
-  const r=await fetch('/api/workers/'+encodeURIComponent(CUR)+'/yaml',{method:'PUT',
-    headers:{'content-type':'application/json'},body:JSON.stringify({yaml:$('#dYaml').value})});
-  const d=await r.json(); showValid(d);
-  if(d.saved){toast('worker.yaml saved');loadWorkers();}
-};
-async function loadLogs(){
-  const d=await j('/api/workers/'+encodeURIComponent(CUR)+'/logs');
-  const box=$('#dLogbox'); const atBottom=box.scrollTop+box.clientHeight>=box.scrollHeight-30;
-  box.textContent=(d.logs||[]).join('\n')||'no logs — start the worker to see output.';
-  if(atBottom)box.scrollTop=box.scrollHeight;
-}
-async function loadSkills(){
-  const w=await j('/api/workers/'+encodeURIComponent(CUR));
-  const host=$('#dskills');
-  if(w.status!=='running'){host.innerHTML=`<p class="lead">Start the worker to manage its skills, model routing and guards live.</p>`;return;}
-  const c=await j('/api/workers/'+encodeURIComponent(CUR)+'/proxy/v1/control');
-  const sw=(on,h)=>`<label class="sw"><input type="checkbox" ${on?'checked':''} ${h}><span class="tr"></span></label>`;
-  const b=c.controls.budget||{}; const appr=new Set(c.controls.approvals||[]);
-  host.innerHTML=`
-    <div class="sectit">Model routing</div>
-    <div class="srow"><span class="nm">Active model</span><span class="sp"></span>
-      <select class="inp" style="width:auto;text-align:left" onchange="ctlRoute(this.value)">
-        ${c.models.bindings.map(x=>`<option ${x.name===c.models.default?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
-    <div class="sectit">Skills</div>
-    ${c.skills.length?c.skills.map(s=>`<div class="srow"><span class="nm">${esc(s.id)}</span><span class="sub">→ ${esc(s.tool)}</span><span class="sp"></span>${sw(s.enabled,`onchange="ctlSkill('${esc(s.id)}',this.checked)"`)}</div>`).join(''):'<p class="sub">no skills declared.</p>'}
-    <div class="sectit">Guards</div>
-    <div class="srow"><span class="nm">Max steps</span><span class="sp"></span><input class="inp" type="number" value="${c.controls.max_steps??''}" onchange="ctlNum('max_steps',this.value)"></div>
-    <div class="srow"><span class="nm">Budget · tokens</span><span class="sp"></span><input class="inp" type="number" placeholder="none" value="${b.tokens??''}" onchange="ctlNum('budget.tokens',this.value)"></div>
-    <div class="sectit">Approvals (hold for a human)</div>
-    ${(c.tools||[]).map(t=>`<div class="srow"><span class="nm">${esc(t)}</span><span class="sp"></span>${sw(appr.has(t),`onchange="ctlAppr('${esc(t)}',this.checked)"`)}</div>`).join('')}`;
-}
-const px=(p,b)=>fetch('/api/workers/'+encodeURIComponent(CUR)+'/proxy/'+p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}).then(()=>{toast('applied');loadSkills();});
-window.ctlSkill=(id,on)=>px('v1/control/skills/'+encodeURIComponent(id),{enabled:on});
-window.ctlRoute=v=>px('v1/control/routing',{default:v});
-window.ctlNum=(k,v)=>px('v1/control/controls',{[k]:v===''?false:Number(v)});
-window.ctlAppr=(t,on)=>px('v1/control/controls',{approval:{tool:t,on}});
-
-// ---- detect ----
-$('#dtRun').onclick=async()=>{
-  $('#dtResult').innerHTML='<p class="sub mono">scanning…</p>';
-  const d=await j('/api/detect',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({dir:$('#dtDir').value})});
-  $('#dtResult').innerHTML=`<div class="kv">
-    <div class="k">Directory</div><div class="v">${esc(d.dir)}</div>
-    <div class="k">Harness</div><div class="v">${d.harness?esc(d.harness):'<span style="color:var(--warn)">not detected → custom</span>'}</div>
-    <div class="k">Entrypoint</div><div class="v">${d.entrypoint?esc(d.entrypoint):'<span style="color:var(--faint)">none</span>'}</div>
-    <div class="k">Evidence</div><div class="v">${(d.evidence||[]).map(esc).join('<br>')||'—'}</div>
-  </div>`;
-};
-
-loadWorkers();
-setInterval(()=>{ if(!CUR) loadWorkers(); },4000);
-</script>
+<script src="/app.js"></script>
 </body>
 </html>
