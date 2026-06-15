@@ -12,7 +12,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { ENVIRONMENTS, SSO, USERS, auditSeed, type User } from './seed.js';
+import { ENVIRONMENTS, SSO, USERS, type User } from './seed.js';
 
 export interface EnvPolicy { minRole: string; changeControl: boolean; }
 export interface ControlState {
@@ -60,14 +60,8 @@ export class ControlStore {
       workerEnv: {},
     };
     writeFileSync(this.cFile, JSON.stringify(seeded, null, 2));
-    // Seed the audit history once (real timestamps), so the log is populated but append-only after.
-    if (!existsSync(this.aFile)) {
-      const now = Date.now();
-      const lines = auditSeed()
-        .map((e) => JSON.stringify({ ts: now - e.tsMins * 60_000, actor: e.actor, action: e.action, target: e.target, env: e.env, detail: e.detail }))
-        .join('\n');
-      writeFileSync(this.aFile, lines + '\n');
-    }
+    // Audit log starts EMPTY and only ever appends real actions (no fabricated history).
+    if (!existsSync(this.aFile)) writeFileSync(this.aFile, '');
     return seeded;
   }
 

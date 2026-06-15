@@ -13,14 +13,14 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from '
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse as parseYaml } from 'yaml';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 import { runUp, type UpHandle } from '../commands/up.js';
 import { scanRepo } from '../scan.js';
 import { validateWorker } from '../worker-schema/validate.js';
-import { ROLES, fleet as seedFleet, sampleRuns, series, tenants as seedTenants } from './seed.js';
+import { ROLES } from './seed.js';
 import { ControlStore } from './store.js';
 import { can, currentUser, login as authLogin, logout as authLogout } from './auth.js';
 
@@ -64,18 +64,6 @@ export function startControlServer(opts: ControlOptions) {
   const audit = (actor: string, action: string, target: string, detail: string, env = 'dev') =>
     store.appendAudit({ actor, action, target, detail, env });
 
-  // Deterministic sample metrics for a worker id (real workers have no local traffic, so RPS/
-  // p95/error/cost are representative — marked sample in the UI).
-  const sampleMetrics = (id: string) => {
-    let s = 0;
-    for (const c of id) s = (Math.imul(s, 31) + c.charCodeAt(0)) >>> 0;
-    const r = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
-    const errPct = Math.round(r() * 25) / 10;
-    return { rps: Math.round(r() * 60 * 10) / 10, p95: 240 + Math.floor(r() * 1800), errPct,
-      cost24h: Math.round(r() * 120 * 100) / 100, tenants: 1 + Math.floor(r() * 6),
-      health: errPct > 4 ? 'degraded' : 'healthy' };
-  };
-
   const fetchJSON = (port: number, path: string): Promise<any> =>
     new Promise((res) => {
       const rq = httpRequest({ host: '127.0.0.1', port, path, method: 'GET' }, (up) => {
@@ -86,6 +74,58 @@ export function startControlServer(opts: ControlOptions) {
       rq.on('error', () => res(null));
       rq.end();
     });
+
+  // ---- real per-worker aggregation (from the worker's own manifest + HTTP surface) ----
+  const manifestOf = (w: Worker) => readManifest(w.file);
+  const workerTenantList = (w: Worker): string[] => {
+    const keys = ((manifestOf(w).tenancy as Record<string, unknown>) || {}).keys as Record<string, string> | undefined;
+    return Array.from(new Set(['default', ...(keys ? Object.values(keys) : [])]));
+  };
+  const price1k = (w: Worker): number => {
+    const p = (manifestOf(w).pricing as Record<string, any>) || {};
+    const d = p.default || (p.models && p.models.default) || {};
+    return Number(d.per_1k || d.usd_per_1k || 0);
+  };
+  interface RunRow { id: string; workerId: string; worker: string; tenant: string; status: string; steps: number; tokens: number; started: number; costUsd: number; }
+  async function runsOf(w: Worker): Promise<RunRow[]> {
+    if (w.status !== 'running' || !w.port) return [];
+    const price = price1k(w);
+    const out: RunRow[] = [];
+    const seen = new Set<string>(); // a run belongs to one tenant; dedupe across tenant queries
+    for (const t of workerTenantList(w)) {
+      const d = await fetchJSON(w.port, '/v1/runs?tenant=' + encodeURIComponent(t));
+      for (const r of (d?.runs || [])) {
+        if (seen.has(r.run_id)) continue;
+        seen.add(r.run_id);
+        out.push({
+          id: r.run_id, workerId: w.id, worker: w.name, tenant: r.tenant || t,
+          status: r.status, steps: r.n_steps || 0, tokens: r.tokens || 0, started: (r.started || 0) * 1000,
+          costUsd: Math.round((r.tokens || 0) / 1000 * price * 1e4) / 1e4,
+        });
+      }
+    }
+    return out;
+  }
+  const statsOf = (runs: RunRow[]) => {
+    const errors = runs.filter((r) => r.status === 'error' || r.status === 'stopped').length;
+    return {
+      runs: runs.length, tokens: runs.reduce((a, r) => a + r.tokens, 0),
+      cost: Math.round(runs.reduce((a, r) => a + r.costUsd, 0) * 1e4) / 1e4,
+      errPct: runs.length ? Math.round((errors / runs.length) * 1000) / 10 : 0,
+    };
+  };
+  const modelsOf = (w: Worker) => {
+    const m = manifestOf(w);
+    const models = (m.models as Record<string, any>) || {};
+    const def = ((m.routing as Record<string, unknown>) || {}).default as string || 'default';
+    return {
+      default: def,
+      bindings: Object.entries(models).map(([name, c]) => ({
+        name, model: (c && c.model) || name, endpoint: (c && c.endpoint) || '(stub / echo)',
+        env_key: (c && c.env_key) || 'OPENAI_API_KEY', isDefault: name === def,
+      })),
+    };
+  };
 
   const slug = (dir: string) =>
     (relative(root, dir) || dir.split('/').pop() || 'worker').replace(/[\\/]/g, ':') || 'root';
@@ -226,19 +266,18 @@ export function startControlServer(opts: ControlOptions) {
       req.on('end', () => r(Buffer.concat(c).toString()));
     });
   const view = (w: Worker) => {
-    const m = readManifest(w.file);
-    const wk = (m.worker as Record<string, unknown>) || {};
-    const sm = sampleMetrics(w.id);
+    const wk = (readManifest(w.file).worker as Record<string, unknown>) || {};
     return {
       id: w.id, name: w.name, harness: w.harness, expose: w.expose, status: w.status,
       port: w.port, url: w.url, dir: relative(root, w.dir) || '.', startedAt: w.startedAt,
       exitCode: w.exitCode, lastError: w.lastError,
       env: store.workerEnv(w.id), version: 'v' + String(wk.version || '0.0.0'),
-      operable: true, sampleMetrics: true,
-      health: w.status === 'running' ? sm.health : w.status === 'error' ? 'error' : 'idle',
-      rps: sm.rps, p95: sm.p95, errPct: sm.errPct, cost24h: sm.cost24h, tenants: sm.tenants,
+      models: modelsOf(w).bindings.length, model: modelsOf(w).default,
+      health: w.status === 'running' ? 'healthy' : w.status === 'error' ? 'error' : 'idle',
     };
   };
+  // A worker row enriched with REAL run stats (runs / tokens / errors / cost).
+  const viewStats = async (w: Worker) => ({ ...view(w), ...statsOf(await runsOf(w)) });
 
   /** Reverse-proxy /api/workers/:id/proxy/<path> → the worker's own HTTP surface. */
   function proxy(w: Worker, subpath: string, req: IncomingMessage, res: ServerResponse): void {
@@ -311,8 +350,8 @@ export function startControlServer(opts: ControlOptions) {
 
       if (path === '/api/workers' && req.method === 'GET') {
         discover();
-        const real = [...workers.values()].map(view); // operable, real lifecycle
-        return send(res, 200, { root, environments: store.environments(), workers: [...real, ...seedFleet()] });
+        const rows = await Promise.all([...workers.values()].map(viewStats));
+        return send(res, 200, { root, environments: store.environments(), workers: rows });
       }
       if (path === '/api/detect' && req.method === 'POST') {
         const { dir } = JSON.parse((await readBody(req)) || '{}');
@@ -322,50 +361,48 @@ export function startControlServer(opts: ControlOptions) {
       }
       if (path === '/api/environments') return send(res, 200, { environments: store.environments(), policy: store.get().envPolicy });
 
-      // ---- fleet aggregation (live ⊕ seeded representative data) -----------
+      // ---- fleet aggregation (REAL data from discovered workers) -----------
+      async function allRuns(): Promise<RunRow[]> {
+        const all: RunRow[] = [];
+        for (const w of workers.values()) all.push(...(await runsOf(w)));
+        return all;
+      }
+      const heldCount = async (): Promise<number> => {
+        let n = 0;
+        for (const w of workers.values()) if (w.status === 'running' && w.port) n += ((await fetchJSON(w.port, '/v1/runs/held'))?.held || []).length;
+        return n;
+      };
       if (path === '/api/overview' && req.method === 'GET') {
         discover();
         const now = Date.now();
         const real = [...workers.values()];
-        const fl = seedFleet();
-        const tns = seedTenants();
-        const liveRunning = real.filter((w) => w.status === 'running').length;
-        const kpi = {
-          workersLive: liveRunning + fl.filter((w) => w.health !== 'error').length,
-          workersTotal: real.length + fl.length,
-          runs24h: tns.reduce((a, t) => a + t.runs24h, 0),
-          errorRatePct: Math.round((fl.reduce((a, w) => a + w.errPct, 0) / fl.length) * 10) / 10,
-          p95: Math.round(fl.reduce((a, w) => a + w.p95, 0) / fl.length),
-          spend24h: Math.round(fl.reduce((a, w) => a + w.cost24h, 0) * 100) / 100,
-          pendingApprovals: 3,
+        const runs = await allRuns();
+        const errors = runs.filter((r) => r.status === 'error' || r.status === 'stopped').length;
+        const bucket = (n: number, ms: number, val: (r: RunRow) => number) => {
+          const out = Array.from({ length: n }, (_, i) => ({ t: now - (n - 1 - i) * ms, v: 0 }));
+          for (const r of runs) { const h = Math.floor((now - r.started) / ms); if (r.started && h >= 0 && h < n) out[n - 1 - h]!.v += val(r); }
+          return out;
         };
+        const byTenant: Record<string, { name: string; runs24h: number; tokens24h: number; costMtd: number; plan: string }> = {};
+        for (const r of runs) { (byTenant[r.tenant] ||= { name: r.tenant, runs24h: 0, tokens24h: 0, costMtd: 0, plan: 'tenant' }); const t = byTenant[r.tenant]!; t.runs24h++; t.tokens24h += r.tokens; t.costMtd += r.costUsd; }
         return send(res, 200, {
-          kpi, environments: store.environments(),
-          runVolume: series(now, 24, 3200, 900, 0x11),
-          latency: series(now, 24, 900, 280, 0x22),
-          cost: series(now, 24, 320, 90, 0x33),
-          topTenants: tns.slice().sort((a, b) => b.costMtd - a.costMtd).slice(0, 6),
-          alerts: [
-            { sev: 'crit', worker: 'sanctions-screen', msg: '2 runs held > 30m awaiting approval', env: 'prod' },
-            { sev: 'warn', worker: 'fraud-review', msg: 'error rate 4.2% over 1h (SLO 2%)', env: 'prod' },
-            { sev: 'info', worker: 'kyc-screening', msg: 'canary v2.5.0 at 10% — nominal', env: 'prod' },
-          ],
-          sample: true,
+          kpi: {
+            workersLive: real.filter((w) => w.status === 'running').length, workersTotal: real.length,
+            runs24h: runs.length, errorRatePct: runs.length ? Math.round((errors / runs.length) * 1000) / 10 : 0,
+            tokens24h: runs.reduce((a, r) => a + r.tokens, 0), spend24h: Math.round(runs.reduce((a, r) => a + r.costUsd, 0) * 100) / 100,
+            pendingApprovals: await heldCount(),
+          },
+          environments: store.environments(),
+          runVolume: bucket(24, 3600_000, () => 1),
+          cost: bucket(24, 3600_000, (r) => r.costUsd),
+          topTenants: Object.values(byTenant).map((t) => ({ ...t, costMtd: Math.round(t.costMtd * 100) / 100 })).sort((a, b) => b.tokens24h - a.tokens24h).slice(0, 6),
+          alerts: real.filter((w) => w.status === 'error').map((w) => ({ sev: 'crit', worker: w.name, msg: w.lastError || 'failed to start', env: store.workerEnv(w.id) })),
         });
       }
       if (path === '/api/runs' && req.method === 'GET') {
         discover();
-        const live: unknown[] = [];
-        for (const w of workers.values()) {
-          if (w.status === 'running' && w.port) {
-            const d = await fetchJSON(w.port, '/v1/runs?tenant=default');
-            for (const r of (d?.runs || [])) live.push({
-              id: r.run_id, worker: w.name, workerId: w.id, tenant: r.tenant || 'default',
-              status: r.status, steps: r.n_steps, tokens: r.tokens, costUsd: 0, ageMins: 0, live: true,
-            });
-          }
-        }
-        return send(res, 200, { runs: [...live, ...sampleRuns(40)] });
+        const runs = (await allRuns()).map((r) => ({ ...r, ageMins: r.started ? Math.max(0, Math.round((Date.now() - r.started) / 60000)) : null }));
+        return send(res, 200, { runs: runs.sort((a, b) => (b.started || 0) - (a.started || 0)) });
       }
       if (path === '/api/approvals' && req.method === 'GET') {
         discover();
@@ -373,17 +410,25 @@ export function startControlServer(opts: ControlOptions) {
         for (const w of workers.values()) {
           if (w.status === 'running' && w.port) {
             const d = await fetchJSON(w.port, '/v1/runs/held');
-            for (const h of (d?.held || [])) held.push({ ...h, worker: w.name, workerId: w.id, live: true });
+            for (const h of (d?.held || [])) held.push({ ...h, worker: w.name, workerId: w.id, env: store.workerEnv(w.id), live: true });
           }
         }
-        const seeded = [
-          { run: 'run_8c21', tool: 'send', args: { to: 'customer@globex.com', body: 'claim approved' }, worker: 'claims-adjudicator', ageMins: 41, env: 'prod', sample: true },
-          { run: 'run_4f0a', tool: 'transfer', args: { amount: 12500, acct: '****8842' }, worker: 'sanctions-screen', ageMins: 33, env: 'prod', sample: true },
-          { run: 'run_2b7e', tool: 'refund', args: { order: 'SO-77213', usd: 480 }, worker: 'returns-resolver', ageMins: 9, env: 'staging', sample: true },
-        ];
-        return send(res, 200, { held: [...held, ...seeded] });
+        return send(res, 200, { held });
       }
-      if (path === '/api/tenants' && req.method === 'GET') return send(res, 200, { tenants: seedTenants(), sample: true });
+      if (path === '/api/models' && req.method === 'GET') {
+        discover();
+        const rows: unknown[] = [];
+        for (const w of workers.values()) { const md = modelsOf(w); for (const b of md.bindings) rows.push({ ...b, worker: w.name, workerId: w.id, env: store.workerEnv(w.id) }); }
+        return send(res, 200, { models: rows });
+      }
+      if (path === '/api/tenants' && req.method === 'GET') {
+        discover();
+        const runs = await allRuns();
+        const map: Record<string, { id: string; name: string; runs24h: number; tokens24h: number; costMtd: number; status: string; plan: string }> = {};
+        for (const w of workers.values()) for (const t of workerTenantList(w)) map[t] ||= { id: t, name: t, runs24h: 0, tokens24h: 0, costMtd: 0, status: 'active', plan: 'declared' };
+        for (const r of runs) { (map[r.tenant] ||= { id: r.tenant, name: r.tenant, runs24h: 0, tokens24h: 0, costMtd: 0, status: 'active', plan: 'active' }); const t = map[r.tenant]!; t.runs24h++; t.tokens24h += r.tokens; t.costMtd += r.costUsd; }
+        return send(res, 200, { tenants: Object.values(map).map((t) => ({ ...t, costMtd: Math.round(t.costMtd * 100) / 100 })) });
+      }
       if (path === '/api/access' && req.method === 'GET')
         return send(res, 200, {
           users: store.users().map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, sso: u.sso, lastActiveMins: u.lastActiveMins })),
@@ -410,12 +455,24 @@ export function startControlServer(opts: ControlOptions) {
         return send(res, 200, { events: store.readAudit(300).map((e) => ({ ...e, tsMins: Math.max(0, Math.round((now - e.ts) / 60000)) })) });
       }
       if (path === '/api/cost' && req.method === 'GET') {
+        discover();
         const now = Date.now();
+        const runs = await allRuns();
+        const byEnvMap: Record<string, number> = {};
+        for (const w of workers.values()) byEnvMap[store.workerEnv(w.id)] ||= 0;
+        const byTenant: Record<string, { name: string; costMtd: number; runs: number; plan: string }> = {};
+        const days = Array.from({ length: 30 }, (_, i) => ({ t: now - (29 - i) * 86400_000, v: 0 }));
+        for (const r of runs) {
+          const w = workers.get(r.workerId); const e = w ? store.workerEnv(w.id) : 'dev';
+          byEnvMap[e] = (byEnvMap[e] || 0) + r.costUsd;
+          (byTenant[r.tenant] ||= { name: r.tenant, costMtd: 0, runs: 0, plan: 'active' }); byTenant[r.tenant]!.costMtd += r.costUsd; byTenant[r.tenant]!.runs++;
+          const d = Math.floor((now - r.started) / 86400_000); if (r.started && d >= 0 && d < 30) days[29 - d]!.v += r.costUsd;
+        }
         return send(res, 200, {
-          series: series(now, 30, 7600, 1800, 0x44),
-          tenants: seedTenants().slice().sort((a, b) => b.costMtd - a.costMtd),
-          byEnv: [{ env: 'prod', cost: 18420.55 }, { env: 'staging', cost: 2110.2 }, { env: 'dev', cost: 340.18 }],
-          budget: 32000, sample: true,
+          series: days,
+          tenants: Object.values(byTenant).map((t) => ({ ...t, costMtd: Math.round(t.costMtd * 100) / 100 })).sort((a, b) => b.costMtd - a.costMtd),
+          byEnv: Object.entries(byEnvMap).map(([env, cost]) => ({ env, cost: Math.round(cost * 100) / 100 })),
+          budget: 0,
         });
       }
 
@@ -447,6 +504,30 @@ export function startControlServer(opts: ControlOptions) {
           store.setWorkerEnv(w.id, String(env));
           audit(user!.name, 'worker.env', w.name, `environment → ${env}`, String(env));
           return send(res, 200, view(w));
+        }
+        if (sub === '/model' && req.method === 'GET') return send(res, 200, modelsOf(w));
+        if (sub === '/model' && req.method === 'PUT') {
+          if (!need('workers:config')) return;
+          const body = JSON.parse((await readBody(req)) || '{}');
+          const obj = (parseYaml(readFileSync(w.file, 'utf8')) as Record<string, any>) || {};
+          if (body.setDefault) {
+            obj.routing = { ...(obj.routing || {}), default: body.setDefault };
+          } else {
+            const { name, model, endpoint, env_key } = body;
+            obj.models = obj.models || {};
+            obj.models[name] = {
+              ...(obj.models[name] || {}),
+              ...(endpoint !== undefined ? { endpoint } : {}),
+              ...(model !== undefined ? { model } : {}),
+              ...(env_key ? { env_key } : {}),
+            };
+          }
+          const v = validateWorker(obj);
+          if (!v.ok) return send(res, 400, { valid: false, errors: v.errors });
+          writeFileSync(w.file, stringifyYaml(obj));
+          discover();
+          audit(user!.name, 'model.update', w.name, body.setDefault ? `default → ${body.setDefault}` : `${body.name} updated`, wenv);
+          return send(res, 200, { ok: true, ...modelsOf(w) });
         }
         if (sub === '/logs' && req.method === 'GET') return send(res, 200, { logs: w.logs.slice(-600) });
         if (sub === '/yaml' && req.method === 'GET') {

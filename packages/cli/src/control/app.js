@@ -9,7 +9,7 @@ function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('o
 
 let ENV = 'all';
 let WORKERS = [];
-const SECTIONS = { overview: 'Overview', workers: 'Workers', runs: 'Runs', approvals: 'Approvals', tenants: 'Tenants', cost: 'Cost & usage', audit: 'Audit log', access: 'Access control' };
+const SECTIONS = { overview: 'Overview', workers: 'Workers', models: 'Models', runs: 'Runs', approvals: 'Approvals', tenants: 'Tenants', cost: 'Cost & usage', audit: 'Audit log', access: 'Access control' };
 const envClass = (e) => e === 'prod' ? 'prod' : e === 'staging' ? 'staging' : 'dev';
 const envScoped = (rows) => ENV === 'all' ? rows : rows.filter((r) => (r.env || 'dev') === ENV);
 
@@ -127,27 +127,25 @@ const RENDER = {};
 RENDER.overview = async () => {
   const d = await j('/api/overview'); const k = d.kpi || {};
   const tile = (key, v, sub, cls) => `<div class="kpi"><div class="k">${key}</div><div class="v">${v}</div>${sub ? `<div class="d ${cls || ''}">${sub}</div>` : ''}</div>`;
+  const noRuns = !(k.runs24h);
   $('#page').innerHTML = `
-  <div class="ph"><h1>Fleet overview</h1><span class="sub">real-time posture across all environments</span><span class="sp"></span><span class="sample">live + sample data</span></div>
+  <div class="ph"><h1>Fleet overview</h1><span class="sub">live posture across this workspace</span></div>
   <div class="grid kpis" style="margin-bottom:14px">
-    ${tile('Workers live', `${k.workersLive}<small>/${k.workersTotal}</small>`, '▲ healthy', 'up')}
-    ${tile('Runs · 24h', num(k.runs24h), '+8.2% vs prior', 'up')}
-    ${tile('Error rate', k.errorRatePct + '%', 'SLO 2.0%', k.errorRatePct > 2 ? 'down' : 'up')}
-    ${tile('p95 latency', num(k.p95) + '<small>ms</small>', '−110ms', 'up')}
-    ${tile('Spend · 24h', money(k.spend24h), 'budget $32k/mo', '')}
-    ${tile('Approvals', k.pendingApprovals, 'awaiting human', k.pendingApprovals ? 'down' : '')}
+    ${tile('Workers live', `${k.workersLive}<small>/${k.workersTotal}</small>`)}
+    ${tile('Runs', num(k.runs24h))}
+    ${tile('Error rate', (k.errorRatePct || 0) + '%', 'SLO 2.0%', k.errorRatePct > 2 ? 'down' : '')}
+    ${tile('Tokens', num(k.tokens24h))}
+    ${tile('Spend', money(k.spend24h, 2))}
+    ${tile('Approvals', k.pendingApprovals, k.pendingApprovals ? 'awaiting human' : '', k.pendingApprovals ? 'down' : '')}
   </div>
   <div class="grid cols3" style="margin-bottom:14px">
-    <div class="card"><div class="h"><h3>Run volume · 24h</h3><span class="sp"></span><span class="hint">runs/hr</span></div><div class="b">${spark(d.runVolume)}</div></div>
-    <div class="card"><div class="h"><h3>Active alerts</h3></div><div>${(d.alerts || []).map((a) => `<div class="alert"><span class="sev ${a.sev}">${a.sev}</span><div><b>${esc(a.worker)}</b> — ${esc(a.msg)}</div><span class="sp"></span><span class="env ${envClass(a.env)}">${esc(a.env)}</span></div>`).join('')}</div></div>
+    <div class="card"><div class="h"><h3>Run volume · 24h</h3><span class="sp"></span><span class="hint">runs/hr</span></div><div class="b">${noRuns ? '<div class="empty">no runs yet — start a worker and send traffic</div>' : spark(d.runVolume)}</div></div>
+    <div class="card"><div class="h"><h3>Active alerts</h3></div><div>${(d.alerts || []).length ? d.alerts.map((a) => `<div class="alert"><span class="sev ${a.sev}">${a.sev}</span><div><b>${esc(a.worker)}</b> — ${esc(a.msg)}</div><span class="sp"></span><span class="env ${envClass(a.env)}">${esc(a.env)}</span></div>`).join('') : '<div class="empty">no active alerts</div>'}</div></div>
   </div>
-  <div class="grid cols2" style="margin-bottom:14px">
-    <div class="card"><div class="h"><h3>p95 latency · 24h</h3><span class="sp"></span><span class="hint">ms</span></div><div class="b">${spark(d.latency, 130, 'var(--model)')}</div></div>
-    <div class="card"><div class="h"><h3>Spend · 24h</h3><span class="sp"></span><span class="hint">$ / hr</span></div><div class="b">${spark(d.cost, 130, 'var(--prod)')}</div></div>
-  </div>
-  <div class="card"><div class="h"><h3>Top tenants by spend</h3><span class="sp"></span><span class="sample">sample</span></div>
-    <table><thead><tr><th>Tenant</th><th>Plan</th><th class="num">RPS</th><th class="num">Runs 24h</th><th class="num">Cost MTD</th></tr></thead><tbody>
-    ${(d.topTenants || []).map((t) => `<tr><td><b>${esc(t.name)}</b></td><td>${esc(t.plan)}</td><td class="num">${t.rps}</td><td class="num">${num(t.runs24h)}</td><td class="num">${money(t.costMtd)}</td></tr>`).join('')}
+  <div class="card" style="margin-bottom:14px"><div class="h"><h3>Spend · 24h</h3><span class="sp"></span><span class="hint">$ / hr</span></div><div class="b">${noRuns ? '<div class="empty">no spend yet</div>' : spark(d.cost, 130, 'var(--prod)')}</div></div>
+  <div class="card"><div class="h"><h3>Top tenants by usage</h3></div>
+    <table><thead><tr><th>Tenant</th><th class="num">Runs</th><th class="num">Tokens</th><th class="num">Cost</th></tr></thead><tbody>
+    ${(d.topTenants || []).length ? d.topTenants.map((t) => `<tr><td><b>${esc(t.name)}</b></td><td class="num">${num(t.runs24h)}</td><td class="num">${num(t.tokens24h)}</td><td class="num">${money(t.costMtd, 2)}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">no tenant traffic yet</td></tr>'}
     </tbody></table></div>`;
   refreshCounts();
 };
@@ -156,35 +154,33 @@ RENDER.workers = async () => {
   const d = await j('/api/workers'); WORKERS = d.workers || []; $('#wsPath').textContent = (d.root || '').split('/').slice(-1)[0];
   const rows = envScoped(WORKERS);
   $('#page').innerHTML = `
-  <div class="ph"><h1>Workers</h1><span class="sub">${rows.length} agents across the fleet</span><span class="sp"></span></div>
+  <div class="ph"><h1>Workers</h1><span class="sub">${rows.length} workers in this workspace</span><span class="sp"></span></div>
   <div class="card">
     <div class="toolbar">
       <input id="wf" placeholder="Filter by name…" style="min-width:200px">
-      <select id="wfStatus"><option value="">All status</option><option>running</option><option>healthy</option><option>degraded</option><option>error</option><option>stopped</option><option>idle</option></select>
+      <select id="wfStatus"><option value="">All status</option><option>running</option><option>error</option><option>idle</option></select>
       <select id="wfExpose"><option value="">All exposure</option><option>public</option><option>internal</option></select>
-      <span class="sp"></span><span class="hint mut" style="font-family:var(--mono);font-size:11px">live workers are operable · others are representative</span>
+      <span class="sp"></span><span class="hint mut" style="font-family:var(--mono);font-size:11px">metrics are live from each worker's runtime</span>
     </div>
-    <table><thead><tr><th>Worker</th><th>Env</th><th>Status</th><th>Harness</th><th>Version</th><th>Expose</th><th class="num">RPS</th><th class="num">p95</th><th class="num">Err%</th><th class="num">$/24h</th><th></th></tr></thead>
+    <table><thead><tr><th>Worker</th><th>Env</th><th>Status</th><th>Harness</th><th>Version</th><th>Expose</th><th class="num">Runs</th><th class="num">Tokens</th><th class="num">Err%</th><th class="num">Cost</th><th></th></tr></thead>
     <tbody id="wkBody"></tbody></table>
   </div>`;
   const draw = () => {
     const q = ($('#wf').value || '').toLowerCase(), st = $('#wfStatus').value, ex = $('#wfExpose').value;
     const f = rows.filter((w) => (!q || w.name.toLowerCase().includes(q)) && (!st || (w.health === st || w.status === st)) && (!ex || w.expose === ex));
     $('#wkBody').innerHTML = f.length ? f.map((w) => {
-      const live = !w.sample; const status = w.status === 'running' ? 'running' : (w.health || w.status);
+      const status = w.status === 'running' ? 'running' : (w.health || w.status);
       return `<tr>
-        <td><span class="nm" data-id="${esc(w.id)}">${esc(w.name)}</span> ${live && w.status === 'running' ? '<span class="live-chip">live</span>' : ''}</td>
+        <td><span class="nm" data-id="${esc(w.id)}">${esc(w.name)}</span> ${w.status === 'running' ? '<span class="live-chip">live</span>' : ''}</td>
         <td><span class="env ${envClass(w.env)}">${esc(w.env)}</span></td>
         <td><span class="st"><span class="dot ${w.status === 'running' ? 'running live' : (w.health || w.status)}"></span>${esc(status)}</span></td>
         <td class="mono">${esc(w.harness)}</td><td class="mono">${esc(w.version)}</td>
         <td><span class="tag ${w.expose}">${esc(w.expose)}</span></td>
-        <td class="num">${w.rps}</td><td class="num">${num(w.p95)}</td><td class="num">${w.errPct}</td><td class="num">${money(w.cost24h)}</td>
-        <td style="text-align:right">${live
-          ? (w.status === 'running'
-            ? (CAN('workers:stop') ? `<button class="btn sm no" data-act="stop" data-id="${esc(w.id)}">Stop</button>` : '<span class="mut" style="font-size:11px">running</span>')
-            : (CAN('workers:start') ? `<button class="btn sm p" data-act="start" data-id="${esc(w.id)}">Start</button>` : '<span class="mut" style="font-size:11px">—</span>'))
-          : '<span class="mut" style="font-size:11px">—</span>'}</td></tr>`;
-    }).join('') : '<tr><td colspan="11" class="empty">no workers match.</td></tr>';
+        <td class="num">${num(w.runs || 0)}</td><td class="num">${num(w.tokens || 0)}</td><td class="num">${w.errPct || 0}</td><td class="num">${money(w.cost || 0, 2)}</td>
+        <td style="text-align:right">${w.status === 'running'
+          ? (CAN('workers:stop') ? `<button class="btn sm no" data-act="stop" data-id="${esc(w.id)}">Stop</button>` : '<span class="mut" style="font-size:11px">running</span>')
+          : (CAN('workers:start') ? `<button class="btn sm p" data-act="start" data-id="${esc(w.id)}">Start</button>` : '<span class="mut" style="font-size:11px">—</span>')}</td></tr>`;
+    }).join('') : '<tr><td colspan="11" class="empty">no worker.yaml found under the workspace.</td></tr>';
     $('#wkBody').querySelectorAll('.nm').forEach((n) => n.onclick = () => openWorker(n.dataset.id));
     $('#wkBody').querySelectorAll('button[data-act]').forEach((b) => b.onclick = () => act(b.dataset.id, b.dataset.act, b));
   };
@@ -200,10 +196,20 @@ async function act(id, action, btn) {
   RENDER.workers();
 }
 
+RENDER.models = async () => {
+  const d = await j('/api/models'); const m = d.models || [];
+  $('#page').innerHTML = `<div class="ph"><h1>Models</h1><span class="sub">model bindings declared across every worker.yaml — open a worker to set them up</span></div>
+  <div class="card"><table><thead><tr><th>Worker</th><th>Binding</th><th>Model</th><th>Endpoint</th><th>API key env</th><th>Default</th></tr></thead><tbody>
+  ${m.length ? m.map((b) => `<tr><td><span class="nm" data-id="${esc(b.workerId)}">${esc(b.worker)}</span></td><td class="mono">${esc(b.name)}</td><td class="mono">${esc(b.model)}</td><td class="mono">${esc(b.endpoint)}</td><td class="mono">${esc(b.env_key)}</td><td>${b.isDefault ? '<span class="bdg ok">default</span>' : ''}</td></tr>`).join('')
+    : '<tr><td colspan="6" class="empty">no model bindings declared. Add a models: block to a worker.yaml, or open a worker → Models.</td></tr>'}
+  </tbody></table></div>`;
+  $('#page').querySelectorAll('.nm').forEach((n) => n.onclick = () => openWorker(n.dataset.id, 'models'));
+};
+
 RENDER.runs = async () => {
   const d = await j('/api/runs'); const rows = d.runs || [];
   $('#page').innerHTML = `
-  <div class="ph"><h1>Runs</h1><span class="sub">fleet-wide agent workflow executions</span><span class="sp"></span><span class="sample">live + sample</span></div>
+  <div class="ph"><h1>Runs</h1><span class="sub">agent workflow executions across running workers</span></div>
   <div class="card"><div class="toolbar"><input id="rf" placeholder="Filter by worker or tenant…" style="min-width:240px">
     <select id="rfStatus"><option value="">All status</option><option>ok</option><option>blocked</option><option>stopped</option><option>error</option></select><span class="sp"></span></div>
     <table><thead><tr><th>Run</th><th>Worker</th><th>Tenant</th><th>Status</th><th class="num">Steps</th><th class="num">Tokens</th><th class="num">Cost</th><th class="num">Age</th></tr></thead><tbody id="rnBody"></tbody></table></div>`;
@@ -212,8 +218,8 @@ RENDER.runs = async () => {
     const f = rows.filter((r) => (!q || (r.worker + r.tenant).toLowerCase().includes(q)) && (!st || r.status === st));
     $('#rnBody').innerHTML = f.length ? f.map((r) => `<tr><td class="mono">${esc(r.id)} ${r.live ? '<span class="live-chip">live</span>' : ''}</td>
       <td><b>${esc(r.worker)}</b></td><td>${esc(r.tenant)}</td><td><span class="bdg ${r.status}">${esc(r.status)}</span></td>
-      <td class="num">${r.steps}</td><td class="num">${num(r.tokens)}</td><td class="num">${money(r.costUsd, 2)}</td><td class="num">${r.live ? 'live' : ago(r.ageMins)}</td></tr>`).join('')
-      : '<tr><td colspan="8" class="empty">no runs match.</td></tr>';
+      <td class="num">${r.steps}</td><td class="num">${num(r.tokens)}</td><td class="num">${money(r.costUsd, 2)}</td><td class="num">${r.ageMins != null ? ago(r.ageMins) : 'live'}</td></tr>`).join('')
+      : '<tr><td colspan="8" class="empty">no runs yet — start a worker and exercise it from the Playground.</td></tr>';
   };
   ['rf', 'rfStatus'].forEach((id) => $('#' + id).oninput = draw); draw();
 };
@@ -246,28 +252,29 @@ window.decide = async (wid, run, decision) => {
 
 RENDER.tenants = async () => {
   const d = await j('/api/tenants'); const t = d.tenants || [];
-  $('#page').innerHTML = `<div class="ph"><h1>Tenants</h1><span class="sub">callers of your public agents</span><span class="sp"></span><span class="sample">sample</span></div>
-  <div class="card"><table><thead><tr><th>Tenant</th><th>Plan</th><th>Status</th><th>API key</th><th class="num">RPS / limit</th><th class="num">Runs 24h</th><th class="num">Tokens 24h</th><th class="num">Cost MTD</th></tr></thead><tbody>
-  ${t.map((x) => `<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.plan)}</td>
+  $('#page').innerHTML = `<div class="ph"><h1>Tenants</h1><span class="sub">caller identities declared by workers + their real usage</span></div>
+  <div class="card"><table><thead><tr><th>Tenant</th><th>Status</th><th class="num">Runs</th><th class="num">Tokens</th><th class="num">Cost</th></tr></thead><tbody>
+  ${t.length ? t.map((x) => `<tr><td><b>${esc(x.name)}</b></td>
     <td><span class="st"><span class="dot ${x.status}"></span>${esc(x.status)}</span></td>
-    <td class="mono">${esc(x.keyPrefix)}…</td>
-    <td class="num">${x.rps} / ${x.limitRps}<div class="barwrap" style="margin-top:4px;width:90px;margin-left:auto"><i style="width:${Math.min(100, (x.rps / x.limitRps) * 100)}%"></i></div></td>
-    <td class="num">${num(x.runs24h)}</td><td class="num">${num(x.tokens24h)}</td><td class="num">${money(x.costMtd)}</td></tr>`).join('')}
+    <td class="num">${num(x.runs24h)}</td><td class="num">${num(x.tokens24h)}</td><td class="num">${money(x.costMtd, 2)}</td></tr>`).join('')
+    : '<tr><td colspan="5" class="empty">no tenants — declare tenancy.keys in a worker.yaml or send traffic.</td></tr>'}
   </tbody></table></div>`;
 };
 
 RENDER.cost = async () => {
   const d = await j('/api/cost');
-  $('#page').innerHTML = `<div class="ph"><h1>Cost &amp; usage</h1><span class="sub">spend metering across the fleet</span><span class="sp"></span><span class="sample">live tokens + sample rates</span></div>
+  const total = (d.byEnv || []).reduce((a, e) => a + e.cost, 0);
+  const envCost = (e) => (d.byEnv || []).find((x) => x.env === e)?.cost || 0;
+  $('#page').innerHTML = `<div class="ph"><h1>Cost &amp; usage</h1><span class="sub">spend metered from real run tokens × each worker's price table</span></div>
   <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
-    <div class="kpi"><div class="k">Spend · MTD</div><div class="v">${money((d.byEnv || []).reduce((a, e) => a + e.cost, 0))}</div><div class="d">of ${money(d.budget)} budget</div></div>
-    <div class="kpi"><div class="k">Production</div><div class="v">${money((d.byEnv || []).find((e) => e.env === 'prod')?.cost || 0)}</div></div>
-    <div class="kpi"><div class="k">Staging</div><div class="v">${money((d.byEnv || []).find((e) => e.env === 'staging')?.cost || 0)}</div></div>
-    <div class="kpi"><div class="k">Development</div><div class="v">${money((d.byEnv || []).find((e) => e.env === 'dev')?.cost || 0)}</div></div>
+    <div class="kpi"><div class="k">Spend · MTD</div><div class="v">${money(total, 2)}</div></div>
+    <div class="kpi"><div class="k">Production</div><div class="v">${money(envCost('prod'), 2)}</div></div>
+    <div class="kpi"><div class="k">Staging</div><div class="v">${money(envCost('staging'), 2)}</div></div>
+    <div class="kpi"><div class="k">Development</div><div class="v">${money(envCost('dev'), 2)}</div></div>
   </div>
-  <div class="card" style="margin-bottom:14px"><div class="h"><h3>Daily spend · 30d</h3><span class="sp"></span><span class="hint">$ / day</span></div><div class="b">${bars(d.series)}</div></div>
-  <div class="card"><div class="h"><h3>Spend by tenant</h3></div><table><thead><tr><th>Tenant</th><th>Plan</th><th class="num">Cost MTD</th><th>Share</th></tr></thead><tbody>
-  ${(() => { const mx = Math.max(...(d.tenants || []).map((t) => t.costMtd), 1); return (d.tenants || []).map((t) => `<tr><td><b>${esc(t.name)}</b></td><td>${esc(t.plan)}</td><td class="num">${money(t.costMtd)}</td><td style="width:220px"><div class="barwrap"><i style="width:${(t.costMtd / mx) * 100}%"></i></div></td></tr>`).join(''); })()}
+  <div class="card" style="margin-bottom:14px"><div class="h"><h3>Daily spend · 30d</h3><span class="sp"></span><span class="hint">$ / day</span></div><div class="b">${total ? bars(d.series) : '<div class="empty">no spend yet — set a price table (pricing:) in a worker.yaml and run it</div>'}</div></div>
+  <div class="card"><div class="h"><h3>Spend by tenant</h3></div><table><thead><tr><th>Tenant</th><th class="num">Runs</th><th class="num">Cost</th><th>Share</th></tr></thead><tbody>
+  ${(() => { const ts = d.tenants || []; if (!ts.length) return '<tr><td colspan="4" class="empty">no tenant spend yet</td></tr>'; const mx = Math.max(...ts.map((t) => t.costMtd), 0.0001); return ts.map((t) => `<tr><td><b>${esc(t.name)}</b></td><td class="num">${num(t.runs)}</td><td class="num">${money(t.costMtd, 2)}</td><td style="width:220px"><div class="barwrap"><i style="width:${(t.costMtd / mx) * 100}%"></i></div></td></tr>`).join(''); })()}
   </tbody></table></div>`;
 };
 
@@ -311,26 +318,26 @@ window.setSso = async (enforced) => { try { await api('/api/access', { method: '
 
 /* ============================ WORKER DRAWER ============================ */
 let CUR = null, logTimer = null;
-window.openWorker = async (id) => {
+window.openWorker = async (id, tab) => {
   const w = WORKERS.find((x) => x.id === id) || (await j('/api/workers/' + encodeURIComponent(id)));
   CUR = w; if (logTimer) { clearInterval(logTimer); logTimer = null; }
   $('#dwName').textContent = w.name;
   $('#dwEnv').className = 'env ' + envClass(w.env); $('#dwEnv').textContent = w.env;
   $('#dwHarness').textContent = w.harness + (w.version ? ' · ' + w.version : '');
   $('#dwDot').className = 'dot ' + (w.status === 'running' ? 'running' : (w.health || w.status));
-  const live = !w.sample;
-  const tabs = ['Overview', 'Controls', 'Versions', 'Exposure', 'Config', 'Logs'];
-  $('#dwTabs').innerHTML = tabs.map((t, i) => `<button data-t="${t.toLowerCase()}" class="${i === 0 ? 'on' : ''}">${t}</button>`).join('');
+  const start = (tab || 'overview');
+  const tabs = ['Overview', 'Controls', 'Models', 'Versions', 'Exposure', 'Config', 'Logs'];
+  $('#dwTabs').innerHTML = tabs.map((t) => `<button data-t="${t.toLowerCase()}" class="${t.toLowerCase() === start ? 'on' : ''}">${t}</button>`).join('');
   $('#dwTabs').querySelectorAll('button').forEach((b) => b.onclick = () => dwTab(b.dataset.t));
   $('#scrim').classList.add('on'); $('#drawer').classList.add('on');
-  dwTab('overview');
+  dwTab(start);
 };
 function closeDrawer() { $('#scrim').classList.remove('on'); $('#drawer').classList.remove('on'); CUR = null; if (logTimer) { clearInterval(logTimer); logTimer = null; } }
 $('#dwClose').onclick = closeDrawer; $('#scrim').onclick = closeDrawer;
 function dwTab(name) {
   $('#dwTabs').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.t === name));
   if (logTimer) { clearInterval(logTimer); logTimer = null; }
-  ({ overview: dwOverview, controls: dwControls, versions: dwVersions, exposure: dwExposure, config: dwConfig, logs: dwLogs }[name] || dwOverview)();
+  ({ overview: dwOverview, controls: dwControls, models: dwModels, versions: dwVersions, exposure: dwExposure, config: dwConfig, logs: dwLogs }[name] || dwOverview)();
 }
 const live = () => CUR && !CUR.sample;
 const notLive = (msg) => `<div class="empty">${msg}</div>`;
@@ -340,19 +347,19 @@ function dwOverview() {
   $('#dwBody').innerHTML = `
   <div class="grid kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
     ${m(['Status', `<span class="st" style="font-size:18px"><span class="dot ${w.status === 'running' ? 'running' : (w.health || w.status)}"></span>${w.status === 'running' ? 'running' : (w.health || w.status)}</span>`])}
-    ${m(['RPS', w.rps])}${m(['p95', num(w.p95) + 'ms'])}${m(['Error rate', w.errPct + '%'])}${m(['Cost · 24h', money(w.cost24h)])}${m(['Tenants', w.tenants])}
+    ${m(['Runs', num(w.runs || 0)])}${m(['Tokens', num(w.tokens || 0)])}${m(['Error rate', (w.errPct || 0) + '%'])}${m(['Cost', money(w.cost || 0, 2)])}${m(['Models', w.models || 0])}
   </div>
-  <div class="card"><div class="h"><h3>Identity</h3>${w.sample ? '<span class="sp"></span><span class="sample">representative</span>' : ''}</div><div class="b"><div class="kv">
+  <div class="card"><div class="h"><h3>Identity</h3></div><div class="b"><div class="kv">
     <div class="k">Worker</div><div class="v">${esc(w.name)}</div><div class="k">Environment</div><div class="v">${esc(w.env)}</div>
     <div class="k">Harness</div><div class="v">${esc(w.harness)}</div><div class="k">Version</div><div class="v">${esc(w.version)}</div>
     <div class="k">Exposure</div><div class="v">${esc(w.expose)}</div>${w.port ? `<div class="k">Address</div><div class="v">127.0.0.1:${w.port}</div>` : ''}
   </div></div></div>
-  ${!w.sample ? `<div class="card" style="margin-top:14px"><div class="h"><h3>Environment</h3><span class="sp"></span><span class="hint">change-control</span></div><div class="b">
+  <div class="card" style="margin-top:14px"><div class="h"><h3>Environment</h3><span class="sp"></span><span class="hint">change-control</span></div><div class="b">
     <div class="srow"><span class="nm">Assigned environment</span><span class="sp"></span>
       ${CAN('env:write')
         ? `<select class="inp" style="width:auto;text-align:left" onchange="setEnv(this.value)"><option ${w.env === 'dev' ? 'selected' : ''}>dev</option><option ${w.env === 'staging' ? 'selected' : ''}>staging</option><option ${w.env === 'prod' ? 'selected' : ''}>prod</option></select>`
         : `<span class="env ${envClass(w.env)}">${esc(w.env)}</span> <span class="mut" style="font-size:11px;margin-left:8px">role "${esc(ME.role)}" cannot reassign</span>`}</div>
-  </div></div>` : ''}`;
+  </div></div>`;
 }
 window.setEnv = async (env) => { try { await api('/api/workers/' + encodeURIComponent(CUR.id) + '/env', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ env }) }); CUR.env = env; toast('environment → ' + env); } catch (e) { /* handled */ } };
 async function dwControls() {
@@ -381,6 +388,35 @@ async function dwControls() {
 window.ctl = async (p, body) => { try { await api(`/api/workers/${encodeURIComponent(CUR.id)}/proxy/v1/control/${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); toast('applied to next run'); } catch (e) { /* handled */ } dwControls(); };
 window.ctlSkill = (id, on) => ctl('skills/' + encodeURIComponent(id), { enabled: on });
 window.ctlAppr = (t, on) => ctl('controls', { approval: { tool: t, on } });
+async function dwModels() {
+  if (!live()) return void ($('#dwBody').innerHTML = notLive('Model setup is available for live workspace workers.'));
+  const d = await j('/api/workers/' + encodeURIComponent(CUR.id) + '/model');
+  const rw = CAN('workers:config');
+  const f = (id, v) => rw ? `<input class="inp" style="width:100%;text-align:left" id="${id}" value="${esc(v)}">` : `<span class="v">${esc(v)}</span>`;
+  $('#dwBody').innerHTML = `
+    <p class="mut" style="margin:0 0 12px">Set up each model binding — the model name, the OpenAI-compatible endpoint, and the env var holding its API key. Saved to <code>worker.yaml</code>; restart the worker to apply.</p>
+    ${(d.bindings || []).map((b) => `<div class="card" style="margin-bottom:10px"><div class="b">
+      <div class="srow" style="padding-top:0"><span class="nm">${esc(b.name)}</span> ${b.isDefault ? '<span class="bdg ok">default</span>' : ''}<span class="sp"></span>
+        ${rw && !b.isDefault ? `<button class="btn sm" onclick="setDefaultModel('${esc(b.name)}')">Make default</button>` : ''}</div>
+      <div class="kv" style="margin-top:6px">
+        <div class="k">Model</div><div class="v">${f('m_model_' + b.name, b.model)}</div>
+        <div class="k">Endpoint</div><div class="v">${f('m_ep_' + b.name, b.endpoint)}</div>
+        <div class="k">API key env</div><div class="v">${f('m_key_' + b.name, b.env_key)}</div>
+      </div>
+      ${rw ? `<div style="margin-top:10px"><button class="btn p sm" onclick="saveModel('${esc(b.name)}')">Save binding</button></div>` : ''}
+    </div></div>`).join('') || '<div class="empty">no model bindings declared in this worker.yaml.</div>'}
+    ${rw ? '' : `<div class="valid" style="background:var(--info-bg);color:#1f6feb;border:1px solid #cfe0fb">read-only — role "${esc(ME.role)}" cannot edit models</div>`}`;
+}
+window.saveModel = async (name) => {
+  const g = (p) => document.getElementById(p + name); const v = (p) => g(p) ? g(p).value : undefined;
+  try {
+    const r = await api('/api/workers/' + encodeURIComponent(CUR.id) + '/model', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, model: v('m_model_'), endpoint: v('m_ep_'), env_key: v('m_key_') }) });
+    const d = await r.json(); if (d.ok) { toast('model binding saved'); dwModels(); } else toast((d.errors || ['invalid']).join('; '));
+  } catch (e) { /* handled */ }
+};
+window.setDefaultModel = async (name) => {
+  try { const r = await api('/api/workers/' + encodeURIComponent(CUR.id) + '/model', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setDefault: name }) }); if ((await r.json()).ok) { toast('default model → ' + name); dwModels(); } } catch (e) { /* handled */ }
+};
 function dwVersions() {
   const w = CUR;
   $('#dwBody').innerHTML = `<div class="card"><div class="h"><h3>Versions &amp; rollout</h3><span class="sp"></span><span class="sample">representative</span></div>
