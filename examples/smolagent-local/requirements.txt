@@ -1,4 +1,4 @@
-smolagents==1.25.*
+smolagents[openai]==1.25.*
 airlock-agent
 fastapi>=0.115,<1
 uvicorn[standard]>=0.30,<1

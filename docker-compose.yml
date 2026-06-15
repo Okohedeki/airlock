@@ -59,6 +59,13 @@ services:
       dockerfile: Dockerfile
     profiles: ["epic03"]
     entrypoint: ["python", "model.py", "--port", "8999"]
+    # The worker image's HEALTHCHECK probes :3000/healthz, but this service serves the
+    # mock model on :8999 — override so the container reports its real health.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8999), 2).close()"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
     restart: unless-stopped
 
   # The same runtime, but driving the `openai` harness against the mock model.

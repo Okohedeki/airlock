@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>airlock · Control Plane</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div class="app">
+  <!-- top bar -->
+  <header class="top">
+    <div class="brand"><span class="mk">▲</span> airlock <small>Control Plane</small></div>
+    <div class="search"><input id="globalSearch" placeholder="Search workers, runs, tenants…" /></div>
+    <div class="sp"></div>
+    <label class="envsel"><span class="envdot" id="envDot"></span>
+      <select id="envSel"><option value="all">All environments</option></select></label>
+    <div class="acct">
+      <div class="avatar" id="acctAv">AO</div>
+      <div class="who"><b id="acctName">Amaya Okonkwo</b><span id="acctOrg">Acme Corp · prod</span></div>
+      <span class="rolechip" id="acctRole">Owner</span>
+    </div>
+  </header>
+
+  <!-- left rail -->
+  <nav class="rail">
+    <div class="grp">Operate</div>
+    <a class="nav" data-route="overview"><span class="ic">◰</span> Overview</a>
+    <a class="nav" data-route="workers"><span class="ic">▦</span> Workers <span class="ct" id="ctWorkers"></span></a>
+    <a class="nav" data-route="models"><span class="ic">◇</span> Models</a>
+    <a class="nav" data-route="detect"><span class="ic">⌕</span> Detect</a>
+    <a class="nav" data-route="runs"><span class="ic">≣</span> Runs</a>
+    <a class="nav" data-route="approvals"><span class="ic">✋</span> Approvals <span class="ct" id="ctApprovals"></span></a>
+    <div class="grp">Govern</div>
+    <a class="nav" data-route="tenants"><span class="ic">⧉</span> Tenants</a>
+    <a class="nav" data-route="cost"><span class="ic">$</span> Cost &amp; usage</a>
+    <a class="nav" data-route="audit"><span class="ic">⎙</span> Audit log</a>
+    <a class="nav" data-route="access"><span class="ic">⛨</span> Access control</a>
+    <div class="foot">airlock runtime · workspace <span id="wsPath" class="mono"></span></div>
+  </nav>
+
+  <!-- main -->
+  <main class="main">
+    <div class="bcrumb" id="bcrumb"></div>
+    <div class="page" id="page"><div class="empty">loading…</div></div>
+  </main>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer">
+  <div class="dh"><span class="dot" id="dwDot"></span><span class="nm" id="dwName">—</span>
+    <span class="env" id="dwEnv"></span><span class="tag" id="dwHarness"></span>
+    <button class="x" id="dwClose">×</button></div>
+  <div class="dtabs" id="dwTabs"></div>
+  <div class="dbody" id="dwBody"></div>
+</aside>
+<div class="toast" id="toast"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

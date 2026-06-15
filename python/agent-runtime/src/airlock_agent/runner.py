@@ -2,7 +2,7 @@
 
 This is where the engine seams meet the consumer epics: policy (02), routing &
 fallback (03), tool-result cache + snapshots (04), sandbox (06), trace/stream (05),
-and input/output shaping (13). Per-call isolation (ADR-0010): a fresh binding and
+and input/output shaping (13). Per-call isolation: a fresh binding and
 RunContext are built for every request.
 """
 
@@ -44,8 +44,9 @@ class EngineRunner:
         self.m = manifest
         self.store = store
         self.harness = manifest.harness()
-        self.tools = _filter_disabled_skills(manifest.tools(), manifest.skills())
         self.skills = manifest.skills()
+        self._disabled_tools = _disabled_skill_tools(self.skills)
+        self.tools = _filter_disabled_skills(manifest.tools(), self.skills)
         self.entrypoint = self._resolve_entrypoint()
         self.controls = manifest.controls()
         self.routing = manifest.routing()
@@ -86,13 +87,126 @@ class EngineRunner:
         s = self.skills.get(skill_id)
         return None if s is None else bool(s.get("enabled", True))
 
+    # ---- runtime control plane (live overrides) ---------------------------
+    # worker.yaml stays the frozen, CLI-validated source of truth (the loader
+    # contract). These methods layer EPHEMERAL runtime overrides on top — they
+    # change how the running worker behaves for SUBSEQUENT runs without rewriting
+    # the manifest. Think Docker Desktop toggles: the file on disk is untouched;
+    # a restart reverts to it. Each override is recorded in `self.overrides` so the
+    # control surface can show what diverges from the manifest.
+    overrides: dict[str, Any]
+
+    def _ensure_overrides(self) -> None:
+        if not hasattr(self, "overrides") or self.overrides is None:
+            self.overrides = {"skills": {}, "controls": {}, "routing": {}}
+
+    def _recompute_skill_tools(self) -> None:
+        """Re-derive the loop's available tools from the FULL manifest tool set and
+        the CURRENT (possibly overridden) skill enable/disable state."""
+        self._disabled_tools = _disabled_skill_tools(self.skills)
+        self.tools = _filter_disabled_skills(self.m.tools(), self.skills)
+
+    def set_skill_enabled(self, skill_id: str, enabled: bool) -> bool | None:
+        """Enable/disable a skill live. Returns the new state, or None if unknown."""
+        if skill_id not in self.skills:
+            return None
+        self.skills[skill_id]["enabled"] = bool(enabled)
+        self._recompute_skill_tools()
+        self._ensure_overrides()
+        self.overrides["skills"][skill_id] = bool(enabled)
+        return bool(enabled)
+
+    def set_control(self, key: str, value: Any) -> dict[str, Any]:
+        """Adjust a guard live: `max_steps`, `budget.tokens`, `budget.usd`,
+        `approval_window_s`. Dotted keys nest into `controls`."""
+        self._ensure_overrides()
+        if key == "max_steps":
+            self.controls["max_steps"] = int(value)
+            self.max_steps = int(value)
+        elif key in ("budget.tokens", "budget.usd"):
+            field = key.split(".", 1)[1]
+            budget = dict(self.controls.get("budget") or {})
+            if value in (None, "", False):
+                budget.pop(field, None)
+            else:
+                budget[field] = (int(value) if field == "tokens" else float(value))
+            self.controls["budget"] = budget
+        elif key == "approval_window_s":
+            self.controls["approval_window_s"] = float(value or 0)
+        else:
+            raise ValueError(f"unknown control '{key}'")
+        self.overrides["controls"][key] = value
+        return self.controls
+
+    def set_approval(self, tool: str, on: bool) -> list[dict]:
+        """Hold-for-human a tool (on) or stop holding it (off), live."""
+        approvals = [a for a in (self.controls.get("approvals") or []) if a.get("tool") != tool]
+        if on:
+            approvals.append({"tool": tool})
+        self.controls["approvals"] = approvals
+        self._ensure_overrides()
+        self.overrides["controls"][f"approval:{tool}"] = bool(on)
+        return approvals
+
+    def set_routing_default(self, name: str) -> str:
+        """Switch which model binding answers, live (epic 03 whole-run routing)."""
+        if name not in self.m.models_config():
+            raise ValueError(f"unknown model binding '{name}'")
+        self.routing = {**(self.routing or {}), "default": name}
+        self.select_binding = build_select_binding(self.routing)
+        self._ensure_overrides()
+        self.overrides["routing"]["default"] = name
+        return name
+
+    def control_state(self) -> dict[str, Any]:
+        """The full effective control-plane state for the operator UI — manifest
+        values with live overrides applied, plus which values diverge."""
+        self._ensure_overrides()
+        models = self.m.models_config()
+        routing = self.routing or {}
+        gates = self.controls.get("tool_gates") or []
+        approvals = {a.get("tool") for a in (self.controls.get("approvals") or [])}
+        return {
+            "worker": {"name": self.m.worker_name(), "version": self.m.worker_version()},
+            "harness": self.harness,
+            "control_mode": control_mode(self.harness).value,
+            "expose": self.m.expose(),
+            "models": {
+                "bindings": [
+                    {"name": n, "model": (c or {}).get("model") or n,
+                     "endpoint": (c or {}).get("endpoint") or "(stub/echo)"}
+                    for n, c in models.items()
+                ],
+                "default": routing.get("default") or "default",
+            },
+            "skills": [
+                {"id": sid, "tool": s.get("tool"), "enabled": bool(s.get("enabled", True))}
+                for sid, s in self.skills.items()
+            ],
+            "controls": {
+                "max_steps": self.max_steps,
+                "budget": self.controls.get("budget") or {},
+                "approvals": sorted(approvals),
+                "tool_gates": gates,
+                "approval_window_s": self.controls.get("approval_window_s") or 0,
+            },
+            "io": {
+                "input_guards": bool((self.io_cfg.get("input_guards"))),
+                "redact": (self.io_cfg.get("output") or {}).get("redact") or [],
+            },
+            "tools": sorted(self.tools.keys()),
+            "overrides": self.overrides,
+        }
+
     def _resolve_entrypoint(self) -> Any:
         ep = self.m.entrypoint()
         if not ep:
             return None
-        from .loader import load_entrypoint
+        from .loader import resolve_entrypoint
 
-        return load_entrypoint(ep)
+        # Call factory entrypoints (build_/make_/create_/get_) so the harness
+        # extractors receive the built agent object, not the uncalled factory.
+        return resolve_entrypoint(ep, self.harness)
 
     def _price_per_1k(self) -> float:
         default = self.pricing.get("default") or self.pricing.get("models", {}).get("default") or {}
@@ -148,13 +262,15 @@ class EngineRunner:
         run_id: str | None = None,
         on_step: Callable[[StepEvent], None] | None = None,
         replay: dict[int, dict] | None = None,
+        approval_id: str | None = None,
     ) -> AgentRunResult:
         # Input guard (epic 13) — before any model call.
         shaping.guard_input(messages, self.io_cfg.get("input_guards"))
 
         run_id = run_id or f"run_{uuid.uuid4().hex[:12]}"
         scoped = self.store.scoped(tenant)
-        binding = build_binding(self.harness, messages, tools=self.tools, entrypoint=self.entrypoint)
+        binding = build_binding(self.harness, messages, tools=self.tools,
+                                entrypoint=self.entrypoint, disabled=self._disabled_tools)
 
         # Give the model the schemas for the binding's ACTUAL tools (incl. framework
         # tools extracted per request), so it can emit tool_calls (tool-chaining).
@@ -191,7 +307,9 @@ class EngineRunner:
             run_id=run_id, session=session, tenant=tenant, max_steps=self.max_steps,
             models=callers,
             control_source=PolicyControlSource(
-                self.controls, run_id=run_id, store=scoped,
+                # approval_id stays stable across resume so a recorded decision is found
+                # under the original run's gate key (resume re-runs under a new run_id).
+                self.controls, run_id=(approval_id or run_id), store=scoped,
                 price_per_1k=self._price_per_1k(),
                 approval_window_s=float(self.controls.get("approval_window_s") or 0),
             ),
@@ -223,8 +341,12 @@ class EngineRunner:
                 status = "blocked"
             elif s.get("status") == "killed" or s.get("stop_reason"):
                 status = status if status == "blocked" else "stopped"
+        # Surface the stop reason (BUDGET_TOKENS / MAX_STEPS / AWAIT_APPROVAL / DENIED…)
+        # at the run level — it was only recorded on the boundary step before.
+        stop_reason = next((s.get("stop_reason") for s in reversed(steps) if s.get("stop_reason")), None)
         scoped.set(f"_runs/{run_id}", {
             "run_id": run_id, "session": session, "tenant": tenant, "status": status,
+            "stop_reason": stop_reason,
             "tokens": result.units, "content": result.content, "steps": steps,
             "messages": messages, "started": _now(), "n_steps": len(steps),
         })
@@ -257,7 +379,8 @@ class EngineRunner:
         replay = self._replay_from(entry.get("steps") or [])
         return self.run(entry.get("messages") or [], tenant=tenant,
                         session=session or entry.get("session", "default"),
-                        run_id=f"{run_id}-resume", on_step=on_step, replay=replay)
+                        run_id=f"{run_id}-resume", on_step=on_step, replay=replay,
+                        approval_id=run_id)
 
     def fork(self, run_id: str, at_step: int, *, tenant: str = "default",
              session: str | None = None, append: str | None = None,
@@ -271,7 +394,8 @@ class EngineRunner:
             messages = messages + [{"role": "user", "content": append}]
         return self.run(messages, tenant=tenant,
                         session=session or entry.get("session", "default"),
-                        run_id=f"{run_id}-fork{at_step}", on_step=on_step, replay=replay)
+                        run_id=f"{run_id}-fork{at_step}", on_step=on_step, replay=replay,
+                        approval_id=run_id)
 
 
 def _tool_hash(name: str, args: dict) -> str:
@@ -283,14 +407,20 @@ def _now() -> float:
     return time.time()
 
 
+def _disabled_skill_tools(skills: dict[str, dict]) -> set[str]:
+    """Tool names backed ONLY by disabled skills — i.e. the tools to remove. A tool
+    backing at least one ENABLED skill (or no skill at all) stays available."""
+    if not skills:
+        return set()
+    enabled = {s["tool"] for s in skills.values() if s.get("enabled", True)}
+    disabled = {s["tool"] for s in skills.values() if not s.get("enabled", True)}
+    return disabled - enabled
+
+
 def _filter_disabled_skills(
     tools: dict[str, Callable], skills: dict[str, dict]
 ) -> dict[str, Callable]:
     """Drop tools that are backed ONLY by disabled skills. Tools not referenced by any
     skill, and tools backing at least one enabled skill, stay available."""
-    if not skills:
-        return tools
-    enabled = {s["tool"] for s in skills.values() if s.get("enabled", True)}
-    disabled = {s["tool"] for s in skills.values() if not s.get("enabled", True)}
-    remove = disabled - enabled
-    return {n: fn for n, fn in tools.items() if n not in remove}
+    remove = _disabled_skill_tools(skills)
+    return {n: fn for n, fn in tools.items() if n not in remove} if remove else tools

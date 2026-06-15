@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+#
+# Per-harness showcase image — the airlock runtime + ONE example's framework deps.
+# Built once per harness via the HARNESS_DIR build arg (see docker-compose.showcase.yml),
+# so each framework's dependencies stay isolated (crewai's deps conflict with the
+# langchain stack, so a single fat image is not viable).
+#
+#   docker build -f Dockerfile.harness --build-arg HARNESS_DIR=langgraph-agent -t airlock-showcase-langgraph .
+#
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PORT=3000 \
+    AIRLOCK_LOG_LEVEL=INFO
+
+# 1. The airlock runtime from source — registers the `airlock-agent` distribution so the
+#    example's `requirements.txt` line for it is already satisfied (no index lookup).
+WORKDIR /app/runtime
+COPY python/agent-runtime/pyproject.toml python/agent-runtime/README.md ./
+COPY python/agent-runtime/src ./src
+RUN pip install --no-cache-dir .
+
+# 2. The chosen example worker + its framework dependencies.
+ARG HARNESS_DIR
+WORKDIR /app/worker
+COPY examples/${HARNESS_DIR}/ ./
+# `airlock-agent` is already installed above; strip it from the example requirements so
+# pip never reaches for it on an index (it is not published).
+RUN grep -ivE '^[[:space:]]*airlock-agent' requirements.txt > /tmp/req.txt 2>/dev/null || true; \
+    pip install --no-cache-dir -r /tmp/req.txt
+
+EXPOSE 3000
+# Frameworks (esp. crewai) are slow to import + build at startup, so allow a long start-period.
+HEALTHCHECK --interval=10s --timeout=3s --retries=5 --start-period=60s \
+  CMD python -c "import urllib.request,os,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','3000')+'/healthz').status==200 else 1)" || exit 1
+
+CMD ["python", "-m", "airlock_agent"]

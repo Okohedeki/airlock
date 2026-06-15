@@ -1,6 +1,6 @@
 """Extract tools (+ optional system prompt) from each framework's agent object.
 
-Airlock owns the loop (ADR-0014): a harness *contributes* its tools and prompt, and
+Airlock owns the loop: a harness *contributes* its tools and prompt, and
 airlock drives them through its own engine (the OpenAI-style planner), so every
 framework gets the full control set uniformly. The only per-framework work is reading
 the tool set out of that framework's agent object — done here, defensively, with

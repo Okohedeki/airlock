@@ -1,4 +1,4 @@
-"""worker.yaml loader — frozen contract C2 (epic 07, ADR-0020).
+"""worker.yaml loader — frozen contract C2 (epic 07).
 
 The TS/CLI side owns and validates the schema; the runtime **loads and trusts**.
 This module is a thin reader: `yaml.safe_load` + typed accessors. No jsonschema

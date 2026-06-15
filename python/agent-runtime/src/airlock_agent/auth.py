@@ -1,4 +1,4 @@
-"""Caller auth & multi-tenancy — epic 10 (ADR-0018), the router's stage-1 concern.
+"""Caller auth & multi-tenancy — epic 10, the router's stage-1 concern.
 
 Authenticate each caller and resolve a Tenant id BEFORE the loop runs; reject
 unauthenticated/invalid callers. Per-tenant isolation is then structural via

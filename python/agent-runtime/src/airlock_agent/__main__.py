@@ -1,8 +1,8 @@
 """`python -m airlock_agent` — the container entry point (epic 07).
 
 Boots a Worker entirely from `worker.yaml`: loads the manifest (CLI-validated; the
-runtime trusts it, ADR-0020), opens the state store, builds the EngineRunner, and
-serves the OpenAI-compatible surface. Airlock owns the loop (ADR-0014).
+runtime trusts it), opens the state store, builds the EngineRunner, and
+serves the OpenAI-compatible surface. Airlock owns the loop.
 """
 
 from __future__ import annotations

@@ -1,0 +1,14 @@
+# custom-showcase — TERMINAL harness: a plain run(messages) callable. airlock observes the
+# final result only; no tool extraction, no mid-run control, no loop-level skills enforcement.
+# This is the honest OWN-vs-Terminal contrast (see CONTEXT.md).
+worker:
+  name: custom-showcase
+  version: 1.0.0
+
+harness: custom
+entrypoint: agent:run
+
+state:
+  backend: sqlite
+
+expose: public

@@ -1,22 +1,23 @@
-"""Claude Agent SDK options — the Harness config. Built lazily so the adapter's
-mapping logic stays importable/testable without the SDK installed.
+"""Claude Agent SDK tools — production showcase harness (OWN).
 
-The model here is Claude via the Anthropic API (publisher-supplied key,
-ANTHROPIC_API_KEY) — airlock never hosts inference (ADR-0008 still holds; the
-"publisher-supplied endpoint" is Anthropic's API).
-
-    pip install -r requirements.txt
-    ANTHROPIC_API_KEY=sk-ant-... python app.py
+airlock drives with its OWN model (worker.yaml `models`), so no Anthropic key is needed —
+the SDK only contributes the tools. `build_options` returns the tool list (the entrypoint).
 """
 
 from __future__ import annotations
 
-import os
+from claude_agent_sdk import tool
 
-MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+
+@tool("multiply", "Multiply two integers", {"a": int, "b": int})
+async def multiply(args):
+    return {"content": [{"type": "text", "text": str(int(args["a"]) * int(args["b"]))}]}
+
+
+@tool("danger", "Irreversibly delete a record (gated behind a disabled skill)", {"target": str})
+async def danger(args):
+    return {"content": [{"type": "text", "text": f"deleted {args['target']}"}]}
 
 
 def build_options(model: str | None = None):
-    from claude_agent_sdk import ClaudeAgentOptions
-
-    return ClaudeAgentOptions(model=model or MODEL)
+    return [multiply, danger]

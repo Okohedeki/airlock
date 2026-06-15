@@ -1,0 +1,78 @@
+# Live PUBLIC-URL proof Worker — a REAL model loop, exposed on a real public URL.
+#
+# This is the manifest behind `scripts/live-proof.sh`. It proves the *product* — an agent
+# you control step-by-step, reachable on the public internet — not a localhost mock.
+# `airlock up` boots it and opens a real `https://<rand>.trycloudflare.com` URL (the epic-09
+# expose flip; `expose: public` below). Everything the script does hits that public URL.
+#
+# REAL model calls: the `openai` harness means airlock OWNS the loop and makes the model
+# calls itself. Calls go to the local mock model (model.py — a real OpenAI-compatible HTTP
+# server) so the proof is zero-dependency and deterministic. Point `models.*.endpoint` at
+# any real OpenAI-compatible server (e.g. `llama-server` on :11434) for a genuine LLM — same
+# loop, same controls (scripts/live-proof.sh --model-url <url>).
+#
+# The mock returns a tool_call when the user message contains `TOOLCALL:<tool>:<json>`, which
+# lets the proof drive exact tool calls *through the real loop* — so tool-gating and mid-run
+# approval are demonstrable deterministically over a real model.
+
+worker:
+  name: atlas
+  version: 1.0.0
+
+harness: openai
+
+models:
+  primary: { endpoint: "http://127.0.0.1:8999/v1/chat/completions", model: m-primary }
+  fast:    { endpoint: "http://127.0.0.1:8999/v1/chat/completions", model: m-fast }
+  backup:  { endpoint: "http://127.0.0.1:8999/v1/chat/completions", model: m-backup }
+
+# epic 03 — which binding answers; `fallback` retries then drops to `backup`.
+routing:
+  default: primary
+fallback:
+  retries: 1
+  models:
+    primary: [backup]
+
+tools:
+  echo: tools:echo
+  send: tools:send
+  slow: tools:slow
+
+# Skills = tools with an on/off switch (epic 07). `calc`/`mailer` are ENABLED; `danger` is
+# DISABLED, so POST /skills/danger -> 403 AND the slow tool is dropped from the loop.
+# POST /skills/calc -> 200; POST /skills/<unknown> -> 404.
+skills:
+  calc:   { tool: echo, enabled: true }
+  mailer: { tool: send, enabled: true }
+  danger: { tool: slow, enabled: false }
+
+# epic 02 — loop guards + mid-run approval, applied to the REAL model loop.
+controls:
+  max_steps: 8
+  tool_gates:
+    - tool: echo
+      when: { text: { contains: "rm -rf" } }
+      action: deny          # gate a dangerous argument
+  approvals:
+    - tool: send            # hold every `send` for a human
+
+# epic 13 — output redaction.
+io:
+  output:
+    redact: [email]
+
+# epic 04 — state store.
+state:
+  backend: sqlite
+
+# epic 10 — caller auth + per-tenant isolation (required:false so plain curls work).
+auth:
+  scheme: api_key
+  required: false
+tenancy:
+  keys:
+    key-acme: acme
+    key-globex: globex
+
+expose: public
