@@ -73,8 +73,8 @@ just running `airlock up` (the `--durable` flag is for one-off opt-in).
   by the dashboard config, not by anything airlock passes.
 - **airlock holds no Cloudflare keys.** The token is your account's; revoke it from your dashboard at
   any time.
-- **`airlock dev` / `airlock serve --tunnel` stay quick-tunnel only** — they're dev surfaces. Durable
-  is wired into `airlock up`, the self-host production path.
+- **`airlock dev` stays quick-tunnel only** — it's a dev surface. Durable is wired into `airlock up`,
+  the self-host production path.
 
 ### Tuning + resilience
 

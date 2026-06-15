@@ -1,219 +1,154 @@
-> ⚠️ **Historical — superseded by [`docs/redesign/`](./redesign/).** The CLI surface changes under the redesign (worker.yaml, migrate, expose, fleet router). Kept for reference.
-
 # `airlock` CLI reference
 
-All commands are accessible via `npx -y @airlockhq/cli <command>` or a local install. Source lives at [`packages/cli/src/cli.ts`](../packages/cli/src/cli.ts); the platform-specific spawn logic is at [`packages/cli/src/exec.ts`](../packages/cli/src/exec.ts).
+Run via `npx -y @airlockhq/cli <command>` or a global install (`npm i -g @airlockhq/cli`). Source:
+[`packages/cli/src/cli.ts`](../packages/cli/src/cli.ts).
+
+> airlock is **payment-free and self-hosted** — it never hosts inference and there is no billing/
+> x402 layer. You bring the model (local or a remote OpenAI-compatible endpoint); airlock runs the
+> loop and exposes the worker.
 
 ## Index
 
-| Command | Purpose | Wraps |
-|---|---|---|
-| `init <name>` | Write `.airlock/config.toml` + a starter Recipe config | — |
-| `doctor` | Validate the local config | — |
-| `status` | Print the current project config (JSON) | — |
-| `up` | Self-host: run your config-bound agent + front it with a public URL | `cloudflared tunnel` |
-| `serve` | Wrap a local LLM HTTP endpoint with x402 + dashboard reporting | — |
-| `dev` | Open a public Tunnel via cloudflared | `cloudflared tunnel` |
-| `deploy` | Push the Agent to the Target | `wrangler deploy` / `fly deploy` |
-| `delete` | Tear down the deployment | `wrangler delete` / `fly apps destroy` |
-| `logs` | Stream live logs | `wrangler tail` / `fly logs` |
-| `secret set` / `list` / `rm` | Manage Target secrets | `wrangler secret …` / `fly secrets …` |
-| `domain add` / `rm` | Manage custom domains | `wrangler domains …` / `fly certs …` |
-| `login` | GitHub device-flow auth to the dashboard backend | — |
-| `logout` | Forget the stored CLI auth token | — |
-| `whoami` | Print the GitHub account this CLI is logged in as | — |
-| `sync` | Register this project with the dashboard backend | — |
+| Command | Purpose |
+|---|---|
+| `init <name>` | Scaffold a project; `--detect` finds your harness + entrypoint |
+| `migrate` | Scaffold a `worker.yaml` from a legacy `.airlock/config.toml` |
+| `build` | Build a reproducible Docker image for this `worker.yaml` (validates first) |
+| `doctor` | Validate the local config / `worker.yaml` and report issues |
+| `status` | Print the current project configuration (JSON) |
+| `up` | Run the worker locally and front it with a public Cloudflare URL |
+| `dev` | Open a public Cloudflare tunnel to an already-running local worker |
+| `control` | Open the **control plane** — operate the whole fleet from a local web UI |
+| `deploy` | Run a multi-container fleet (N replicas) behind the router; optional canary |
+| `promote` / `rollback` | Promote a version to 100%, or instantly drop the canary |
+| `tunnel provision` | Auto-create a durable Cloudflare tunnel + DNS (needs `CF_API_TOKEN`) |
+| `login` / `logout` / `whoami` / `sync` | Optional dashboard-backend auth + project registration |
+| `delete` / `logs` / `secret` / `domain` | Legacy Target passthroughs (Cloudflare Workers) |
 
 ---
 
-## `init <name>`
+## Local project
 
-Wraps the current project with airlock config and a starter Recipe.
+### `init <name>`
+Scaffold an airlock project.
 
 ```
-airlock init <name> [-t|--target workers|fly] [--no-recipe]
+airlock init <name> [--detect] [--self-host]
 ```
 
-- `<name>` — project name; written into the Recipe configs and used as the dashboard identifier.
-- `--target` — `workers` or `fly`. Defaults to `fly`. The Target persists in `.airlock/config.toml` for the project's lifetime; we never auto-detect and never silently switch.
-- `--no-recipe` — write only `.airlock/config.toml`, skip `wrangler.toml` / `fly.toml`.
+- `--detect` — scan this repo, detect the agent **harness + entrypoint**, and wire them up (the same
+  scan surfaced in the control plane's **Detect** view).
+- `--self-host` — target your own hardware (run with `airlock up`), no cloud recipe.
 
-Outputs the paths it wrote and next-steps hints.
+The redesign worker is one `worker.yaml`; if you have a legacy `.airlock/config.toml`, run `migrate`.
 
-## `doctor`
+### `migrate`
+```
+airlock migrate [-o|--out worker.yaml]
+```
+Convert a legacy `.airlock/config.toml` into a schema-validated `worker.yaml` (the single operational
+manifest the runtime boots from).
 
-Re-runs the Zod / Pydantic schemas over `.airlock/config.toml` and reports findings.
+### `build`
+```
+airlock build [--base <image>] [--no-base-build]
+```
+Validate `worker.yaml`, generate a Dockerfile, and build a reproducible image (`docker build`).
+Validation is the C2 gate — a malformed manifest never builds.
 
+### `doctor`
 ```
 airlock doctor
 ```
+Validate the local config / `worker.yaml` against the schema and report findings. Non-zero on failure.
 
-Exits non-zero if validation fails or the placeholder wallet is still in the config.
-
-## `status`
-
+### `status`
 ```
 airlock status
 ```
+Print the current project configuration as JSON.
 
-Prints the current project configuration as JSON. Useful for scripting:
+## Run
 
-```json
-{
-  "project": { "name": "my-agent", "target": "fly" },
-  "payment": { "configured": true, "enabled": true, "mode": "flat", "network": "base", "wallet": "0x..." }
-}
-```
-
-## `serve`
-
-Wrap a locally-running LLM HTTP endpoint with x402 payment enforcement and (optionally) dashboard reporting.
+### `up`
+Run the worker (`python -m airlock_agent`, or `--docker`) on your hardware and front it with a public URL.
 
 ```
-airlock serve \
-  [-u|--upstream URL] \
-  [-p|--port PORT] \
-  [--wallet ADDR] \
-  [--price USDC] \
-  [--no-payment] \
-  [--backend URL] \
-  [--project NAME]
-```
-
-- `--upstream` — local LLM URL (must speak OpenAI-compatible `POST /v1/chat/completions`). Default `http://localhost:8080` (llama.cpp's `llama-server` default).
-- `--port` — port for the wrapper itself. Default `3000`.
-- `--wallet` / `--price` — override `.airlock/config.toml` (or skip it entirely). Defaults price to `0.001` USDC.
-- `--no-payment` — disable payment enforcement; everything passes through. Use for debugging the upstream forwarding path.
-- `--backend` / `--project` — dashboard backend URL and project name for the reporter. If unset, `AIRLOCK_BACKEND` and `config.project.name` are read; `AIRLOCK_TOKEN` (or `~/.airlock/auth.json`) is required to report.
-
-Exposes:
-- `POST /v1/chat/completions` (OpenAI-compatible, payment-enforced)
-- `POST /chat` (alias)
-- `GET /` (info JSON)
-- `GET /healthz`
-
-Streams are forwarded as-is and force-enable `stream_options.include_usage` so per-token billing has a `total_tokens` to debit.
-
-## `up`
-
-Self-host: run your config-bound agent (`python -m airlock_agent`) on your own hardware and front it
-with a public URL. Payment is enforced in-process; airlock only operates the tunnel.
-
-```
-airlock up [-p|--port PORT] [--python BIN] [--no-payment] [--no-tunnel] [--durable]
-           [--max-concurrency N] [--max-queue N] [--queue-timeout S] [--no-build-per-call]
+airlock up [-p|--port PORT] [--python BIN] [--no-tunnel] [--durable] [--hostname HOST]
+           [--docker] [--image REF] [--mount] [--env-file PATH] [--profile NAME]
+           [--max-concurrency N] [--max-queue N] [--queue-timeout S]
            [--cf-protocol quic|http2|auto] [--cf-region REGION] [--cf-metrics HOST:PORT]
 ```
 
-- `--port` — port the agent listens on (and we tunnel to). Default `3000`.
-- `--no-tunnel` — run the agent locally without opening any public tunnel.
-- `--durable` — instead of the default ephemeral `*.trycloudflare.com` quick tunnel, run a **stable
-  named tunnel on your OWN Cloudflare account**. Requires a `[tunnel]` block (`hostname`) plus the
-  `AIRLOCK_CF_TUNNEL_TOKEN` env var. See **[durable hosting](./durable-hosting.md)**. (You can also
-  set `durable = true` in `[tunnel]` to make it the default without the flag.)
-- `--max-concurrency N` — how many runs the **model** can serve in parallel (`AIRLOCK_MAX_CONCURRENCY`).
-  Set it to the model's real capacity; higher just over-subscribes it.
-- `--cf-protocol` / `--cf-region` / `--cf-metrics` — tune the durable connector (also `[tunnel]` keys).
+- `--no-tunnel` — run locally only (`http://localhost:PORT`), no public URL.
+- `--durable` — a **stable named tunnel on your own Cloudflare account** instead of the default
+  ephemeral `*.trycloudflare.com` quick tunnel. Needs `AIRLOCK_CF_TUNNEL_TOKEN` (+ `--hostname` or a
+  `[tunnel]` block). See **[durable hosting](./durable-hosting.md)**.
+- `--docker` / `--image` / `--mount` / `--env-file` — run the worker in a container (needs `airlock build`).
+- `--profile` — run a `worker.yaml` variant/profile (e.g. `internal` | `external`).
+- `--max-concurrency` — the **model's** real parallel capacity (`AIRLOCK_MAX_CONCURRENCY`).
+- `--cf-*` — tune the durable connector (also settable as `[tunnel]` keys).
 
-Concurrency/latency env (read by the agent runtime):
-
-- `AIRLOCK_MAX_WAIT_S` — the wait **budget**: callers whose *estimated* wait (observed run-time EWMA ×
-  queue depth) exceeds it are shed with `429` + `Retry-After`; the rest queue. Default `120`.
-  (`AIRLOCK_QUEUE_TIMEOUT_S` is a deprecated alias.)
-- The agent exposes `GET /metrics` (run-gate saturation) and live stats on `GET /`.
-
-By default the URL is ephemeral and changes each run; use `--durable` for a stable hostname you own.
-For streaming, send `{"stream": true}` — responses come back as OpenAI SSE `chat.completion.chunk`s.
+Prints `✓ live at https://<rand>.trycloudflare.com` and serves the operator console at `/console`.
 For scaling beyond one box, see **[scaling on Cloudflare](./scaling-cloudflare.md)**.
 
-## `dev`
-
-Open a public Tunnel to a locally-running Agent via cloudflared.
-
+### `dev`
 ```
 airlock dev [-p|--port PORT]
 ```
+Open a public Cloudflare quick tunnel to an already-running local worker on `PORT` (default `3000`).
 
-- `--port` — local port the Agent is listening on. Default `3000`.
-
-Errors with an install hint if `cloudflared` isn't on PATH. The first-party `*.airlock.dev` tunnel server is deferred — see [`adr/0001-we-operate-the-hosted-dev-tunnel.md`](./adr/0001-we-operate-the-hosted-dev-tunnel.md).
-
-## `deploy`
+### `control`
+Open the **control plane** — a local web app to operate the whole fleet (no file-editing required).
 
 ```
-airlock deploy
+airlock control [-p|--port 8788] [--root DIR] [--python BIN]
 ```
 
-Wraps the Target's deploy CLI. For `--target=workers`, runs `wrangler deploy`. For `--target=fly`, runs `fly deploy --app <project name>`. Inherits stdio so you see the real-time output.
+- `--root` — workspace directory to scan for `worker.yaml` projects (default: cwd).
+- `--python` — python used to launch workers (respects a venv).
 
-## `delete`
+Serves at `http://localhost:8788`: a **fleet dashboard** (start/stop workers, live status/model/skills/
+runs/cost), **Models** setup, **Skills** on/off (written to `worker.yaml` + applied live), a **Runs**
+explorer, an **Approvals** governance queue, **Detect**, plus RBAC roles, environments, an append-only
+**audit log**, and per-tenant cost & usage.
 
+## Fleet & deploy
+
+### `deploy`
 ```
-airlock delete
+airlock deploy [-r|--replicas 2] [-p|--port 8080] [--canary <image@pct>] [--expose] [--no-build]
 ```
+Build the image and run **N worker replicas behind the router** (one ordered routing pipeline). With
+`--canary image@pct`, send pct% of new sessions to a canary version; `--expose` opens a public tunnel
+at the router. Control stays inside each worker; the router only decides which one handles a request.
 
-Tears down the deployment at the Target. For workers: `wrangler delete`. For fly: `fly apps destroy <name> --yes`.
-
-## `logs`
-
+### `promote` / `rollback`
 ```
-airlock logs
+airlock promote [-p|--port 8080]
+airlock rollback [-p|--port 8080]
 ```
+Promote the current version to 100% of traffic, or instantly drop the canary (stable wins). Stickiness
+wins over canary — a live session never flips version mid-run.
 
-Streams live logs from the deployment. For workers: `wrangler tail`. For fly: `fly logs --app <name>`.
-
-## `secret`
-
+### `tunnel provision`
 ```
-airlock secret set NAME=VALUE
-airlock secret list
-airlock secret rm NAME
+airlock tunnel provision [-p|--port 3000] [--account ID] [--zone ID] [--name NAME]
 ```
+Auto-create a durable Cloudflare tunnel + DNS via the Cloudflare API. Needs `CF_API_TOKEN`. After
+provisioning, run `airlock up --durable --hostname <host>`.
 
-Wraps `wrangler secret …` (workers; `set` is interactive — prompts for the value) or `fly secrets …` (fly; `set` takes `NAME=VALUE` directly). Secrets never touch airlock — they're piped straight to the Target CLI.
+## Dashboard backend (optional)
 
-## `domain`
+`login` / `logout` / `whoami` / `sync` authenticate this CLI to an airlock dashboard backend (GitHub
+device flow) and register the project so it shows up there. `--backend` defaults to
+`$AIRLOCK_DEPLOY_BACKEND` or `http://localhost:8787`. The token lives in `~/.airlock/auth.json`.
 
-```
-airlock domain add HOSTNAME
-airlock domain rm HOSTNAME
-```
+## Legacy Target passthroughs
 
-Wraps `wrangler domains add/remove` (workers) or `fly certs add/remove` (fly).
-
-## `login`
-
-```
-airlock login [--backend URL]
-```
-
-GitHub device-flow against the dashboard backend. Prints a user code and a URL; visit the URL, paste the code, and the CLI mints a token and stores it in `~/.airlock/auth.json`.
-
-- `--backend` — defaults to `$AIRLOCK_DEPLOY_BACKEND` or `http://localhost:8787`.
-
-## `logout`
-
-```
-airlock logout
-```
-
-Removes `~/.airlock/auth.json`. The token remains valid on the backend until revoked from the dashboard `/tokens` page.
-
-## `whoami`
-
-```
-airlock whoami
-```
-
-Prints the GitHub account this CLI is logged in as. Exits non-zero if not logged in.
-
-## `sync`
-
-```
-airlock sync
-```
-
-POSTs the current project (name + target from `.airlock/config.toml`) to the dashboard backend. Idempotent; safe to re-run. Re-syncing a previously-archived project revives it.
+`delete`, `logs`, and `secret` / `domain` shell out to the Cloudflare Workers CLI (`wrangler`) for
+projects still deployed that way. The supported deploy path is now `deploy` (Docker fleet) +
+`tunnel`/`up` for exposure.
 
 ---
 
@@ -221,13 +156,16 @@ POSTs the current project (name + target from `.airlock/config.toml`) to the das
 
 | Var | Used by | Effect |
 |---|---|---|
-| `AIRLOCK_DEPLOY_BACKEND` | `login` default | Default `--backend` URL |
-| `AIRLOCK_BACKEND` | `serve` reporter | Backend URL for dashboard reporting |
-| `AIRLOCK_TOKEN` | `serve` reporter | CLI token (overrides `~/.airlock/auth.json`) |
+| `AIRLOCK_PYTHON` | `up`, `control` | Python used to run `-m airlock_agent` |
+| `AIRLOCK_CF_TUNNEL_TOKEN` | `up --durable` | Bring-your-own Cloudflare named-tunnel token |
+| `CF_API_TOKEN` | `tunnel provision` | Cloudflare API token to create tunnel + DNS |
+| `AIRLOCK_MAX_CONCURRENCY` / `AIRLOCK_MAX_QUEUE` / `AIRLOCK_MAX_WAIT_S` | runtime | Run-gate admission (the model's parallel capacity; queue depth; wait budget before `429`) |
+| `OPENAI_API_BASE` / `OPENAI_API_KEY` | the model bindings | Your OpenAI-compatible endpoint + key — airlock never hosts inference |
+| `AIRLOCK_DEPLOY_BACKEND` | `login` | Default dashboard backend URL |
 
 ## Exit codes
 
 - `0` — success.
-- `1` — runtime / validation error (with message on stderr).
+- `1` — runtime / validation error (message on stderr).
 - `2` — invalid CLI arguments.
-- `127` — required Target binary (`wrangler` / `fly` / `cloudflared`) not on PATH. The error message includes the install URL.
+- `127` — a required binary (`cloudflared`, `docker`, `wrangler`) is not on PATH (message includes the install hint).

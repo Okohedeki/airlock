@@ -10,6 +10,28 @@ patch bumps remain backwards-compatible. SemVer kicks in fully at `1.0.0`.
 
 ## [Unreleased]
 
+### Added
+- **`airlock control` — the control plane.** A local web app (`http://localhost:8788`) to operate the
+  whole fleet: a dashboard of every `worker.yaml` with live status/model/skills/runs/cost, **start/stop**
+  workers, **Models** setup (model/endpoint/API-key env + default), **Skills** on/off (written to
+  `worker.yaml` and applied live when running), a fleet **Runs** explorer with step timelines, an
+  **Approvals** governance queue, **Detect** (harness + entrypoint), and a real **exposure** flip.
+- **Governance & access** — RBAC roles (owner/operator/approver/auditor/viewer) enforced on every
+  mutation, environments with change-control, an append-only **audit log** (`./.airlock-control/`),
+  per-tenant **cost & usage** — all persisted; no login wall (defaults to owner).
+- **`scripts/live-proof.sh`** — one-command proof that drives the full control surface over a real
+  public Cloudflare URL and saves a dated transcript under `docs/proof/`.
+- **6-harness showcase** (`docs/showcase.md`, `docker-compose.showcase.yml`) verifying all harnesses
+  against a real local model.
+
+### Fixed
+- Harness tool extraction, mid-run approval resume, tenant isolation, string-arg coercion, and
+  model-error handling hardened across all OWN harnesses.
+
+### Docs
+- Rewrote `docs/cli.md` to the current CLI (removed the defunct `serve`/payment surface; added
+  `control`, the Docker `deploy` fleet, and `tunnel provision`). Refreshed `MEMORY.md`.
+
 ## [0.2.0] — 2026-06-06
 
 The **in-the-loop agent runtime** redesign. airlock now executes the agent step
