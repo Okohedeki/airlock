@@ -474,15 +474,18 @@ function dwVersions() {
     <p class="mut" style="font-size:12px;margin-top:12px">Canary/rollback runs through the Fleet Router (epic 08). Stickiness wins over canary — a live session never flips version mid-run.</p>`;
 }
 function dwExposure() {
-  const w = CUR; const pub = w.expose === 'public';
+  const w = CUR; const pub = w.expose === 'public'; const rw = CAN('exposure:write');
   $('#dwBody').innerHTML = `<div class="card"><div class="h"><h3>Exposure</h3></div><div class="b">
     <div class="srow"><span class="nm">Network reach</span><span class="sp"></span><span class="tag ${pub ? 'public' : ''}">${esc(w.expose)}</span></div>
-    <div class="srow"><span class="nm">Public URL</span><span class="sp"></span><span class="sub">${pub ? 'https://' + w.name + '.agents.acme.com' : 'not exposed'}</span></div>
-    <div class="srow"><span class="nm">Tunnel</span><span class="sp"></span><span class="sub">${pub ? 'Cloudflare named tunnel · healthy' : '—'}</span></div>
-    <div class="srow"><span class="nm">Flip exposure</span><span class="sp"></span><button class="btn sm" onclick="toast('${pub ? 'unexpose' : 'expose'} (sample)')">${pub ? 'Make internal' : 'Expose publicly'}</button></div>
-    <p class="mut" style="font-size:12px;margin-top:8px">Internal vs public differs only in network binding + auth — same worker, same controls, no rebuild (epic 09).</p>
+    <div class="srow"><span class="nm">Flip exposure</span><span class="sub">writes <code>expose:</code> in worker.yaml</span><span class="sp"></span>
+      ${rw ? `<button class="btn sm ${pub ? 'no' : 'p'}" onclick="setExpose('${pub ? 'internal' : 'public'}')">${pub ? 'Make internal' : 'Make public'}</button>`
+        : `<span class="mut" style="font-size:11px">role "${esc(ME.role)}" cannot change exposure</span>`}</div>
+    <p class="mut" style="font-size:12px;margin-top:8px">Internal vs public differs only in network binding + auth — same worker, same controls, no rebuild. Set to <code>public</code> here, then <code>airlock up</code> opens the Cloudflare tunnel that serves the public URL.</p>
   </div></div>`;
 }
+window.setExpose = async (expose) => {
+  try { const r = await api('/api/workers/' + encodeURIComponent(CUR.id) + '/expose', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expose }) }); const d = await r.json(); if (d.ok) { CUR.expose = d.expose; toast('exposure → ' + d.expose); dwExposure(); } } catch (e) { /* handled */ }
+};
 async function dwConfig() {
   if (!live()) return void ($('#dwBody').innerHTML = notLive('worker.yaml editing is available for live workspace workers.'));
   const d = await j('/api/workers/' + encodeURIComponent(CUR.id) + '/yaml');

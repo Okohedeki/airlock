@@ -519,6 +519,19 @@ export function startControlServer(opts: ControlOptions) {
           audit(user!.name, 'worker.env', w.name, `environment → ${env}`, String(env));
           return send(res, 200, view(w));
         }
+        if (sub === '/expose' && req.method === 'PUT') {
+          if (!need('exposure:write') || !envOk(wenv)) return;
+          const { expose } = JSON.parse((await readBody(req)) || '{}');
+          const val = expose === 'public' ? 'public' : 'internal';
+          const doc = parseDocument(readFileSync(w.file, 'utf8'));
+          doc.setIn(['expose'], val);
+          const v = validateWorker(doc.toJS() || {});
+          if (!v.ok) return send(res, 400, { valid: false, errors: v.errors });
+          writeFileSync(w.file, String(doc));
+          discover();
+          audit(user!.name, 'exposure.flip', w.name, `→ ${val}`, wenv);
+          return send(res, 200, { ok: true, expose: val });
+        }
         if (sub === '/skills' && req.method === 'GET') return send(res, 200, { skills: skillsOf(w), running: w.status === 'running' });
         if (sub === '/skills' && req.method === 'PUT') {
           if (!need('workers:config')) return;
