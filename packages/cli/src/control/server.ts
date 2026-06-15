@@ -13,7 +13,7 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from '
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { parse as parseYaml, parseDocument } from 'yaml';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -125,6 +125,15 @@ export function startControlServer(opts: ControlOptions) {
         env_key: (c && c.env_key) || 'OPENAI_API_KEY', isDefault: name === def,
       })),
     };
+  };
+
+  const skillsOf = (w: Worker): Array<{ id: string; tool: string; enabled: boolean }> => {
+    const skills = (manifestOf(w).skills as Record<string, any>) || {};
+    return Object.entries(skills).map(([id, spec]) =>
+      typeof spec === 'object' && spec
+        ? { id, tool: String(spec.tool || id), enabled: spec.enabled !== false }
+        : { id, tool: String(spec), enabled: true },
+    );
   };
 
   const slug = (dir: string) =>
@@ -267,12 +276,17 @@ export function startControlServer(opts: ControlOptions) {
     });
   const view = (w: Worker) => {
     const wk = (readManifest(w.file).worker as Record<string, unknown>) || {};
+    const md = modelsOf(w);
+    const def = md.bindings.find((b) => b.isDefault);
+    const sk = skillsOf(w);
     return {
       id: w.id, name: w.name, harness: w.harness, expose: w.expose, status: w.status,
       port: w.port, url: w.url, dir: relative(root, w.dir) || '.', startedAt: w.startedAt,
       exitCode: w.exitCode, lastError: w.lastError,
       env: store.workerEnv(w.id), version: 'v' + String(wk.version || '0.0.0'),
-      models: modelsOf(w).bindings.length, model: modelsOf(w).default,
+      models: md.bindings.length, model: md.default,
+      modelName: def ? def.model : (md.bindings[0] ? md.bindings[0].model : '—'),
+      skillsOn: sk.filter((s) => s.enabled).length, skillsTotal: sk.length,
       health: w.status === 'running' ? 'healthy' : w.status === 'error' ? 'error' : 'idle',
     };
   };
@@ -505,26 +519,45 @@ export function startControlServer(opts: ControlOptions) {
           audit(user!.name, 'worker.env', w.name, `environment → ${env}`, String(env));
           return send(res, 200, view(w));
         }
+        if (sub === '/skills' && req.method === 'GET') return send(res, 200, { skills: skillsOf(w), running: w.status === 'running' });
+        if (sub === '/skills' && req.method === 'PUT') {
+          if (!need('workers:config')) return;
+          const { id, enabled } = JSON.parse((await readBody(req)) || '{}');
+          const doc = parseDocument(readFileSync(w.file, 'utf8')); // preserves comments/formatting
+          const cur = doc.getIn(['skills', id]);
+          if (cur && typeof cur !== 'string') doc.setIn(['skills', id, 'enabled'], !!enabled);
+          else doc.setIn(['skills', id], { tool: typeof cur === 'string' ? cur : id, enabled: !!enabled });
+          const v = validateWorker(doc.toJS() || {});
+          if (!v.ok) return send(res, 400, { valid: false, errors: v.errors });
+          writeFileSync(w.file, String(doc));
+          discover();
+          // Apply live too, if the worker is running (so the change takes effect immediately).
+          if (w.status === 'running' && w.port) {
+            await new Promise<void>((done) => {
+              const pr = httpRequest({ host: '127.0.0.1', port: w.port, path: '/v1/control/skills/' + encodeURIComponent(id), method: 'POST', headers: { 'content-type': 'application/json' } }, () => done());
+              pr.on('error', () => done());
+              pr.end(JSON.stringify({ enabled: !!enabled }));
+            });
+          }
+          audit(user!.name, 'skill.toggle', w.name, `${id} ${enabled ? 'enabled' : 'disabled'}`, wenv);
+          return send(res, 200, { ok: true, skills: skillsOf(w) });
+        }
         if (sub === '/model' && req.method === 'GET') return send(res, 200, modelsOf(w));
         if (sub === '/model' && req.method === 'PUT') {
           if (!need('workers:config')) return;
           const body = JSON.parse((await readBody(req)) || '{}');
-          const obj = (parseYaml(readFileSync(w.file, 'utf8')) as Record<string, any>) || {};
+          const doc = parseDocument(readFileSync(w.file, 'utf8')); // preserves comments/formatting
           if (body.setDefault) {
-            obj.routing = { ...(obj.routing || {}), default: body.setDefault };
+            doc.setIn(['routing', 'default'], body.setDefault);
           } else {
             const { name, model, endpoint, env_key } = body;
-            obj.models = obj.models || {};
-            obj.models[name] = {
-              ...(obj.models[name] || {}),
-              ...(endpoint !== undefined ? { endpoint } : {}),
-              ...(model !== undefined ? { model } : {}),
-              ...(env_key ? { env_key } : {}),
-            };
+            if (endpoint !== undefined) doc.setIn(['models', name, 'endpoint'], endpoint);
+            if (model !== undefined) doc.setIn(['models', name, 'model'], model);
+            if (env_key) doc.setIn(['models', name, 'env_key'], env_key);
           }
-          const v = validateWorker(obj);
+          const v = validateWorker(doc.toJS() || {});
           if (!v.ok) return send(res, 400, { valid: false, errors: v.errors });
-          writeFileSync(w.file, stringifyYaml(obj));
+          writeFileSync(w.file, String(doc));
           discover();
           audit(user!.name, 'model.update', w.name, body.setDefault ? `default → ${body.setDefault}` : `${body.name} updated`, wenv);
           return send(res, 200, { ok: true, ...modelsOf(w) });

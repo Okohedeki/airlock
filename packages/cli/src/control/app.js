@@ -9,7 +9,7 @@ function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('o
 
 let ENV = 'all';
 let WORKERS = [];
-const SECTIONS = { overview: 'Overview', workers: 'Workers', models: 'Models', runs: 'Runs', approvals: 'Approvals', tenants: 'Tenants', cost: 'Cost & usage', audit: 'Audit log', access: 'Access control' };
+const SECTIONS = { overview: 'Overview', workers: 'Workers', models: 'Models', detect: 'Detect', runs: 'Runs', approvals: 'Approvals', tenants: 'Tenants', cost: 'Cost & usage', audit: 'Audit log', access: 'Access control' };
 const envClass = (e) => e === 'prod' ? 'prod' : e === 'staging' ? 'staging' : 'dev';
 const envScoped = (rows) => ENV === 'all' ? rows : rows.filter((r) => (r.env || 'dev') === ENV);
 
@@ -162,7 +162,7 @@ RENDER.workers = async () => {
       <select id="wfExpose"><option value="">All exposure</option><option>public</option><option>internal</option></select>
       <span class="sp"></span><span class="hint mut" style="font-family:var(--mono);font-size:11px">metrics are live from each worker's runtime</span>
     </div>
-    <table><thead><tr><th>Worker</th><th>Env</th><th>Status</th><th>Harness</th><th>Version</th><th>Expose</th><th class="num">Runs</th><th class="num">Tokens</th><th class="num">Err%</th><th class="num">Cost</th><th></th></tr></thead>
+    <table><thead><tr><th>Worker</th><th>Env</th><th>Status</th><th>Harness</th><th>Model</th><th>Skills</th><th>Expose</th><th class="num">Runs</th><th class="num">Err%</th><th class="num">Cost</th><th></th></tr></thead>
     <tbody id="wkBody"></tbody></table>
   </div>`;
   const draw = () => {
@@ -174,9 +174,11 @@ RENDER.workers = async () => {
         <td><span class="nm" data-id="${esc(w.id)}">${esc(w.name)}</span> ${w.status === 'running' ? '<span class="live-chip">live</span>' : ''}</td>
         <td><span class="env ${envClass(w.env)}">${esc(w.env)}</span></td>
         <td><span class="st"><span class="dot ${w.status === 'running' ? 'running live' : (w.health || w.status)}"></span>${esc(status)}</span></td>
-        <td class="mono">${esc(w.harness)}</td><td class="mono">${esc(w.version)}</td>
+        <td class="mono">${esc(w.harness)}</td>
+        <td class="mono">${esc(w.modelName || '—')}</td>
+        <td class="num">${w.skillsTotal ? (w.skillsOn + '/' + w.skillsTotal) : '—'}</td>
         <td><span class="tag ${w.expose}">${esc(w.expose)}</span></td>
-        <td class="num">${num(w.runs || 0)}</td><td class="num">${num(w.tokens || 0)}</td><td class="num">${w.errPct || 0}</td><td class="num">${money(w.cost || 0, 2)}</td>
+        <td class="num">${num(w.runs || 0)}</td><td class="num">${w.errPct || 0}</td><td class="num">${money(w.cost || 0, 2)}</td>
         <td style="text-align:right">${w.status === 'running'
           ? (CAN('workers:stop') ? `<button class="btn sm no" data-act="stop" data-id="${esc(w.id)}">Stop</button>` : '<span class="mut" style="font-size:11px">running</span>')
           : (CAN('workers:start') ? `<button class="btn sm p" data-act="start" data-id="${esc(w.id)}">Start</button>` : '<span class="mut" style="font-size:11px">—</span>')}</td></tr>`;
@@ -204,6 +206,27 @@ RENDER.models = async () => {
     : '<tr><td colspan="6" class="empty">no model bindings declared. Add a models: block to a worker.yaml, or open a worker → Models.</td></tr>'}
   </tbody></table></div>`;
   $('#page').querySelectorAll('.nm').forEach((n) => n.onclick = () => openWorker(n.dataset.id, 'models'));
+};
+
+RENDER.detect = async () => {
+  $('#page').innerHTML = `<div class="ph"><h1>Detect a project</h1><span class="sub">identify the agent framework + entrypoint (airlock init --detect)</span></div>
+  <div class="card"><div class="b">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px">
+      <input class="inp" id="dtDir" style="width:380px;text-align:left" placeholder="path relative to workspace (e.g. examples/langgraph-agent)" value="examples/langgraph-agent">
+      <button class="btn p" id="dtRun">Detect</button>
+    </div>
+    <div id="dtResult"></div>
+  </div></div>`;
+  $('#dtRun').onclick = async () => {
+    $('#dtResult').innerHTML = '<div class="mut mono" style="font-size:12px">scanning…</div>';
+    const d = await j('/api/detect', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dir: $('#dtDir').value }) });
+    $('#dtResult').innerHTML = `<div class="kv">
+      <div class="k">Directory</div><div class="v">${esc(d.dir)}</div>
+      <div class="k">Harness</div><div class="v">${d.harness ? esc(d.harness) : '<span style="color:var(--warn)">not detected → custom</span>'}</div>
+      <div class="k">Entrypoint</div><div class="v">${d.entrypoint ? esc(d.entrypoint) : '<span class="mut">none</span>'}</div>
+      <div class="k">Evidence</div><div class="v">${(d.evidence || []).map(esc).join('<br>') || '—'}</div>
+    </div>`;
+  };
 };
 
 RENDER.runs = async () => {
@@ -326,7 +349,7 @@ window.openWorker = async (id, tab) => {
   $('#dwHarness').textContent = w.harness + (w.version ? ' · ' + w.version : '');
   $('#dwDot').className = 'dot ' + (w.status === 'running' ? 'running' : (w.health || w.status));
   const start = (tab || 'overview');
-  const tabs = ['Overview', 'Controls', 'Models', 'Versions', 'Exposure', 'Config', 'Logs'];
+  const tabs = ['Overview', 'Skills', 'Models', 'Controls', 'Versions', 'Exposure', 'Config', 'Logs'];
   $('#dwTabs').innerHTML = tabs.map((t) => `<button data-t="${t.toLowerCase()}" class="${t.toLowerCase() === start ? 'on' : ''}">${t}</button>`).join('');
   $('#dwTabs').querySelectorAll('button').forEach((b) => b.onclick = () => dwTab(b.dataset.t));
   $('#scrim').classList.add('on'); $('#drawer').classList.add('on');
@@ -337,7 +360,7 @@ $('#dwClose').onclick = closeDrawer; $('#scrim').onclick = closeDrawer;
 function dwTab(name) {
   $('#dwTabs').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.t === name));
   if (logTimer) { clearInterval(logTimer); logTimer = null; }
-  ({ overview: dwOverview, controls: dwControls, models: dwModels, versions: dwVersions, exposure: dwExposure, config: dwConfig, logs: dwLogs }[name] || dwOverview)();
+  ({ overview: dwOverview, skills: dwSkills, controls: dwControls, models: dwModels, versions: dwVersions, exposure: dwExposure, config: dwConfig, logs: dwLogs }[name] || dwOverview)();
 }
 const live = () => CUR && !CUR.sample;
 const notLive = (msg) => `<div class="empty">${msg}</div>`;
@@ -345,6 +368,13 @@ const notLive = (msg) => `<div class="empty">${msg}</div>`;
 function dwOverview() {
   const w = CUR; const m = (sub) => `<div class="kpi"><div class="k">${sub[0]}</div><div class="v">${sub[1]}</div></div>`;
   $('#dwBody').innerHTML = `
+  <div style="display:flex;gap:8px;margin-bottom:14px;align-items:center">
+    ${w.status === 'running'
+      ? (CAN('workers:stop') ? `<button class="btn no" onclick="drawerAct('stop')">■ Stop worker</button>` : '')
+      : (CAN('workers:start') ? `<button class="btn p" onclick="drawerAct('start')">▶ Start worker</button>` : '<span class="mut">role "' + esc(ME.role) + '" cannot launch</span>')}
+    ${w.status === 'running' && w.port ? `<a class="btn" href="http://localhost:${w.port}/console" target="_blank">Runtime console ↗</a>` : ''}
+    <span class="sp" style="flex:1"></span><span class="mono mut" style="font-size:11px">${w.dir || ''}</span>
+  </div>
   <div class="grid kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
     ${m(['Status', `<span class="st" style="font-size:18px"><span class="dot ${w.status === 'running' ? 'running' : (w.health || w.status)}"></span>${w.status === 'running' ? 'running' : (w.health || w.status)}</span>`])}
     ${m(['Runs', num(w.runs || 0)])}${m(['Tokens', num(w.tokens || 0)])}${m(['Error rate', (w.errPct || 0) + '%'])}${m(['Cost', money(w.cost || 0, 2)])}${m(['Models', w.models || 0])}
@@ -362,6 +392,9 @@ function dwOverview() {
   </div></div>`;
 }
 window.setEnv = async (env) => { try { await api('/api/workers/' + encodeURIComponent(CUR.id) + '/env', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ env }) }); CUR.env = env; toast('environment → ' + env); } catch (e) { /* handled */ } };
+window.drawerAct = async (action) => {
+  try { await api('/api/workers/' + encodeURIComponent(CUR.id) + '/' + action, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); toast('worker ' + (action === 'start' ? 'started' : 'stopped')); openWorker(CUR.id, 'overview'); } catch (e) { /* handled */ }
+};
 async function dwControls() {
   if (!live()) return void ($('#dwBody').innerHTML = notLive('Controls operate a live worker. This is a representative fleet entry — start a local worker to manage skills, model and guards.'));
   if (CUR.status !== 'running') return void ($('#dwBody').innerHTML = notLive('Worker is stopped. Start it from the Workers table to manage its controls live.'));
@@ -373,8 +406,6 @@ async function dwControls() {
   <div class="sectit">Model routing</div>
   <div class="srow"><span class="nm">Active model</span><span class="sp"></span>
     <select class="inp" style="width:auto;text-align:left" onchange="ctl('routing',{default:this.value})">${c.models.bindings.map((x) => `<option ${x.name === c.models.default ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
-  <div class="sectit">Skills</div>
-  ${c.skills.length ? c.skills.map((s) => `<div class="srow"><span class="nm">${esc(s.id)}</span><span class="sub">→ ${esc(s.tool)}</span><span class="sp"></span>${sw(s.enabled, `onchange="ctlSkill('${esc(s.id)}',this.checked)"`)}</div>`).join('') : '<div class="srow sub">no skills declared.</div>'}
   <div class="sectit">Guards</div>
   <div class="srow"><span class="nm">Max steps</span><span class="sp"></span><input class="inp" type="number" value="${c.controls.max_steps ?? ''}" onchange="ctl('controls',{max_steps:Number(this.value)})"></div>
   <div class="srow"><span class="nm">Budget · tokens</span><span class="sp"></span><input class="inp" type="number" placeholder="none" value="${b.tokens ?? ''}" onchange="ctl('controls',{'budget.tokens':this.value===''?false:Number(this.value)})"></div>
@@ -388,6 +419,22 @@ async function dwControls() {
 window.ctl = async (p, body) => { try { await api(`/api/workers/${encodeURIComponent(CUR.id)}/proxy/v1/control/${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); toast('applied to next run'); } catch (e) { /* handled */ } dwControls(); };
 window.ctlSkill = (id, on) => ctl('skills/' + encodeURIComponent(id), { enabled: on });
 window.ctlAppr = (t, on) => ctl('controls', { approval: { tool: t, on } });
+async function dwSkills() {
+  const d = await j('/api/workers/' + encodeURIComponent(CUR.id) + '/skills');
+  const rw = CAN('workers:config');
+  const sw = (on, h) => `<label class="sw"><input type="checkbox" ${on ? 'checked' : ''} ${rw ? '' : 'disabled'} ${h}><span class="tr"></span></label>`;
+  $('#dwBody').innerHTML = `
+    <p class="mut" style="margin:0 0 12px">Turn skills on or off. Off drops the tool from the agent loop and returns 403 from <code>/skills/&lt;id&gt;</code>. Saved to <code>worker.yaml</code>${d.running ? ' and applied live to the running worker' : ''}.</p>
+    ${(d.skills || []).length ? d.skills.map((s) => `<div class="srow"><span class="nm">${esc(s.id)}</span><span class="sub">→ tool ${esc(s.tool)}</span><span class="sp"></span><span class="bdg ${s.enabled ? 'ok' : ''}" style="margin-right:8px">${s.enabled ? 'on' : 'off'}</span>${sw(s.enabled, `onchange="toggleSkill('${esc(s.id)}',this.checked)"`)}</div>`).join('')
+      : '<div class="empty">no skills declared in this worker.yaml — add a <code>skills:</code> block (id → tool) in the Config tab.</div>'}
+    ${rw ? '' : `<div class="valid" style="background:var(--info-bg);color:#1f6feb;border:1px solid #cfe0fb;margin-top:10px">read-only — role "${esc(ME.role)}" cannot change skills</div>`}`;
+}
+window.toggleSkill = async (id, enabled) => {
+  try {
+    const r = await api('/api/workers/' + encodeURIComponent(CUR.id) + '/skills', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, enabled }) });
+    const d = await r.json(); if (d.ok) { toast('skill ' + (enabled ? 'enabled' : 'disabled')); dwSkills(); } else toast((d.errors || ['invalid']).join('; '));
+  } catch (e) { /* handled */ }
+};
 async function dwModels() {
   if (!live()) return void ($('#dwBody').innerHTML = notLive('Model setup is available for live workspace workers.'));
   const d = await j('/api/workers/' + encodeURIComponent(CUR.id) + '/model');
