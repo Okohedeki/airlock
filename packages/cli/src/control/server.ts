@@ -20,10 +20,11 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 import { runUp, type UpHandle } from '../commands/up.js';
 import { scanRepo } from '../scan.js';
 import { validateWorker } from '../worker-schema/validate.js';
-import {
-  ENVIRONMENTS, ROLES, USERS, SSO, type AuditEvent,
-  auditSeed, fleet as seedFleet, sampleRuns, series, tenants as seedTenants,
-} from './seed.js';
+import { ROLES, fleet as seedFleet, sampleRuns, series, tenants as seedTenants } from './seed.js';
+import { ControlStore } from './store.js';
+import { can, currentUser, login as authLogin, logout as authLogout } from './auth.js';
+
+const RANK: Record<string, number> = { viewer: 0, auditor: 1, approver: 1, operator: 2, owner: 3 };
 
 const LOG_CAP = 4000; // ring-buffer lines per worker
 const PORT_BASE = 3030; // first port handed to a launched worker
@@ -58,12 +59,10 @@ export function startControlServer(opts: ControlOptions) {
   const workers = new Map<string, Worker>();
   let nextPort = PORT_BASE;
 
-  // Audit log: seeded history + live events appended as the operator acts (newest first).
-  const liveAudit: AuditEvent[] = [];
-  let auditN = 0;
-  const OPERATOR = USERS[0]?.name || 'operator'; // signed-in operator (RBAC is representative)
+  // Durable, real state: users/roles/SSO/environments + an append-only audit log on disk.
+  const store = new ControlStore(root);
   const audit = (actor: string, action: string, target: string, detail: string, env = 'dev') =>
-    liveAudit.unshift({ id: `live-${auditN++}`, tsMins: 0, actor, action, target, detail, env });
+    store.appendAudit({ actor, action, target, detail, env });
 
   // Deterministic sample metrics for a worker id (real workers have no local traffic, so RPS/
   // p95/error/cost are representative — marked sample in the UI).
@@ -234,7 +233,7 @@ export function startControlServer(opts: ControlOptions) {
       id: w.id, name: w.name, harness: w.harness, expose: w.expose, status: w.status,
       port: w.port, url: w.url, dir: relative(root, w.dir) || '.', startedAt: w.startedAt,
       exitCode: w.exitCode, lastError: w.lastError,
-      env: 'dev', version: 'v' + String(wk.version || '0.0.0'),
+      env: store.workerEnv(w.id), version: 'v' + String(wk.version || '0.0.0'),
       operable: true, sampleMetrics: true,
       health: w.status === 'running' ? sm.health : w.status === 'error' ? 'error' : 'idle',
       rps: sm.rps, p95: sm.p95, errPct: sm.errPct, cost24h: sm.cost24h, tenants: sm.tenants,
@@ -266,10 +265,54 @@ export function startControlServer(opts: ControlOptions) {
       if (path === '/app.js') return send(res, 200, readFileSync(join(HERE, 'app.js'), 'utf8'), 'text/javascript');
       if (path === '/healthz') return send(res, 200, { ok: true });
 
+      // ---- identity + RBAC ----------------------------------------------------
+      const user = currentUser(store, req);
+      if (path === '/api/me') {
+        return send(res, 200, { user, sso: { enforced: store.sso().enforced, provider: store.sso().provider } });
+      }
+      // Pre-auth directory for the sign-in picker (names/emails/roles only — no secrets).
+      if (path === '/api/login-users') {
+        return send(res, 200, { users: store.users().map((u) => ({ name: u.name, email: u.email, role: u.role })), sso: { enforced: store.sso().enforced, provider: store.sso().provider } });
+      }
+      if (path === '/api/login' && req.method === 'POST') {
+        const { email, password } = JSON.parse((await readBody(req)) || '{}');
+        const r = authLogin(store, res, String(email || ''), password);
+        if (r.ok && r.user) audit(r.user.name, 'auth.login', 'session', 'signed in');
+        return send(res, r.ok ? 200 : 401, r);
+      }
+      if (path === '/api/logout' && req.method === 'POST') {
+        if (user) audit(user.name, 'auth.logout', 'session', 'signed out');
+        authLogout(req, res);
+        return send(res, 200, { ok: true });
+      }
+      // Everything else under /api requires an authenticated user.
+      if (path.startsWith('/api/') && !user) return send(res, 401, { error: 'authentication required' });
+
+      // Permission gate: 403 + audit on deny. Returns false when denied (caller returns).
+      const need = (perm: string): boolean => {
+        if (!user) { send(res, 401, { error: 'authentication required' }); return false; }
+        if (!can(user.role, perm)) {
+          audit(user.name, 'access.denied', perm, `role ${user.role} lacks ${perm}`);
+          send(res, 403, { error: `forbidden — ${perm} is not permitted for role "${user.role}"` });
+          return false;
+        }
+        return true;
+      };
+      // Environment change-control: the worker's env may demand a higher role.
+      const envOk = (envId: string): boolean => {
+        const pol = store.envPolicy(envId);
+        if ((RANK[user!.role] ?? 0) < (RANK[pol.minRole] ?? 0)) {
+          audit(user!.name, 'access.denied', envId, `${envId} requires ${pol.minRole}+`);
+          send(res, 403, { error: `forbidden — ${envId} change-control requires ${pol.minRole}+ (you are ${user!.role})` });
+          return false;
+        }
+        return true;
+      };
+
       if (path === '/api/workers' && req.method === 'GET') {
         discover();
         const real = [...workers.values()].map(view); // operable, real lifecycle
-        return send(res, 200, { root, environments: ENVIRONMENTS, workers: [...real, ...seedFleet()] });
+        return send(res, 200, { root, environments: store.environments(), workers: [...real, ...seedFleet()] });
       }
       if (path === '/api/detect' && req.method === 'POST') {
         const { dir } = JSON.parse((await readBody(req)) || '{}');
@@ -277,7 +320,7 @@ export function startControlServer(opts: ControlOptions) {
         const scan = await scanRepo(target);
         return send(res, 200, { dir: relative(root, target) || '.', ...scan });
       }
-      if (path === '/api/environments') return send(res, 200, { environments: ENVIRONMENTS });
+      if (path === '/api/environments') return send(res, 200, { environments: store.environments(), policy: store.get().envPolicy });
 
       // ---- fleet aggregation (live ⊕ seeded representative data) -----------
       if (path === '/api/overview' && req.method === 'GET') {
@@ -297,7 +340,7 @@ export function startControlServer(opts: ControlOptions) {
           pendingApprovals: 3,
         };
         return send(res, 200, {
-          kpi, environments: ENVIRONMENTS,
+          kpi, environments: store.environments(),
           runVolume: series(now, 24, 3200, 900, 0x11),
           latency: series(now, 24, 900, 280, 0x22),
           cost: series(now, 24, 320, 90, 0x33),
@@ -342,9 +385,30 @@ export function startControlServer(opts: ControlOptions) {
       }
       if (path === '/api/tenants' && req.method === 'GET') return send(res, 200, { tenants: seedTenants(), sample: true });
       if (path === '/api/access' && req.method === 'GET')
-        return send(res, 200, { users: USERS, roles: ROLES, sso: SSO, environments: ENVIRONMENTS, sample: true });
-      if (path === '/api/audit' && req.method === 'GET')
-        return send(res, 200, { events: [...liveAudit, ...auditSeed()], sample: true });
+        return send(res, 200, {
+          users: store.users().map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, sso: u.sso, lastActiveMins: u.lastActiveMins })),
+          roles: ROLES, sso: store.sso(), environments: store.environments(), policy: store.get().envPolicy,
+        });
+      if (path === '/api/access' && req.method === 'POST') {
+        if (!need('access:write')) return;
+        const body = JSON.parse((await readBody(req)) || '{}');
+        if (body.setRole) {
+          store.setUserRole(body.setRole.email, body.setRole.role);
+          audit(user!.name, 'access.role_change', body.setRole.email, `→ ${body.setRole.role}`);
+        } else if (body.addUser) {
+          store.addUser({ id: 'u-' + Date.now(), name: body.addUser.name, email: body.addUser.email, role: body.addUser.role || 'viewer', sso: true, lastActiveMins: 0 });
+          audit(user!.name, 'access.user_add', body.addUser.email, `role ${body.addUser.role || 'viewer'}`);
+        } else if (body.sso) {
+          store.setSso(body.sso);
+          audit(user!.name, 'access.sso', 'sso', `enforced=${body.sso.enforced}`);
+        }
+        return send(res, 200, { ok: true });
+      }
+      if (path === '/api/audit' && req.method === 'GET') {
+        if (!need('audit:read')) return;
+        const now = Date.now();
+        return send(res, 200, { events: store.readAudit(300).map((e) => ({ ...e, tsMins: Math.max(0, Math.round((now - e.ts) / 60000)) })) });
+      }
       if (path === '/api/cost' && req.method === 'GET') {
         const now = Date.now();
         return send(res, 200, {
@@ -362,16 +426,26 @@ export function startControlServer(opts: ControlOptions) {
         if (!w) return send(res, 404, { error: 'unknown worker' });
         const sub = m[2] || '';
 
+        const wenv = store.workerEnv(w.id);
         if (sub === '' && req.method === 'GET') return send(res, 200, view(w));
         if (sub === '/start' && req.method === 'POST') {
+          if (!need('workers:start') || !envOk(wenv)) return;
           const body = JSON.parse((await readBody(req)) || '{}');
           await start(w, body.port);
-          audit(OPERATOR, 'worker.start', w.name, `started on :${w.port}`);
+          audit(user!.name, 'worker.start', w.name, `started on :${w.port}`, wenv);
           return send(res, 200, view(w));
         }
         if (sub === '/stop' && req.method === 'POST') {
+          if (!need('workers:stop') || !envOk(wenv)) return;
           await stop(w);
-          audit(OPERATOR, 'worker.stop', w.name, 'stopped');
+          audit(user!.name, 'worker.stop', w.name, 'stopped', wenv);
+          return send(res, 200, view(w));
+        }
+        if (sub === '/env' && req.method === 'PUT') {
+          if (!need('env:write')) return;
+          const { env } = JSON.parse((await readBody(req)) || '{}');
+          store.setWorkerEnv(w.id, String(env));
+          audit(user!.name, 'worker.env', w.name, `environment → ${env}`, String(env));
           return send(res, 200, view(w));
         }
         if (sub === '/logs' && req.method === 'GET') return send(res, 200, { logs: w.logs.slice(-600) });
@@ -381,6 +455,7 @@ export function startControlServer(opts: ControlOptions) {
           return send(res, 200, { yaml, valid: v.ok, errors: v.errors });
         }
         if (sub === '/yaml' && req.method === 'PUT') {
+          if (!need('workers:config')) return;
           const { yaml } = JSON.parse((await readBody(req)) || '{}');
           let parsed: unknown;
           try {
@@ -392,14 +467,18 @@ export function startControlServer(opts: ControlOptions) {
           if (!v.ok) return send(res, 400, { valid: false, errors: v.errors });
           writeFileSync(w.file, yaml);
           discover();
-          audit(OPERATOR, 'config.save', w.name, 'edited worker.yaml');
+          audit(user!.name, 'config.save', w.name, 'edited worker.yaml', wenv);
           return send(res, 200, { valid: true, errors: [], saved: true });
         }
         if (sub.startsWith('/proxy/')) {
           const subpath = sub.slice('/proxy/'.length);
           if (req.method === 'POST' && subpath.includes('v1/control')) {
+            if (!need('control:write') || !envOk(wenv)) return;
             const act = subpath.replace('v1/control/', 'control.').replace(/\/.*$/, '') || 'control.update';
-            audit(OPERATOR, act.startsWith('control') ? act : 'control.update', w.name, subpath);
+            audit(user!.name, act.startsWith('control') ? act : 'control.update', w.name, subpath, wenv);
+          } else if (req.method === 'POST' && subpath.includes('/decision')) {
+            if (!need('approvals:decide')) return;
+            audit(user!.name, 'approval.decide', w.name, subpath, wenv);
           }
           return proxy(w, subpath, req, res);
         }

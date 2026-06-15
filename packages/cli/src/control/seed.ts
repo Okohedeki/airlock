@@ -38,7 +38,9 @@ export const USERS: User[] = [
   { id: 'u-iqbal', name: 'Priya Iqbal', email: 'priya.iqbal@acme.com', role: 'viewer', sso: false, lastActiveMins: 1440 },
 ];
 
-export const SSO = { provider: 'Okta', protocol: 'SAML 2.0', domain: 'acme.com', enforced: true, scimProvisioning: true, mfa: 'required' };
+// enforced:false by default so local session login works out of the box; flipping it on requires
+// a configured OIDC issuer (real external IdP) — the SSO path is otherwise unavailable.
+export const SSO = { provider: 'Okta', protocol: 'SAML 2.0', domain: 'acme.com', enforced: false, scimProvisioning: true, mfa: 'required' };
 
 export interface Tenant {
   id: string; name: string; plan: string; status: string; keyPrefix: string;

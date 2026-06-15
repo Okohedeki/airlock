@@ -13,6 +13,24 @@ const SECTIONS = { overview: 'Overview', workers: 'Workers', runs: 'Runs', appro
 const envClass = (e) => e === 'prod' ? 'prod' : e === 'staging' ? 'staging' : 'dev';
 const envScoped = (rows) => ENV === 'all' ? rows : rows.filter((r) => (r.env || 'dev') === ENV);
 
+/* ---- RBAC (client mirror of server ROLE_PERMS; the server enforces, this just gates UI) ---- */
+const ROLE_PERMS = {
+  owner: ['*'], operator: ['*:read', 'workers:start', 'workers:stop', 'workers:config', 'control:write', 'exposure:write', 'versions:write', 'approvals:decide', 'env:write'],
+  approver: ['*:read', 'approvals:decide'], auditor: ['*:read', 'audit:read'], viewer: ['overview:read', 'workers:read', 'runs:read'],
+};
+let ME = null;
+const CAN = (perm) => {
+  const ps = ROLE_PERMS[(ME && ME.role) || 'viewer'] || [];
+  return ps.some((p) => p === '*' || p === perm || (p.endsWith(':*') && perm.startsWith(p.slice(0, -1))) || (p === '*:read' && perm.endsWith(':read')));
+};
+/* fetch that bounces to login on 401 and toasts on 403 */
+async function api(u, o) {
+  const r = await fetch(u, o);
+  if (r.status === 401) { ME = null; renderLogin(); throw new Error('unauth'); }
+  if (r.status === 403) { const e = await r.json().catch(() => ({})); toast(e.error || 'forbidden'); throw new Error('forbidden'); }
+  return r;
+}
+
 /* ---- inline charts (no deps) ---- */
 function spark(data, h = 130, stroke = 'var(--brand)') {
   if (!data || !data.length) return '';
@@ -39,18 +57,64 @@ function go() {
 window.addEventListener('hashchange', go);
 document.querySelectorAll('.rail a.nav').forEach((a) => a.onclick = () => { location.hash = '#/' + a.dataset.route; });
 
+/* ---- login ---- */
+async function renderLogin() {
+  document.querySelector('.app').style.display = 'none';
+  let ov = $('#loginOverlay');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'loginOverlay'; document.body.appendChild(ov); }
+  const d = await (await fetch('/api/login-users')).json();
+  ov.style.cssText = 'position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:200;';
+  ov.innerHTML = `<div style="width:380px;max-width:92vw;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden">
+    <div style="padding:22px 22px 6px;display:flex;align-items:center;gap:10px"><span style="width:30px;height:30px;border-radius:7px;background:var(--brand);color:#04201c;display:grid;place-items:center;font-weight:900">▲</span>
+      <div><div style="font-weight:800;font-size:16px">airlock Control Plane</div><div class="mut" style="font-size:12px">sign in to operate the fleet</div></div></div>
+    <div style="padding:14px 22px 22px">
+      ${d.sso && d.sso.enforced
+        ? `<button class="btn p" style="width:100%;justify-content:center" onclick="toast('SSO enforced — configure an OIDC issuer to complete sign-in')">Sign in with ${esc(d.sso.provider)}</button>
+           <div class="mut" style="font-size:11px;margin-top:10px">SSO is enforced; local sign-in is disabled.</div>`
+        : `<div class="mut" style="font-size:11px;margin-bottom:8px">Choose an identity (roles demonstrate RBAC enforcement):</div>
+           ${(d.users || []).map((u) => `<button class="btn" style="width:100%;justify-content:space-between;margin-bottom:6px" onclick="doLogin('${esc(u.email)}')"><span><b>${esc(u.name)}</b> <span class="mut" style="font-weight:400">${esc(u.email)}</span></span><span class="rolechip">${esc(u.role)}</span></button>`).join('')}`}
+    </div></div>`;
+}
+window.doLogin = async (email) => {
+  const r = await (await fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email }) })).json();
+  if (!r.ok) return toast(r.error || 'sign-in failed');
+  const ov = $('#loginOverlay'); if (ov) ov.remove();
+  document.querySelector('.app').style.display = '';
+  boot();
+};
+
 /* ---- header / env ---- */
 async function boot() {
+  const me = await (await fetch('/api/me')).json();
+  if (!me.user) { ME = null; return renderLogin(); }
+  ME = me.user;
+  $('#acctName').textContent = ME.name;
+  $('#acctAv').textContent = ME.name.split(' ').map((p) => p[0]).join('').slice(0, 2);
+  $('#acctRole').textContent = ME.role; $('#acctOrg').textContent = 'Acme Corp · ' + ME.email;
+  $('.acct').onclick = accountMenu;
   const env = await j('/api/environments');
   $('#envSel').innerHTML = '<option value="all">All environments</option>' +
     (env.environments || []).map((e) => `<option value="${e.id}">${esc(e.label)}</option>`).join('');
   $('#envSel').onchange = (e) => { ENV = e.target.value; $('#envDot').className = 'envdot ' + (ENV === 'all' ? '' : envClass(ENV)); go(); };
-  const acc = await j('/api/access');
-  const me = (acc.users || [])[0]; const role = (acc.roles || []).find((r) => r.id === (me && me.role));
-  if (me) { $('#acctName').textContent = me.name; $('#acctAv').textContent = me.name.split(' ').map((p) => p[0]).join('').slice(0, 2); $('#acctRole').textContent = role ? role.label : me.role; }
   go();
   setInterval(() => { if (!$('#scrim').classList.contains('on') && (location.hash.includes('overview') || location.hash.includes('workers') || location.hash === '' )) refreshCounts(); }, 6000);
 }
+function accountMenu() {
+  let m = $('#acctMenu'); if (m) { m.remove(); return; }
+  m = document.createElement('div'); m.id = 'acctMenu';
+  m.style.cssText = 'position:fixed;top:48px;right:14px;background:var(--surface);border:1px solid var(--line2);border-radius:10px;box-shadow:0 8px 30px rgba(20,23,28,.18);z-index:80;min-width:200px;padding:6px;';
+  m.innerHTML = `<div class="mut" style="font-size:10.5px;padding:6px 10px;text-transform:uppercase;letter-spacing:.06em">Signed in as ${esc(ME.role)}</div>
+    <button class="btn ghost" style="width:100%;justify-content:flex-start" onclick="signout()">Sign out</button>
+    <div class="mut" style="font-size:10.5px;padding:8px 10px 2px;text-transform:uppercase;letter-spacing:.06em">Demo · switch identity</div>
+    <div id="switchList" style="max-height:200px;overflow:auto"></div>`;
+  document.body.appendChild(m);
+  fetch('/api/login-users').then((r) => r.json()).then((d) => {
+    $('#switchList').innerHTML = (d.users || []).map((u) => `<button class="btn ghost" style="width:100%;justify-content:space-between" onclick="switchUser('${esc(u.email)}')"><span>${esc(u.name.split(' ')[0])}</span><span class="rolechip">${esc(u.role)}</span></button>`).join('');
+  });
+  setTimeout(() => document.addEventListener('click', function h(e) { if (!m.contains(e.target) && !$('.acct').contains(e.target)) { m.remove(); document.removeEventListener('click', h); } }), 0);
+}
+window.signout = async () => { await fetch('/api/logout', { method: 'POST' }); ME = null; const m = $('#acctMenu'); if (m) m.remove(); renderLogin(); };
+window.switchUser = async (email) => { await fetch('/api/logout', { method: 'POST' }); const m = $('#acctMenu'); if (m) m.remove(); doLogin(email); };
 async function refreshCounts() {
   const w = await j('/api/workers'); WORKERS = w.workers || []; $('#wsPath').textContent = (w.root || '').split('/').slice(-1)[0];
   $('#ctWorkers').textContent = WORKERS.length;
@@ -117,8 +181,8 @@ RENDER.workers = async () => {
         <td class="num">${w.rps}</td><td class="num">${num(w.p95)}</td><td class="num">${w.errPct}</td><td class="num">${money(w.cost24h)}</td>
         <td style="text-align:right">${live
           ? (w.status === 'running'
-            ? `<button class="btn sm no" data-act="stop" data-id="${esc(w.id)}">Stop</button>`
-            : `<button class="btn sm p" data-act="start" data-id="${esc(w.id)}">Start</button>`)
+            ? (CAN('workers:stop') ? `<button class="btn sm no" data-act="stop" data-id="${esc(w.id)}">Stop</button>` : '<span class="mut" style="font-size:11px">running</span>')
+            : (CAN('workers:start') ? `<button class="btn sm p" data-act="start" data-id="${esc(w.id)}">Start</button>` : '<span class="mut" style="font-size:11px">—</span>'))
           : '<span class="mut" style="font-size:11px">—</span>'}</td></tr>`;
     }).join('') : '<tr><td colspan="11" class="empty">no workers match.</td></tr>';
     $('#wkBody').querySelectorAll('.nm').forEach((n) => n.onclick = () => openWorker(n.dataset.id));
@@ -128,9 +192,12 @@ RENDER.workers = async () => {
   draw();
 };
 async function act(id, action, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = action === 'start' ? '…' : '…'; }
-  await fetch(`/api/workers/${encodeURIComponent(id)}/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
-  toast('worker ' + (action === 'start' ? 'started' : 'stopped')); RENDER.workers();
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    await api(`/api/workers/${encodeURIComponent(id)}/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    toast('worker ' + (action === 'start' ? 'started' : 'stopped'));
+  } catch (e) { /* api() already toasted/redirected */ }
+  RENDER.workers();
 }
 
 RENDER.runs = async () => {
@@ -161,15 +228,20 @@ RENDER.approvals = async () => {
     <td><b>${esc(h.worker || '—')}</b></td><td class="mono">${esc(h.tool)}</td>
     <td class="mono" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(JSON.stringify(h.args || {}))}</td>
     <td><span class="env ${envClass(h.env || 'dev')}">${esc(h.env || 'dev')}</span></td><td class="mono">${h.ageMins != null ? ago(h.ageMins) : '—'}</td>
-    <td style="text-align:right;white-space:nowrap">${h.live
-      ? `<button class="btn sm ok" onclick="decide('${esc(h.workerId)}','${esc(h.run)}','approve')">Approve</button> <button class="btn sm no" onclick="decide('${esc(h.workerId)}','${esc(h.run)}','deny')">Deny</button>`
-      : `<button class="btn sm ok" onclick="toast('approved (sample)')">Approve</button> <button class="btn sm no" onclick="toast('denied (sample)')">Deny</button>`}</td></tr>`).join('')
+    <td style="text-align:right;white-space:nowrap">${!CAN('approvals:decide')
+      ? '<span class="mut" style="font-size:11px">view only</span>'
+      : h.live
+        ? `<button class="btn sm ok" onclick="decide('${esc(h.workerId)}','${esc(h.run)}','approve')">Approve</button> <button class="btn sm no" onclick="decide('${esc(h.workerId)}','${esc(h.run)}','deny')">Deny</button>`
+        : `<button class="btn sm ok" onclick="toast('approved (sample)')">Approve</button> <button class="btn sm no" onclick="toast('denied (sample)')">Deny</button>`}</td></tr>`).join('')
     : '<tr><td colspan="7" class="empty">nothing holding — guarded tools appear here when a run pauses.</td></tr>'}
   </tbody></table></div>`;
 };
 window.decide = async (wid, run, decision) => {
-  await fetch(`/api/workers/${encodeURIComponent(wid)}/proxy/v1/runs/${encodeURIComponent(run)}/decision`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ decision }) });
-  toast('run ' + decision + 'd'); RENDER.approvals();
+  try {
+    await api(`/api/workers/${encodeURIComponent(wid)}/proxy/v1/runs/${encodeURIComponent(run)}/decision`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ decision }) });
+    toast('run ' + decision + 'd');
+  } catch (e) { /* handled */ }
+  RENDER.approvals();
 };
 
 RENDER.tenants = async () => {
@@ -200,8 +272,9 @@ RENDER.cost = async () => {
 };
 
 RENDER.audit = async () => {
+  if (!CAN('audit:read')) { $('#page').innerHTML = `<div class="ph"><h1>Audit log</h1></div><div class="card"><div class="empty">Your role (<b>${esc(ME.role)}</b>) does not have <code>audit:read</code>. Ask an Owner or Auditor for access.</div></div>`; return; }
   const d = await j('/api/audit'); const ev = d.events || [];
-  $('#page').innerHTML = `<div class="ph"><h1>Audit log</h1><span class="sub">immutable record of every privileged action</span><span class="sp"></span><span class="sample">live actions + sample history</span></div>
+  $('#page').innerHTML = `<div class="ph"><h1>Audit log</h1><span class="sub">immutable, append-only record of every privileged action</span><span class="sp"></span><span class="live-chip">persisted</span></div>
   <div class="card"><table><thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Env</th><th>Detail</th></tr></thead><tbody>
   ${ev.map((e) => `<tr><td class="mono">${e.tsMins === 0 ? 'just now' : ago(e.tsMins) + ' ago'}</td><td>${esc(e.actor)}</td>
     <td class="mono">${esc(e.action)}</td><td class="mono">${esc(e.target)}</td><td><span class="env ${envClass(e.env)}">${esc(e.env)}</span></td>
@@ -213,21 +286,28 @@ RENDER.access = async () => {
   const d = await j('/api/access'); const sso = d.sso || {};
   $('#page').innerHTML = `<div class="ph"><h1>Access control</h1><span class="sub">identity, roles &amp; environments</span><span class="sp"></span><span class="sample">sample</span></div>
   <div class="grid cols2" style="margin-bottom:14px">
-    <div class="card"><div class="h"><h3>Single sign-on</h3><span class="sp"></span><span class="bdg ok">enforced</span></div><div class="b"><div class="kv">
+    <div class="card"><div class="h"><h3>Single sign-on</h3><span class="sp"></span><span class="bdg ${sso.enforced ? 'ok' : ''}">${sso.enforced ? 'enforced' : 'optional'}</span></div><div class="b"><div class="kv">
       <div class="k">Provider</div><div class="v">${esc(sso.provider)} · ${esc(sso.protocol)}</div>
       <div class="k">Domain</div><div class="v">${esc(sso.domain)}</div>
       <div class="k">MFA</div><div class="v">${esc(sso.mfa)}</div>
-      <div class="k">SCIM provisioning</div><div class="v">${sso.scimProvisioning ? 'enabled' : 'disabled'}</div></div></div></div>
+      <div class="k">SCIM provisioning</div><div class="v">${sso.scimProvisioning ? 'enabled' : 'disabled'}</div></div>
+      ${CAN('access:write') ? `<div class="srow" style="margin-top:6px"><span class="nm">Enforce SSO</span><span class="sub">blocks local sign-in (needs OIDC issuer)</span><span class="sp"></span><label class="sw"><input type="checkbox" ${sso.enforced ? 'checked' : ''} onchange="setSso(this.checked)"><span class="tr"></span></label></div>` : ''}</div></div>
     <div class="card"><div class="h"><h3>Environments</h3></div><div class="b">${(d.environments || []).map((e) => `<div class="srow"><span class="env ${envClass(e.id)}">${esc(e.label)}</span><span class="sp"></span><span class="sub">${e.id === 'prod' ? 'change control · 2-person approval' : e.id === 'staging' ? 'operators + approvers' : 'all engineers'}</span></div>`).join('')}</div></div>
   </div>
   <div class="card" style="margin-bottom:14px"><div class="h"><h3>Members</h3><span class="sp"></span><span class="hint">${(d.users || []).length} users</span></div>
     <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>SSO</th><th>Last active</th></tr></thead><tbody>
-    ${(d.users || []).map((u) => { const role = (d.roles || []).find((r) => r.id === u.role); return `<tr><td><b>${esc(u.name)}</b></td><td class="mono">${esc(u.email)}</td><td><span class="rolechip">${esc(role ? role.label : u.role)}</span></td><td>${u.sso ? '✓' : '—'}</td><td class="mut">${ago(u.lastActiveMins)} ago</td></tr>`; }).join('')}
+    ${(d.users || []).map((u) => { const role = (d.roles || []).find((r) => r.id === u.role); const roleCell = CAN('access:write')
+        ? `<select class="inp" style="width:auto;text-align:left" onchange="setRole('${esc(u.email)}',this.value)">${(d.roles || []).map((r) => `<option value="${esc(r.id)}" ${r.id === u.role ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select>`
+        : `<span class="rolechip">${esc(role ? role.label : u.role)}</span>`;
+      return `<tr><td><b>${esc(u.name)}</b>${u.email === (ME && ME.email) ? ' <span class="mut" style="font-size:11px">(you)</span>' : ''}</td><td class="mono">${esc(u.email)}</td><td>${roleCell}</td><td>${u.sso ? '✓' : '—'}</td><td class="mut">${ago(u.lastActiveMins)} ago</td></tr>`; }).join('')}
     </tbody></table></div>
   <div class="card"><div class="h"><h3>Roles</h3></div><table><thead><tr><th>Role</th><th>Description</th><th>Permissions</th></tr></thead><tbody>
     ${(d.roles || []).map((r) => `<tr><td><span class="rolechip">${esc(r.label)}</span></td><td>${esc(r.desc)}</td><td class="mono mut">${r.perms.map(esc).join(' · ')}</td></tr>`).join('')}
   </tbody></table></div>`;
 };
+
+window.setRole = async (email, role) => { try { await api('/api/access', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setRole: { email, role } }) }); toast(email.split('@')[0] + ' → ' + role); } catch (e) { /* handled */ } };
+window.setSso = async (enforced) => { try { await api('/api/access', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sso: { enforced } }) }); toast('SSO ' + (enforced ? 'enforced' : 'optional')); } catch (e) { /* handled */ } RENDER.access(); };
 
 /* ============================ WORKER DRAWER ============================ */
 let CUR = null, logTimer = null;
@@ -266,8 +346,15 @@ function dwOverview() {
     <div class="k">Worker</div><div class="v">${esc(w.name)}</div><div class="k">Environment</div><div class="v">${esc(w.env)}</div>
     <div class="k">Harness</div><div class="v">${esc(w.harness)}</div><div class="k">Version</div><div class="v">${esc(w.version)}</div>
     <div class="k">Exposure</div><div class="v">${esc(w.expose)}</div>${w.port ? `<div class="k">Address</div><div class="v">127.0.0.1:${w.port}</div>` : ''}
-  </div></div></div>`;
+  </div></div></div>
+  ${!w.sample ? `<div class="card" style="margin-top:14px"><div class="h"><h3>Environment</h3><span class="sp"></span><span class="hint">change-control</span></div><div class="b">
+    <div class="srow"><span class="nm">Assigned environment</span><span class="sp"></span>
+      ${CAN('env:write')
+        ? `<select class="inp" style="width:auto;text-align:left" onchange="setEnv(this.value)"><option ${w.env === 'dev' ? 'selected' : ''}>dev</option><option ${w.env === 'staging' ? 'selected' : ''}>staging</option><option ${w.env === 'prod' ? 'selected' : ''}>prod</option></select>`
+        : `<span class="env ${envClass(w.env)}">${esc(w.env)}</span> <span class="mut" style="font-size:11px;margin-left:8px">role "${esc(ME.role)}" cannot reassign</span>`}</div>
+  </div></div>` : ''}`;
 }
+window.setEnv = async (env) => { try { await api('/api/workers/' + encodeURIComponent(CUR.id) + '/env', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ env }) }); CUR.env = env; toast('environment → ' + env); } catch (e) { /* handled */ } };
 async function dwControls() {
   if (!live()) return void ($('#dwBody').innerHTML = notLive('Controls operate a live worker. This is a representative fleet entry — start a local worker to manage skills, model and guards.'));
   if (CUR.status !== 'running') return void ($('#dwBody').innerHTML = notLive('Worker is stopped. Start it from the Workers table to manage its controls live.'));
@@ -286,8 +373,12 @@ async function dwControls() {
   <div class="srow"><span class="nm">Budget · tokens</span><span class="sp"></span><input class="inp" type="number" placeholder="none" value="${b.tokens ?? ''}" onchange="ctl('controls',{'budget.tokens':this.value===''?false:Number(this.value)})"></div>
   <div class="sectit">Approvals · hold for a human</div>
   ${(c.tools || []).map((t) => `<div class="srow"><span class="nm">${esc(t)}</span><span class="sp"></span>${sw(appr.has(t), `onchange="ctlAppr('${esc(t)}',this.checked)"`)}</div>`).join('')}`;
+  if (!CAN('control:write')) {
+    $('#dwBody').querySelectorAll('input,select').forEach((e) => { e.disabled = true; });
+    $('#dwBody').insertAdjacentHTML('afterbegin', `<div class="valid" style="background:var(--info-bg);color:#1f6feb;border:1px solid #cfe0fb;margin-bottom:12px">read-only — role "${esc(ME.role)}" cannot change controls</div>`);
+  }
 }
-window.ctl = (p, body) => fetch(`/api/workers/${encodeURIComponent(CUR.id)}/proxy/v1/control/${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(() => { toast('applied to next run'); dwControls(); });
+window.ctl = async (p, body) => { try { await api(`/api/workers/${encodeURIComponent(CUR.id)}/proxy/v1/control/${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); toast('applied to next run'); } catch (e) { /* handled */ } dwControls(); };
 window.ctlSkill = (id, on) => ctl('skills/' + encodeURIComponent(id), { enabled: on });
 window.ctlAppr = (t, on) => ctl('controls', { approval: { tool: t, on } });
 function dwVersions() {
@@ -312,12 +403,16 @@ function dwExposure() {
 async function dwConfig() {
   if (!live()) return void ($('#dwBody').innerHTML = notLive('worker.yaml editing is available for live workspace workers.'));
   const d = await j('/api/workers/' + encodeURIComponent(CUR.id) + '/yaml');
-  $('#dwBody').innerHTML = `<textarea class="yaml" id="dwYaml" spellcheck="false">${esc(d.yaml || '')}</textarea>
-    <div style="display:flex;gap:8px;margin-top:10px;align-items:center"><button class="btn p sm" id="dwSave">Validate &amp; save</button>
+  const rw = CAN('workers:config');
+  $('#dwBody').innerHTML = `<textarea class="yaml" id="dwYaml" spellcheck="false" ${rw ? '' : 'readonly'}>${esc(d.yaml || '')}</textarea>
+    <div style="display:flex;gap:8px;margin-top:10px;align-items:center">${rw ? '<button class="btn p sm" id="dwSave">Validate &amp; save</button>' : `<span class="mut" style="font-size:12px">read-only — role "${esc(ME.role)}" cannot edit config</span>`}
     <span class="mut mono" style="font-size:11px">edits worker.yaml on disk · restart the worker to apply</span></div><div id="dwValid"></div>`;
-  showValid(d); $('#dwSave').onclick = async () => {
-    const r = await fetch('/api/workers/' + encodeURIComponent(CUR.id) + '/yaml', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ yaml: $('#dwYaml').value }) });
-    const v = await r.json(); showValid(v); if (v.saved) toast('worker.yaml saved');
+  showValid(d);
+  if (rw) $('#dwSave').onclick = async () => {
+    try {
+      const r = await api('/api/workers/' + encodeURIComponent(CUR.id) + '/yaml', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ yaml: $('#dwYaml').value }) });
+      const v = await r.json(); showValid(v); if (v.saved) toast('worker.yaml saved');
+    } catch (e) { /* handled */ }
   };
 }
 function showValid(d) { $('#dwValid').innerHTML = d.valid ? '<div class="valid ok">✓ valid worker.yaml (schema C2)</div>' : `<div class="valid bad">✗ ${esc((d.errors || ['invalid']).join('\n'))}</div>`; }
