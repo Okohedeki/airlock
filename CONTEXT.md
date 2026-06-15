@@ -5,12 +5,6 @@ controls every step, tool call, and dollar **during** the run — harness-agnost
 and open (Apache-2.0), the **same Worker** internal or public. The moat is **control the
 loop**, which a front-of-agent gateway structurally cannot copy.
 
-> The program of record for this product lives in [`docs/redesign/`](./docs/redesign/)
-> (`PRODUCT-BRIEF.md` + 14 epics). This glossary tracks that program. Terms from the
-> previous product (deploy-orchestrator + x402 payments + two-target Recipes) are
-> collected under **Historical (pre-redesign)** at the bottom and are no longer
-> current.
-
 ## Language
 
 ### Core runtime
@@ -300,22 +294,3 @@ switches."
 unwired**: nothing populates a step's role, so `by_role` can't fire. What ships today is
 whole-run switching via `X-Airlock-Variant` and model **fallback**. The planned trigger is
 **role-by-tool** (`routing.roles`)."
-
-## Historical (pre-redesign)
-
-These terms described the previous product (a deploy orchestrator monetized via
-x402) and are **no longer current**. They are kept only so older commits and
-docs remain readable. See [`docs/redesign/`](./docs/redesign/) for what replaced
-them.
-
-- **Publisher** → replaced by **Operator**.
-- **Caller-as-payer**, **Payment Middleware**, **Facilitator**, **Credit Balance** →
-  payments removed entirely (redesign epic 00).
-- **Target**, **Recipe**, **Wrangler / target CLI** → replaced by one Docker image +
-  the **Fleet Router**; deploy is no longer a matrix of per-Target Recipes.
-- **Bundle**, **Handler stub**, **Scaffold** → artifacts of the old Airlock-contract
-  build flow; airlock-config is now descriptor-only.
-- **dev-free / prod-paid**, **hosted dev tunnel** → the dev/prod paid-tier business
-  model is retired; **Tunnel** survives only as the `expose: public` mechanism.
-- The **"runtime forbidden"** rule and the **"never holds production traffic"**
-  invariant are both reversed (see above).

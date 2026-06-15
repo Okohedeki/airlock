@@ -7,7 +7,7 @@
 #   final: <text>        -> finish
 #
 # Boot + expose publicly:   airlock up        (opens https://<rand>.trycloudflare.com)
-# Then follow docs/redesign/LIVE-TEST.md against that public URL.
+# Then drive the control surface against that public URL — see scripts/live-proof.sh.
 
 worker:
   name: live-demo

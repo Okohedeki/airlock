@@ -23,10 +23,7 @@ coverage/
 
 # Local tooling / agent state — not part of the project
 .agents/
-.claude/*
-!.claude/skills/
-.claude/skills/*
-!.claude/skills/ogilvy/
+.claude/
 skills-lock.json
 .airlock-tasks.md
 MEMORY.md
@@ -56,3 +53,6 @@ python/agent-runtime/.venv312/
 .venv-harness/
 .venv-crewai/
 .airlock-control/
+
+# Generated proof transcripts (scripts/live-proof.sh) — not part of the project
+docs/proof/

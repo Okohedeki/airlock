@@ -20,7 +20,7 @@ patch bumps remain backwards-compatible. SemVer kicks in fully at `1.0.0`.
   mutation, environments with change-control, an append-only **audit log** (`./.airlock-control/`),
   per-tenant **cost & usage** — all persisted; no login wall (defaults to owner).
 - **`scripts/live-proof.sh`** — one-command proof that drives the full control surface over a real
-  public Cloudflare URL and saves a dated transcript under `docs/proof/`.
+  public Cloudflare URL and saves a dated transcript locally.
 - **6-harness showcase** (`docs/showcase.md`, `docker-compose.showcase.yml`) verifying all harnesses
   against a real local model.
 
@@ -37,9 +37,8 @@ patch bumps remain backwards-compatible. SemVer kicks in fully at `1.0.0`.
 The **in-the-loop agent runtime** redesign. airlock now executes the agent step
 by step and owns the loop, so the Operator controls every step, tool call, and
 dollar *during* the run — harness-agnostic, self-hosted, the same Worker for
-internal callers and the open internet. All 14 epics (00–13) built and tested.
-Program of record: [`docs/redesign/`](docs/redesign/README.md). This is a
-breaking release: payments are gone and the runtime/manifest surface is new.
+internal callers and the open internet. This is a breaking release: payments are
+gone and the runtime/manifest surface is new.
 
 ### Added
 - **Airlock Loop Engine** (`engine/`) — OWN step loop with `StepEvent`/`ControlSignal`, planner protocol, and per-step cost accounting.

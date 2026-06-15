@@ -2,7 +2,7 @@
   "name": "airlock",
   "version": "0.2.0",
   "private": true,
-  "description": "ngrok for AI agents — expose any HTTP agent in dev and deploy to the publisher's own cloud in prod. Monorepo root.",
+  "description": "airlock — run any AI agent as a controlled, self-hosted HTTP service. Monorepo: CLI + dashboard (TS) + Python worker runtime.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {

@@ -1,5 +1,3 @@
-> ⚠️ **Historical — superseded by [`docs/redesign/`](./redesign/).** Deploy/expose is now one Docker image + the Fleet Router (redesign epic 09). Kept for reference.
-
 # Durable hosting — a stable URL on **your own** account
 
 `airlock up` gives you a public URL out of the box with **zero accounts**: an ephemeral
@@ -105,7 +103,7 @@ the same `AIRLOCK_CF_TUNNEL_TOKEN`**: Cloudflare load-balances across all health
 one hostname (the ngrok "endpoint pool" equivalent, free). The surface is stateless per call, so any
 box can serve any request — no session affinity. For health-checked pools, regional steering, or
 failover, add **Cloudflare Load Balancing** (the `/metrics` endpoint and `/healthz` give it signals) —
-that's the optional tier; replicas alone already balance. See [`scaling-cloudflare.md`](./scaling-cloudflare.md).
+that's the optional tier; replicas alone already balance.
 
 ---
 

@@ -90,7 +90,7 @@ airlock up [-p|--port PORT] [--python BIN] [--no-tunnel] [--durable] [--hostname
 - `--cf-*` — tune the durable connector (also settable as `[tunnel]` keys).
 
 Prints `✓ live at https://<rand>.trycloudflare.com` and serves the operator console at `/console`.
-For scaling beyond one box, see **[scaling on Cloudflare](./scaling-cloudflare.md)**.
+To scale beyond one box, run several replicas behind the router with `airlock deploy`.
 
 ### `dev`
 ```

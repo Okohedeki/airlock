@@ -1,8 +1,8 @@
 """Frozen contract C1 — the uniform step record and the control directive.
 
 `StepEvent` is what the engine emits per loop iteration; `ControlSignal` is what it
-consumes between steps. These types are the seam epics 02/03/04/05/06 plan against —
-do not redefine them downstream. See docs/redesign/plans/01-airlock-loop-engine.md.
+consumes between steps. These types are the frozen seam the rest of the engine builds
+against — do not redefine them downstream.
 """
 
 from __future__ import annotations

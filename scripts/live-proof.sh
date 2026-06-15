@@ -2,12 +2,11 @@
 #
 # live-proof.sh — prove airlock on the PUBLIC WEB, not localhost.
 #
-# This is the runnable companion to docs/redesign/LIVE-TEST.md. It boots a REAL model loop
-# (the `openai` harness over a local OpenAI-compatible model), opens a REAL Cloudflare quick
-# tunnel via `airlock up` (zero Cloudflare account/credentials), captures the public
-# https://<rand>.trycloudflare.com URL, and drives airlock's control surface against THAT
-# public URL — the product, not a localhost mock. Everything is teed to a dated transcript
-# under docs/proof/ so the proof is reviewable after the ephemeral URL is gone.
+# It boots a REAL model loop (the `openai` harness over a local OpenAI-compatible model), opens
+# a REAL Cloudflare quick tunnel via `airlock up` (zero Cloudflare account/credentials), captures
+# the public https://<rand>.trycloudflare.com URL, and drives airlock's control surface against
+# THAT public URL — the product, not a localhost mock. Everything is teed to a dated transcript
+# under docs/proof/ (gitignored) so the proof is reviewable after the ephemeral URL is gone.
 #
 # Usage:
 #   bash scripts/live-proof.sh                 # zero-dep: bundled mock model (model.py)

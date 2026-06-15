@@ -1,10 +1,10 @@
 <h1 align="center">airlock</h1>
 
-<p align="center"><strong>ngrok for AI agents.</strong></p>
+<p align="center"><strong>Run any AI agent as a controlled, self-hosted HTTP service.</strong></p>
 
 <p align="center">
-  Expose any agent as a real service in dev, deploy it to your own cloud in prod,<br/>
-  and control every step, tool call, and dollar from inside the loop.
+  Point it at a LangGraph, smolagents, CrewAI, OpenAI Agents, or Claude agent;<br/>
+  get an OpenAI-compatible URL, and control every step, tool call, and dollar from inside the loop.
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <a href="./docs/redesign/PRODUCT-BRIEF.md">Product brief</a> ·
+  <a href="#run-it--docker-compose">Run it</a> ·
   <a href="./examples/">Examples</a> ·
   <a href="./docs/cli.md">CLI</a>
 </p>
@@ -34,12 +34,44 @@ Point airlock at an agent you built in **LangGraph, smolagents, CrewAI, the Open
 
 The difference is where airlock sits. Most gateways sit in front of an agent and proxy its traffic. airlock runs the loop itself, one step at a time, so you can act on any step while the run is still happening.
 
+## Architecture
+
+airlock is one runtime with two operator surfaces on top of it:
+
+| Piece | Language / packaging | What it is |
+| --- | --- | --- |
+| **Worker runtime** | **Python**, shipped as a **Docker image** (`airlock-worker`) | Runs the agent loop and serves the OpenAI-compatible API, `/console`, and `/metrics`. This is the thing that actually runs your agent. |
+| **CLI** (`@airlockhq/cli`) | **TypeScript**, published to **npm** | The operator/dev tool: scaffold, validate, build the image, run locally + tunnel, deploy a fleet, open the control plane. |
+| **Dashboards** | **TypeScript** (Node) | The `airlock control` plane (fleet operations) and the optional compose `dashboard` (call ledger). |
+
+So "Docker *and* an npm package" isn't a contradiction: the **worker runs as a Docker image**, and the **CLI on npm operates it**. One `worker.yaml` declares each worker.
+
+## Run it — Docker Compose
+
+The fastest path, with only Docker installed. `docker compose up --build` builds the Python runtime and Node dashboard inside the images and starts both:
+
 ```bash
-npm i -g @airlockhq/cli
-airlock init my-agent --detect    # finds your harness + entrypoint
-airlock up                        # local run + public URL + /console
-#   ✓ live at https://<name>.trycloudflare.com
+docker compose up --build
+#   worker    → http://localhost:3000   (/healthz, /console, /v1/chat/completions, /metrics)
+#   dashboard → http://localhost:8787   (optional; GitHub login needs the OAuth env vars)
 ```
+
+The worker bundles the `live-demo` stub, so it runs with no config. Any OpenAI client can call it:
+
+```bash
+curl -s http://localhost:3000/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"messages":[{"role":"user","content":"what is 23 times 19?"}]}'
+# → {"choices":[{"message":{"role":"assistant","content":"437"}}], ...}
+```
+
+To run **your** worker, mount its directory over `/app/worker` (or uncomment the volume in `docker-compose.yml`):
+
+```bash
+docker run -p 3000:3000 -v "$PWD/my-worker:/app/worker" airlock-worker:local
+```
+
+State persists in named volumes (`worker-state`, `dashboard-data`). Set `OPENAI_API_KEY` and `OPENAI_API_BASE` for workers that call a real model.
 
 ## Features
 
@@ -81,7 +113,7 @@ Running the loop yourself is what unlocks the rest. A gateway in front of the ag
 
 ### 🎛️ Operate & govern from the UI
 
-`airlock control` opens a **fleet control plane** — operate every worker from one dashboard, no file-editing required.
+`airlock control` opens a **fleet control plane** at `http://localhost:8788` — operate every worker from one dashboard, no file-editing required. (This is distinct from the compose `dashboard` on :8787, which is the GitHub-login call ledger / project registry.)
 
 - **Fleet dashboard** — every `worker.yaml` in your workspace with live status, model, skills, runs, errors, and cost; **start and stop** workers in place.
 - **Models** — view each worker's model bindings and **set them up** (model, endpoint, API-key env var) or switch the default.
@@ -95,7 +127,9 @@ Running the loop yourself is what unlocks the rest. A gateway in front of the ag
 - **Live step stream** over SSE, **per-step `cost_usd`**, and Prometheus **`/metrics`**.
 - **Operator Console** at `/console` on every running worker — overview, live runs, traces, approvals, and controls.
 
-## Quickstart
+## Operate it with the CLI
+
+The CLI (`@airlockhq/cli`, npm) is the operator/dev tool on top of the runtime — scaffold a worker, run it locally behind a public URL, open the control plane, or ship a fleet:
 
 ```bash
 npm i -g @airlockhq/cli
@@ -103,20 +137,11 @@ npm i -g @airlockhq/cli
 airlock init my-agent --detect   # detect harness + entrypoint
 airlock migrate                  # scaffold worker.yaml
 export OPENAI_API_BASE=http://localhost:8080/v1   # your model (local gguf or remote)
-airlock up                       # run locally + public URL + /console
+airlock up                       # run locally + public Cloudflare URL + /console
 #   ✓ live at https://<name>.trycloudflare.com
 
 airlock control                  # operate the whole fleet from one dashboard
 #   ▸ http://localhost:8788
-```
-
-Any OpenAI client can call it. The agent runs its full native loop and returns the result:
-
-```bash
-curl -s https://<name>.trycloudflare.com/v1/chat/completions \
-  -H 'content-type: application/json' \
-  -d '{"messages":[{"role":"user","content":"what is 23 times 19?"}]}'
-# → {"choices":[{"message":{"role":"assistant","content":"437"}}], ...}
 ```
 
 Ship to production:
@@ -127,25 +152,7 @@ airlock deploy --replicas 3 --canary   # multi-container fleet + canary slice
 airlock promote | rollback             # canary → 100%, or instant revert
 ```
 
-For a stable URL on your own domain: `airlock tunnel provision`, then `airlock up --durable --hostname agent.example.com` ([durable hosting](./docs/durable-hosting.md)).
-
-## Run with Docker Compose
-
-With only Docker installed, `docker compose up --build` builds the Python runtime and Node dashboard inside the images and starts both:
-
-```bash
-docker compose up --build
-#   worker    → http://localhost:3000   (/healthz, /console, /v1/chat/completions, /metrics)
-#   dashboard → http://localhost:8787   (optional; GitHub login needs the OAuth env vars)
-```
-
-The worker bundles the `live-demo` stub, so it runs with no config. To run **your** worker, mount its directory over `/app/worker` (or uncomment the volume in `docker-compose.yml`):
-
-```bash
-docker run -p 3000:3000 -v "$PWD/my-worker:/app/worker" airlock-worker:local
-```
-
-State persists in named volumes (`worker-state`, `dashboard-data`). Set `OPENAI_API_KEY` and `OPENAI_API_BASE` for workers that call a real model.
+For a stable URL on your own domain: `airlock tunnel provision`, then `airlock up --durable --hostname agent.example.com` ([durable hosting](./docs/durable-hosting.md)). Full command reference: [`docs/cli.md`](./docs/cli.md).
 
 ## Harnesses
 
@@ -161,8 +168,9 @@ airlock never hosts inference. Point it at a local gguf/vLLM or a remote `OPENAI
 
 | | |
 | --- | --- |
-| [Product brief](./docs/redesign/PRODUCT-BRIEF.md) | The vision and who it's for. |
 | [CLI reference](./docs/cli.md) | Every command and flag. |
+| [Harness showcase](./docs/showcase.md) | One real containerized worker per framework, all green. |
+| [Durable hosting](./docs/durable-hosting.md) | A stable URL on your own Cloudflare account. |
 | [`airlock-config`](https://github.com/Okohedeki/airlock-config) | Optional buyer-facing descriptor served at `/.well-known`. |
 
 ## License
