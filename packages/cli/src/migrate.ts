@@ -60,11 +60,15 @@ export function configToWorkerYaml(config: AirlockConfig): string {
     if (config.agent.build_per_call !== undefined) {
       lines.push(`build_per_call: ${config.agent.build_per_call}`);
     }
-    // A default model binding so the migrated worker boots; add named bindings for
-    // mid-run routing/fallback (epic 03).
+    // The model is what airlock found a SLOT for — it's never auto-guessed (it's
+    // your endpoint + keys). Confirm it here; airlock makes the call. Add named
+    // bindings for mid-run routing/fallback (epic 03).
     lines.push('');
+    lines.push('# models — confirm what we found. airlock owns the loop and calls this endpoint.');
     lines.push('models:');
-    lines.push('  default: {}');
+    lines.push('  default:');
+    lines.push('    endpoint: ""   # ← your OpenAI-compatible model endpoint (or set OPENAI_API_BASE)');
+    lines.push('    model: ""      # ← model id to request');
   }
 
   // Tunnel → expose. A durable named tunnel maps to public reach; otherwise the
@@ -99,7 +103,7 @@ export function configToWorkerObject(config: AirlockConfig): Record<string, unkn
     worker: { name: config.project.name },
     harness: config.agent?.harness ?? 'stub',
     expose: tunnel?.durable ? 'public' : 'internal',
-    models: { default: {} },
+    models: { default: { endpoint: '', model: '' } },
   };
   if (config.agent?.entrypoint) obj.entrypoint = config.agent.entrypoint;
   return obj;

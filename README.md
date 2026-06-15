@@ -56,14 +56,17 @@ docker compose up --build
 #   dashboard → http://localhost:8787   (optional; GitHub login needs the OAuth env vars)
 ```
 
-The worker bundles the `live-demo` stub, so it runs with no config. Any OpenAI client can call it:
+The worker bundles the `live-demo` stub, so it runs with **no model and no config**. The stub
+just echoes — it proves the loop, the API, and the controls work end to end before you wire a model:
 
 ```bash
 curl -s http://localhost:3000/v1/chat/completions \
   -H 'content-type: application/json' \
   -d '{"messages":[{"role":"user","content":"what is 23 times 19?"}]}'
-# → {"choices":[{"message":{"role":"assistant","content":"437"}}], ...}
+# → {"model":"live-demo","choices":[{"message":{"role":"assistant","content":"echo: what is 23 times 19?"}}], ...}
 ```
+
+To get a **real answer**, point the worker at a model — see [Bring a model](#bring-a-model) below.
 
 To run **your** worker, mount its directory over `/app/worker` (or uncomment the volume in `docker-compose.yml`):
 
@@ -132,13 +135,17 @@ Running the loop yourself is what unlocks the rest. A gateway in front of the ag
 The CLI (`@airlockhq/cli`, npm) is the operator/dev tool on top of the runtime — scaffold a worker, run it locally behind a public URL, open the control plane, or ship a fleet:
 
 ```bash
-npm i -g @airlockhq/cli
+npm i -g @airlockhq/cli           # once published
 
-airlock init my-agent --detect   # detect harness + entrypoint
-airlock migrate                  # scaffold worker.yaml
+# until then, run it from this repo:
+#   pnpm -r build && npm link -w @airlockhq/cli   (or: node packages/cli/dist/cli.js <cmd>)
+
+airlock init my-agent --detect ./src/agent   # declare the harness folder + its areas
+airlock migrate                  # scaffold worker.yaml (with a model slot to confirm)
 export OPENAI_API_BASE=http://localhost:8080/v1   # your model (local gguf or remote)
-airlock up                       # run locally + public Cloudflare URL + /console
+airlock up --docker              # run the worker image locally + public Cloudflare URL + /console
 #   ✓ live at https://<name>.trycloudflare.com
+#   (drop --docker for the host-Python fast path; --docker runs the exact image you ship)
 
 airlock control                  # operate the whole fleet from one dashboard
 #   ▸ http://localhost:8788
@@ -160,9 +167,41 @@ All five run as **OWN** bindings: airlock extracts the framework's tools and pro
 
 `langgraph` · `smolagents` · `crewai` · `openai-agents` · `claude` — see [`examples/`](./examples/).
 
-## You own the model
+## Bring a model
 
 airlock never hosts inference. Point it at a local gguf/vLLM or a remote `OPENAI_API_BASE` — your endpoint, your keys. airlock makes the calls and runs the loop. [`.env.example`](./.env.example) lists every variable it reads.
+
+**Declare it.** Point `--detect` at the folder your harness lives in. It declares the harness and its areas — entrypoint and tools — for you to confirm. It does **not** guess a model (your endpoint + keys aren't in the code):
+
+```text
+$ airlock init my-agent --detect ./src/agent
+declared from folder ./src/agent (confirm or edit .airlock/config.toml [agent]):
+  • harness: claude (dependency)
+  • entrypoint: agent:build_options (factory in src/agent/agent.py)
+  • tools: multiply, danger
+```
+
+**Confirm the model.** `airlock migrate` writes `worker.yaml` with a model **slot** — the place we show what we found, for you to fill in. airlock owns the loop and calls this endpoint:
+
+```yaml
+# worker.yaml — confirm what we found.
+models:
+  default:
+    endpoint: ""   # ← your OpenAI-compatible endpoint (local gguf/vLLM or remote), or set OPENAI_API_BASE
+    model: ""      # ← model id to request
+```
+
+Then run — the worker calls the model and drives the loop (`docker compose up --build`, or `airlock up --docker`).
+
+**See which model answered.** A bundled mock model echoes the binding it routed to, so model routing and fallback are visible end to end:
+
+```bash
+docker compose --profile epic03 up -d --build
+curl -s http://localhost:3001/v1/chat/completions \
+  -H 'content-type: application/json' -d '{"messages":[{"role":"user","content":"hello"}]}'
+# → {"model":"live-openai","choices":[{"message":{"content":"[m-primary] hello"}}], ...}
+#   the `[m-primary]` prefix is the model binding airlock chose — change routing in worker.yaml to see it switch.
+```
 
 ## Docs
 

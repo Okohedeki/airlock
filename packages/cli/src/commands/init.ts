@@ -15,6 +15,8 @@ export interface InitOptions {
   harness?: AgentHarness;
   /** Scan an existing repo, detect the harness + entrypoint, and write [agent]. */
   detect?: boolean;
+  /** Harness FOLDER to scan (`--detect <dir>`); defaults to the whole repo (cwd). */
+  detectDir?: string;
   /** Deploy mode. `self-hosted` runs on the publisher's own hardware via `airlock up`. */
   mode?: DeployMode;
 }
@@ -25,7 +27,7 @@ export interface InitResult {
   /** Paths of starter-agent files written when `harness` is set. */
   agentPaths?: string[];
   /** Detection result + files written when `detect` is set. */
-  detected?: { harness?: string; entrypoint?: string; evidence: string[] };
+  detected?: { harness?: string; entrypoint?: string; tools: string[]; evidence: string[] };
   detectPaths?: string[];
 }
 
@@ -133,7 +135,8 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
   let detected: InitResult['detected'];
   let detectPaths: string[] | undefined;
   if (opts.detect) {
-    const scan = await scanRepo(opts.cwd);
+    const harnessDir = opts.detectDir ? resolve(opts.cwd, opts.detectDir) : undefined;
+    const scan = await scanRepo(opts.cwd, { harnessDir });
     detected = scan;
     config.agent = {
       harness: scan.harness ?? 'custom',

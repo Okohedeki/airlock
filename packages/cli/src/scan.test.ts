@@ -43,4 +43,29 @@ describe('scanRepo', () => {
     expect(r.entrypoint).toBeUndefined();
     expect(r.evidence.join(' ')).toMatch(/not detected|not found/);
   });
+
+  it('declares tools the harness exposes (@tool / @function_tool)', async () => {
+    await writeFile(join(cwd, 'requirements.txt'), 'claude-agent-sdk>=0.1\n');
+    await writeFile(
+      join(cwd, 'agent.py'),
+      '@tool("multiply", "x", {})\nasync def multiply(a): ...\n@tool("danger", "y", {})\nasync def danger(a): ...\ndef build_options():\n    return []\n',
+    );
+    const r = await scanRepo(cwd);
+    expect(r.tools).toEqual(['multiply', 'danger']);
+    expect(r.evidence.join(' ')).toContain('tools: multiply, danger');
+  });
+
+  it('resolves entrypoint relative to the harness folder when --detect <dir> is given', async () => {
+    await mkdir(join(cwd, 'src', 'agent'), { recursive: true });
+    await writeFile(join(cwd, 'src', 'agent', 'requirements.txt'), 'claude-agent-sdk>=0.1\n');
+    await writeFile(
+      join(cwd, 'src', 'agent', 'agent.py'),
+      '@tool("multiply", "x", {})\nasync def multiply(a): ...\ndef build_options():\n    return [multiply]\n',
+    );
+    const r = await scanRepo(cwd, { harnessDir: join(cwd, 'src', 'agent') });
+    expect(r.harness).toBe('claude');
+    // module name is relative to the harness folder, not the repo root.
+    expect(r.entrypoint).toBe('agent:build_options');
+    expect(r.tools).toEqual(['multiply']);
+  });
 });

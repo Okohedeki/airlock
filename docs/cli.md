@@ -11,7 +11,7 @@ Run via `npx -y @airlockhq/cli <command>` or a global install (`npm i -g @airloc
 
 | Command | Purpose |
 |---|---|
-| `init <name>` | Scaffold a project; `--detect` finds your harness + entrypoint |
+| `init <name>` | Scaffold a project; `--detect [dir]` declares the harness folder's areas (harness, entrypoint, tools) |
 | `migrate` | Scaffold a `worker.yaml` from a legacy `.airlock/config.toml` |
 | `build` | Build a reproducible Docker image for this `worker.yaml` (validates first) |
 | `doctor` | Validate the local config / `worker.yaml` and report issues |
@@ -33,11 +33,14 @@ Run via `npx -y @airlockhq/cli <command>` or a global install (`npm i -g @airloc
 Scaffold an airlock project.
 
 ```
-airlock init <name> [--detect] [--self-host]
+airlock init <name> [--detect [dir]] [--self-host]
 ```
 
-- `--detect` — scan this repo, detect the agent **harness + entrypoint**, and wire them up (the same
-  scan surfaced in the control plane's **Detect** view).
+- `--detect [dir]` — scan a harness **folder** (default: this repo) and **declare** its areas — the
+  agent **harness**, **entrypoint**, and **tools** — for you to confirm (the same scan surfaced in the
+  control plane's **Detect** view). Point it at where the harness lives: `--detect ./src/agent`.
+  It does **not** guess a model — your endpoint + keys aren't in the code; `migrate` scaffolds a model
+  slot in `worker.yaml` for you to confirm.
 - `--self-host` — target your own hardware (run with `airlock up`), no cloud recipe.
 
 The redesign worker is one `worker.yaml`; if you have a legacy `.airlock/config.toml`, run `migrate`.
@@ -47,7 +50,9 @@ The redesign worker is one `worker.yaml`; if you have a legacy `.airlock/config.
 airlock migrate [-o|--out worker.yaml]
 ```
 Convert a legacy `.airlock/config.toml` into a schema-validated `worker.yaml` (the single operational
-manifest the runtime boots from).
+manifest the runtime boots from). The `models:` block is scaffolded as a **slot to confirm**
+(`endpoint`/`model` left blank) — airlock never auto-guesses your model; you fill it in or set
+`OPENAI_API_BASE`.
 
 ### `build`
 ```
@@ -71,7 +76,9 @@ Print the current project configuration as JSON.
 ## Run
 
 ### `up`
-Run the worker (`python -m airlock_agent`, or `--docker`) on your hardware and front it with a public URL.
+Run the worker on your hardware and front it with a public URL. `--docker` runs the worker
+**image** (`airlock build`) — the same artifact you ship to a fleet, so dev matches prod; without
+it, `up` runs the worker as host Python (`python -m airlock_agent`) as a no-build fast path.
 
 ```
 airlock up [-p|--port PORT] [--python BIN] [--no-tunnel] [--durable] [--hostname HOST]

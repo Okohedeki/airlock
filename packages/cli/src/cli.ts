@@ -96,8 +96,8 @@ async function main() {
       'scaffold a harness-backed agentic service: smolagents | langgraph | crewai (Fly-only)',
     )
     .option(
-      '--detect',
-      'scan THIS repo, detect the harness + entrypoint, and wire it via [agent] (Fly-only)',
+      '--detect [dir]',
+      'scan a harness FOLDER (default: this repo) and declare its harness + entrypoint + tools (Fly-only)',
     )
     .option('--self-host', 'self-host on your own hardware (run via `airlock up`; no cloud Recipe)')
     .action(
@@ -107,7 +107,7 @@ async function main() {
           target: string;
           recipe: boolean;
           agent?: string;
-          detect?: boolean;
+          detect?: boolean | string;
           selfHost?: boolean;
         },
       ) => {
@@ -135,7 +135,8 @@ async function main() {
           target: opts.target,
           scaffoldRecipe: opts.recipe,
           harness: opts.agent as AgentHarness | undefined,
-          detect: opts.detect,
+          detect: !!opts.detect,
+          detectDir: typeof opts.detect === 'string' ? opts.detect : undefined,
           mode: opts.selfHost ? 'self-hosted' : undefined,
         });
         console.log(`✓ wrote ${result.configPath}`);
@@ -143,15 +144,18 @@ async function main() {
         for (const p of result.agentPaths ?? []) console.log(`✓ wrote ${p}`);
         for (const p of result.detectPaths ?? []) console.log(`✓ wrote ${p}`);
         if (result.detected) {
-          console.log('\ndetected (confirm or edit .airlock/config.toml [agent]):');
+          const where =
+            typeof opts.detect === 'string' ? `folder ${opts.detect}` : 'this repo';
+          console.log(`\ndeclared from ${where} (confirm or edit .airlock/config.toml [agent]):`);
           for (const line of result.detected.evidence) console.log(`  • ${line}`);
           console.log('\nnext steps:');
           console.log('  1. Confirm [agent] harness + entrypoint in .airlock/config.toml');
-          console.log('  2. `pip install -r requirements.txt`');
+          console.log('  2. `airlock migrate`, then set the model in worker.yaml `models:` (we scaffolded the slot)');
+          console.log('  3. `pip install -r requirements.txt`');
           if (opts.selfHost) {
-            console.log('  3. `airlock up` — run the agent here + front it with a public URL');
+            console.log('  4. `airlock up` — run the agent here + front it with a public URL');
           } else {
-            console.log('  3. `python -m airlock_agent` to run locally, then `airlock deploy`');
+            console.log('  4. `python -m airlock_agent` to run locally, then `airlock deploy`');
           }
           return;
         }
