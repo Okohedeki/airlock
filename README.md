@@ -79,10 +79,21 @@ Running the loop yourself is what unlocks the rest. A gateway in front of the ag
 - **Controlled input** — validate inbound requests and reject junk or injection before the loop spends a token.
 - **Controlled output** — enforce a schema, format, and redaction contract on every call so downstream code can trust the shape.
 
+### 🎛️ Operate & govern from the UI
+
+`airlock control` opens a **fleet control plane** — operate every worker from one dashboard, no file-editing required.
+
+- **Fleet dashboard** — every `worker.yaml` in your workspace with live status, model, skills, runs, errors, and cost; **start and stop** workers in place.
+- **Models** — view each worker's model bindings and **set them up** (model, endpoint, API-key env var) or switch the default.
+- **Skills on/off** — toggle any skill; the change is written to `worker.yaml` (running or stopped) and applied **live** to a running worker.
+- **Runs & approvals** — a fleet-wide run explorer with step timelines, and a governance queue to **approve, deny, or hold** tool calls.
+- **Detect** — point it at a project and it identifies the harness + entrypoint.
+- **Governance** — RBAC roles, environments with change-control, an append-only **audit log**, and per-tenant **cost & usage**.
+
 ### 📊 Observe
 
 - **Live step stream** over SSE, **per-step `cost_usd`**, and Prometheus **`/metrics`**.
-- **Operator Console** at `/console` — overview, live runs, traces, approvals, and controls in a local web UI.
+- **Operator Console** at `/console` on every running worker — overview, live runs, traces, approvals, and controls.
 
 ## Quickstart
 
@@ -94,6 +105,9 @@ airlock migrate                  # scaffold worker.yaml
 export OPENAI_API_BASE=http://localhost:8080/v1   # your model (local gguf or remote)
 airlock up                       # run locally + public URL + /console
 #   ✓ live at https://<name>.trycloudflare.com
+
+airlock control                  # operate the whole fleet from one dashboard
+#   ▸ http://localhost:8788
 ```
 
 Any OpenAI client can call it. The agent runs its full native loop and returns the result:
