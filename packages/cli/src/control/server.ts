@@ -243,9 +243,22 @@ export function startControlServer(opts: ControlOptions) {
         .catch(() => {});
     } catch (err) {
       w.status = 'error';
-      w.lastError = (err as Error).message;
+      // Surface the REAL cause (e.g. "ModuleNotFoundError: No module named
+      // 'claude_agent_sdk'") in lastError, not just the generic health-timeout —
+      // otherwise the dashboard can't tell you a harness dep or the runtime is missing.
+      const cause = lastErrorLine(w);
+      w.lastError = cause ? `${(err as Error).message} — ${cause}` : (err as Error).message;
       pushLog(w, `[control] failed to start: ${w.lastError}`);
     }
+  }
+
+  /** Most informative line from a worker's captured output (skips our own [control] lines). */
+  function lastErrorLine(w: Worker): string | undefined {
+    const lines = w.logs.filter((l) => !l.startsWith('[control]'));
+    const hit = [...lines]
+      .reverse()
+      .find((l) => /error|exception|traceback|no module|errno|refused|denied|not found/i.test(l));
+    return (hit || lines[lines.length - 1])?.trim();
   }
 
   async function stop(w: Worker): Promise<void> {
