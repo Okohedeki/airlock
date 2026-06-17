@@ -118,7 +118,7 @@ Running the loop yourself is what unlocks the rest. A gateway in front of the ag
 
 `airlock control` opens a **fleet control plane** at `http://localhost:8788` — operate every worker from one dashboard, no file-editing required. (This is distinct from the compose `dashboard` on :8787, which is the GitHub-login call ledger / project registry.)
 
-- **Fleet dashboard** — every `worker.yaml` in your workspace with live status, model, skills, runs, errors, and cost; **start and stop** workers in place.
+- **Fleet dashboard** — every `worker.yaml` in your workspace with live status, model, skills, runs, errors, and cost; **start and stop** workers in place. Start runs each worker **as a Docker container** (building its image on first start), so the host needs only Docker — no Python runtime or per-harness installs. (`--python` opts into legacy host mode.)
 - **Models** — view each worker's model bindings and **set them up** (model, endpoint, API-key env var) or switch the default.
 - **Skills on/off** — toggle any skill; the change is written to `worker.yaml` (running or stopped) and applied **live** to a running worker.
 - **Runs & approvals** — a fleet-wide run explorer with step timelines, and a governance queue to **approve, deny, or hold** tool calls.
