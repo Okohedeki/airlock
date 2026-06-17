@@ -42,7 +42,7 @@ airlock is **one runtime** with operator tooling on top of it. "A Docker image *
 | Piece | Language / packaging | What it is |
 | --- | --- | --- |
 | **Worker runtime** | **Python**, shipped as a **Docker image** | Owns the agent loop and serves the HTTP surface: OpenAI-compatible `/v1/chat/completions` (with SSE step streaming), run control (`/v1/runs/*`, `/v1/control/*`), `/console`, `/metrics`, `/healthz`. This is the thing that actually runs your agent. |
-| **CLI** (`@airlockhq/cli`) | **TypeScript**, npm *(not yet published — run from source, see below)* | The operator/dev tool: scaffold, validate, build the image, run locally + tunnel, deploy a fleet, open the control plane. |
+| **CLI** (`@airlockhq/cli`) | **TypeScript**, npm — run from source today ([To-do](#to-do)) | The operator/dev tool: scaffold, validate, build the image, run locally + tunnel, deploy a fleet, open the control plane. |
 | **Control plane** | **TypeScript** (Node) | `airlock control` — a local web app on `:8788` that operates every worker in a workspace (start/stop as containers, skills, models, runs, approvals, RBAC, audit). |
 | **Compose dashboard** | **TypeScript** (Node) | Optional `:8787` GitHub-login call ledger / project registry that ships with the Docker Compose stack. Distinct from the control plane. |
 
@@ -77,7 +77,7 @@ State persists in named volumes (`worker-state`, `dashboard-data`). Set `OPENAI_
 
 ## Features
 
-Each bullet below is backed by real runtime code; the honest gaps are called out as **(not yet)**.
+Each bullet below is backed by real runtime code. Known gaps are tracked in [To-do](#to-do).
 
 ### 🔁 Control the loop
 
@@ -106,7 +106,7 @@ Running the loop yourself is what unlocks the rest. Because airlock drives the s
 - **Multi-container fleet** — `airlock deploy --replicas N` runs N detached worker containers behind a router with **`--canary <image>@<pct>`**; `airlock promote` / `rollback` shift the canary to 100% or revert (router endpoints, default `:8080`).
 - **Internal ↔ public** — `expose:` in the manifest is a declared flag; a worker becomes publicly reachable when you front it with the **Cloudflare tunnel** (`airlock up`, or `deploy --expose`) — same worker, same controls, no rewrite.
 - **Multi-tenant** — authenticate each caller (API-key scheme) and **isolate state per tenant**; per-step `cost_usd` is metered for every run.
-- **Triggers** — fire on an **HMAC-signed webhook** (`POST /hooks/{path}`), not only on a direct call. *(Cron triggers: not yet.)*
+- **Triggers** — fire on an **HMAC-signed webhook** (`POST /hooks/{path}`), not only on a direct call.
 
 ### 📐 Shape the contract
 
@@ -122,9 +122,7 @@ Running the loop yourself is what unlocks the rest. Because airlock drives the s
 - **Models** — view each worker's model bindings and **set them up** (model, endpoint, API-key env var) or switch the default — written back to `worker.yaml`.
 - **Runs & approvals** — a fleet-wide run explorer, and a governance queue to **approve / deny** held tool calls, proxied to each worker's live control surface.
 - **Detect** — point it at a folder; it identifies the harness, entrypoint, and tools.
-- **Governance (real & persistent)** — RBAC roles enforced server-side, environments with change-control, and an append-only **audit log** on disk (every privileged action recorded). *(SSO is a config screen; federated IdP login is not yet wired — sign-in is local identity selection.)*
-
-> Rollout/canary appears in the worker drawer's **Versions** tab as a representative view; the working mechanism is the CLI/router (`airlock deploy --canary`, `promote`, `rollback`).
+- **Governance (real & persistent)** — RBAC roles enforced server-side, environments with change-control, and an append-only **audit log** on disk (every privileged action recorded).
 
 ### 📊 Observe
 
@@ -205,6 +203,17 @@ curl -s http://localhost:3001/v1/chat/completions \
 # → {"model":"live-openai","choices":[{"message":{"content":"[m-primary] hello"}}], ...}
 #   the `[m-primary]` prefix is the binding airlock chose — change routing in worker.yaml to see it switch.
 ```
+
+## To-do
+
+Built and verified above; these are the known gaps, tracked honestly:
+
+- [ ] **Cron triggers** — only HMAC-signed webhooks (`/hooks/{path}`) fire a run today; scheduled/cron triggers aren't wired yet.
+- [ ] **Federated SSO** — the control plane has the RBAC + SSO config UI, but sign-in is local identity selection; the OIDC/SAML handshake isn't wired.
+- [ ] **`expose:` enforcement** — the flag is read and shown, and public reach comes from the Cloudflare tunnel; the runtime doesn't yet enforce internal-vs-public as a network ACL.
+- [ ] **Control plane Versions/canary tab** — representative today; wire it to the live deploy router so `--canary` / `promote` / `rollback` drive from the UI (the CLI path is real).
+- [ ] **Per-tenant usage ledger** — per-step `cost_usd` is metered and aggregated, but there's no persistent per-tenant usage/billing ledger or spend limits.
+- [ ] **Publish `@airlockhq/cli` to npm** — until then, run the CLI from source (`pnpm -r build`).
 
 ## Docs
 
