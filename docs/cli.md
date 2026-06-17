@@ -113,7 +113,11 @@ airlock control [-p|--port 8788] [--root DIR] [--python BIN]
 ```
 
 - `--root` — workspace directory to scan for `worker.yaml` projects (default: cwd).
-- `--python` — python used to launch workers (respects a venv).
+- `--python` — **host-mode escape hatch.** By default, **Start** runs each worker as a Docker
+  container (building its reproducible image on first start) — so the host needs only Docker, no
+  Python runtime or harness deps. Pass `--python <bin>` (or set `AIRLOCK_PYTHON`) to instead run
+  workers with a host Python interpreter (the legacy path; you must `pip install` the runtime + each
+  harness's deps yourself).
 
 Serves at `http://localhost:8788`: a **fleet dashboard** (start/stop workers, live status/model/skills/
 runs/cost), **Models** setup, **Skills** on/off (written to `worker.yaml` + applied live), a **Runs**

@@ -8,7 +8,7 @@
  * plane (/v1/control). Raw node:http — no framework dependency.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -18,6 +18,8 @@ import { parse as parseYaml, parseDocument } from 'yaml';
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 import { runUp, type UpHandle } from '../commands/up.js';
+import { resolveBuildPlan, runBuild } from '../commands/build.js';
+import type { Spawner } from '../exec.js';
 import { scanRepo } from '../scan.js';
 import { validateWorker } from '../worker-schema/validate.js';
 import { ROLES } from './seed.js';
@@ -205,6 +207,10 @@ export function startControlServer(opts: ControlOptions) {
     ) ||
     'python3';
 
+  /** True if a docker image with this tag exists locally (skip rebuild). */
+  const dockerImageExists = (image: string): boolean =>
+    spawnSync('docker', ['image', 'inspect', image], { stdio: 'ignore' }).status === 0;
+
   async function start(w: Worker, port?: number): Promise<void> {
     if (w.status === 'running' || w.status === 'starting') return;
     const assigned = port || w.port || nextPort++;
@@ -213,10 +219,10 @@ export function startControlServer(opts: ControlOptions) {
     w.logs = [];
     w.exitCode = undefined;
     w.lastError = undefined;
-    pushLog(w, `[control] starting ${w.name} on :${assigned} (python ${pyBin()})`);
 
-    // Pipe child stdio into the per-worker log buffer and inject PYTHONPATH so example
-    // workers find their tools/agent modules (mirrors `PYTHONPATH=$PWD airlock up`).
+    // Pipe child stdio into the per-worker log buffer. In host mode we inject
+    // PYTHONPATH so example workers find their modules; in docker mode the image's
+    // /app/worker is already the cwd, so PYTHONPATH is harmless.
     const pipingSpawn = ((bin: string, args: readonly string[], options: Record<string, unknown>) => {
       const env = { ...(options.env as Record<string, string>), PYTHONPATH: w.dir };
       const child = spawn(bin, args as string[], { ...options, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -224,11 +230,49 @@ export function startControlServer(opts: ControlOptions) {
       child.stderr?.on('data', (d: Buffer) => pushLog(w, d.toString()));
       return child;
     }) as unknown as typeof spawn;
+    // Capturing spawner for `docker build` output → the worker's log buffer.
+    const buildSpawner: Spawner = (b, a, cwd) =>
+      new Promise((resolve) => {
+        const child = spawn(b, a, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+        child.stdout?.on('data', (d: Buffer) => pushLog(w, d.toString()));
+        child.stderr?.on('data', (d: Buffer) => pushLog(w, d.toString()));
+        child.on('error', (e) => { pushLog(w, String(e)); resolve(1); });
+        child.on('exit', (c) => resolve(c ?? 0));
+      });
+
+    // Default: run the worker as a Docker container — the HOST needs only Docker, no
+    // Python runtime or harness deps (that's the whole point of shipping a Docker image).
+    // `airlock control --python <bin>` (or AIRLOCK_PYTHON) opts into legacy host mode.
+    const hostMode = !!(opts.python || process.env.AIRLOCK_PYTHON);
+    let runOpts: Parameters<typeof runUp>[0];
+    if (hostMode) {
+      pushLog(w, `[control] starting ${w.name} on :${assigned} (host python ${pyBin()})`);
+      runOpts = { cwd: w.dir, port: assigned, noTunnel: true, python: pyBin(), spawnImpl: pipingSpawn };
+    } else {
+      let image: string;
+      try {
+        image = resolveBuildPlan({ cwd: w.dir }).image; // content-addressed: same manifest ⇒ same image
+        if (!dockerImageExists(image)) {
+          pushLog(w, `[control] building image ${image} (first run; this can take a minute)…`);
+          const code = await runBuild({ cwd: w.dir, spawnImpl: buildSpawner }).then(() => 0).catch((e) => {
+            pushLog(w, `[control] ${(e as Error).message}`);
+            return 1;
+          });
+          if (code !== 0 || !dockerImageExists(image)) throw new Error('docker build did not produce the image');
+        }
+      } catch (err) {
+        w.status = 'error';
+        const cause = lastErrorLine(w);
+        w.lastError = `docker build failed${cause ? ` — ${cause}` : `: ${(err as Error).message}`}`;
+        pushLog(w, `[control] ${w.lastError}`);
+        return;
+      }
+      pushLog(w, `[control] starting ${w.name} on :${assigned} (docker ${image})`);
+      runOpts = { cwd: w.dir, port: assigned, noTunnel: true, docker: true, image, spawnImpl: pipingSpawn };
+    }
 
     try {
-      const handle = await runUp({
-        cwd: w.dir, port: assigned, noTunnel: true, python: pyBin(), spawnImpl: pipingSpawn,
-      });
+      const handle = await runUp(runOpts);
       w.handle = handle;
       w.status = 'running';
       w.url = handle.url;
