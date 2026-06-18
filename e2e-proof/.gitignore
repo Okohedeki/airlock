@@ -1,0 +1,3 @@
+# transient per-run artifacts (the public URL is ephemeral; logs/*.md hold the durable evidence)
+PUBLIC_URL.txt
+logs/cloudflared.log

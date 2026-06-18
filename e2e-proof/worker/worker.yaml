@@ -1,0 +1,95 @@
+# e2e-proof Worker — a REAL openai-harness model loop exercising the full control
+# surface, run in Docker and driven over a live Cloudflare URL. The mock model
+# (model.py) runs as a sibling container reachable at http://mock-model:8999.
+worker:
+  name: atlas
+  version: 1.0.0
+
+harness: openai
+
+models:
+  primary: { endpoint: "http://mock-model:8999/v1/chat/completions", model: m-primary }
+  fast:    { endpoint: "http://mock-model:8999/v1/chat/completions", model: m-fast }
+  backup:  { endpoint: "http://mock-model:8999/v1/chat/completions", model: m-backup }
+
+# Mid-run model routing (which binding answers) + fallback chain.
+routing:
+  default: primary
+  by_role:
+    quick: fast
+fallback:
+  retries: 1
+  models:
+    primary: [backup]
+
+tools:
+  echo: tools:echo
+  add:  tools:add
+  send: tools:send
+  slow: tools:slow
+
+# Skills = tools with an on/off switch. calc/mailer ON; danger OFF (→ 403 + dropped).
+skills:
+  calc:   { tool: echo, enabled: true }
+  mailer: { tool: send, enabled: true }
+  danger: { tool: add,  enabled: false }
+
+# Loop guards + mid-run approval.
+controls:
+  max_steps: 8
+  tool_gates:
+    - tool: echo
+      when: { text: { contains: "rm -rf" } }
+      action: deny
+  approvals:
+    - tool: send
+
+# Input guard (built-in prompt-injection denylist) + output redaction.
+io:
+  input_guards:
+    - {}
+  output:
+    redact: [email]
+
+# State store + tool-result cache (echo is cacheable).
+state:
+  backend: sqlite
+  cache:
+    tools: [echo]
+
+# Sandbox every tool in a subprocess with a 1s wall-clock limit (slow trips it).
+sandbox:
+  enabled: true
+  defaults:
+    wall_s: 1
+
+# Caller auth + per-tenant isolation (required:false so plain curls work).
+auth:
+  scheme: api_key
+  required: false
+tenancy:
+  keys:
+    key-acme: acme
+    key-globex: globex
+
+# Signed webhook that starts a run (HOOK_SECRET in the env).
+triggers:
+  webhook:
+    - path: github
+      secret_env: HOOK_SECRET
+      input: issue.title
+
+expose: public
+
+# Per-request overlays (X-Airlock-Variant header) — demo budget / step guard / fallback
+# without interfering with the default loop.
+variants:
+  tight:
+    controls:
+      budget: { tokens: 15 }      # a 2-step (24-token) run trips BUDGET_TOKENS
+  capped:
+    controls:
+      max_steps: 1                # a 2-step run trips MAX_STEPS
+  broken:
+    models:
+      primary: { endpoint: "http://127.0.0.1:1/v1/chat/completions", model: m-primary }
