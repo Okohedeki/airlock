@@ -147,10 +147,19 @@ def _coerce_args(tool: Callable[..., Any], args: dict[str, Any]) -> dict[str, An
 
 def _call_tool(tool: Callable[..., Any], args: dict[str, Any]) -> Any:
     """Dispatch a tool with dict args, tolerating both kwargs and single-arg tools."""
+    import inspect
+
     try:
+        signature = inspect.signature(tool)
+    except (TypeError, ValueError):
+        # Opaque callables get one attempt, never a speculative retry.
         return tool(**args)
+    try:
+        signature.bind(**args)
     except TypeError:
+        signature.bind(args)
         return tool(args)
+    return tool(**args)
 
 
 def run_loop(binding: Binding, messages: list[dict[str, Any]], ctx: RunContext) -> AgentRunResult:
