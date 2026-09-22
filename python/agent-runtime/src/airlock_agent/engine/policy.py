@@ -132,6 +132,13 @@ class PolicyControlSource(ControlSource):
                 or json.dumps({"tool": d.get("tool"), "args": d.get("original_args")},
                               sort_keys=True, allow_nan=False) != action):
             return ControlSignal(action="kill", reason="APPROVAL_ACTION_CHANGED")
+        if d.get("decision") == "edit":
+            if not isinstance(d.get("args"), dict):
+                return ControlSignal(action="kill", reason="APPROVAL_INVALID_EDIT")
+            for gate in self.tool_gates:
+                if gate.get("tool") in (name, "*") and match_when(gate.get("when") or {}, d["args"]):
+                    if (gate.get("action") or "deny") == "deny":
+                        return ControlSignal(action="kill", reason=f"TOOL_DENIED:{name}")
         if d.get("consumed_at") is not None or not self.store.compare_and_set(
                 gate_key, d, {**d, "consumed_at": time.time()}):
             return ControlSignal(action="kill", reason="APPROVAL_ALREADY_CONSUMED")
@@ -141,8 +148,6 @@ class PolicyControlSource(ControlSource):
         if verdict == "approve":
             return ControlSignal(action="continue")
         if verdict == "edit":
-            if not isinstance(d.get("args"), dict):
-                return ControlSignal(action="kill", reason="APPROVAL_INVALID_EDIT")
             return ControlSignal(action="override", override_args=d["args"])
         if verdict == "override":
             return ControlSignal(action="override", override_result=d.get("result"))
