@@ -528,7 +528,10 @@ def create_app(
     def held(request: Request):
         if store is None:
             return JSONResponse({"held": []})
-        scoped = store.scoped(_tenant(request))
+        tenant, err = _authed_tenant(request)
+        if err is not None:
+            return err
+        scoped = store.scoped(tenant)
         out = []
         for key in scoped.list_prefix("_held/"):
             if key.count("/") == 1:  # "_held/{run}" entries, not the per-gate decisions
