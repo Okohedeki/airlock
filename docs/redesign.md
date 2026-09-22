@@ -1,6 +1,6 @@
-# Airlock: publish and manage a worker from your Windows machine
+# Airlock: publish and manage a worker from your machine
 
-Airlock starts a native Windows service, provides a public HTTPS URL, and lets
+Airlock starts a native service on Windows, macOS, or Linux, provides a public HTTPS URL, and lets
 authorized callers invoke and manage the worker remotely. Jobs, approvals, and
 recovery support that main experience. Ollama is one possible model behind the
 worker, not the product boundary. Airlock owns the execution loop; framework
@@ -10,7 +10,7 @@ tool extraction does not promise to preserve arbitrary framework orchestration.
 
 One worker, one manifest, one runtime, one operator console. The core journey is:
 
-1. Start the Windows service and receive its public HTTPS URL.
+1. Start the native service and receive its public HTTPS URL.
 2. Call the worker externally and inspect its connection and job status remotely.
 3. Review the exact action awaiting approval remotely; approve, edit, or deny it.
 4. Recover interrupted work with an explicit account of completed side effects.
@@ -37,12 +37,17 @@ registry dashboards are legacy surfaces, not the redesigned administration path.
   worker must not expose unrestricted administration.
 - Neither a tunnel nor a private network substitutes for application authorization.
 
-The intended Windows distribution bundles the runtime and a native connector,
+The intended desktop distribution bundles the runtime and a native frp connector,
 with service startup, reconnection, credentials, and URL discovery managed by
 Airlock. Normal use must not require WSL, Docker, or a separate tunnel terminal.
 A native client still needs a publicly reachable endpoint: an outbound relay
 provides the automatic-URL path behind NAT; direct HTTPS requires reachable
-ingress and a domain. The relay ownership/provider choice is pending. Cloudflare
+ingress and a domain. The selected relay uses Caddy for public HTTPS and frp for
+the outbound worker connection. The operator controls the relay server and domain;
+Airlock manages connector configuration and lifecycle. The initial deployment is
+one trusted worker per relay configuration, not a multi-tenant tunnel platform.
+Windows Services, macOS launchd, and Linux systemd are the intended service hosts.
+Cloudflare
 remains an optional adapter, not a required account or runtime dependency.
 
 ## Reliability contract
