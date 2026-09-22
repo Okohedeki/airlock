@@ -53,6 +53,31 @@ class SQLiteStore(StateStore):
             )
             self._conn.commit()
 
+    def compare_and_set(self, key: str, expected: Any, value: Any) -> bool:
+        """Atomically replace a live value; None means absent/delete, without TTL."""
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._conn.execute(
+                    "SELECT value, expires_at FROM kv WHERE key=?", (key,)).fetchone()
+                current = (json.loads(row[0]) if row and
+                           (row[1] is None or row[1] >= time.time()) else None)
+                if current != expected:
+                    self._conn.rollback()
+                    return False
+                if value is None:
+                    self._conn.execute("DELETE FROM kv WHERE key=?", (key,))
+                else:
+                    self._conn.execute(
+                        "INSERT INTO kv(key,value,expires_at) VALUES(?,?,NULL) "
+                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, expires_at=NULL",
+                        (key, json.dumps(value)))
+                self._conn.commit()
+                return True
+            except BaseException:
+                self._conn.rollback()
+                raise
+
     def delete(self, key: str) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM kv WHERE key=?", (key,))
