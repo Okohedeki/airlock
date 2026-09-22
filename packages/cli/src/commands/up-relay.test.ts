@@ -40,6 +40,32 @@ function setup() {
 }
 
 describe('public-first startup', () => {
+  it('publishes directly from the desktop without a relay profile or connector secret', async () => {
+    const s = setup();
+    vi.stubEnv('AIRLOCK_RELAY_TOKEN', '');
+    const startDesktopImpl = vi.fn(async () => ({ url: 'https://agent.example.com', done: new Promise<number>(() => {}), stop: vi.fn() }));
+    // Resolve shutdown explicitly so both worker and gateway lifetimes are verified.
+    let finish!: (code: number) => void;
+    const done = new Promise<number>(resolve => { finish = resolve; });
+    const stop = vi.fn(() => finish(0));
+    startDesktopImpl.mockResolvedValue({ url: 'https://agent.example.com', done, stop });
+    const handle = await runUp({ ...s, relay: 'absent.json', desktop: { hostname: 'agent.example.com' }, startDesktopImpl });
+    expect(s.startRelayImpl).not.toHaveBeenCalled();
+    expect(startDesktopImpl).toHaveBeenCalledWith(3000, expect.objectContaining({ instance: expect.any(String) }));
+    const workerEnv = vi.mocked(s.spawnImpl).mock.calls[0]![2]!.env!;
+    expect(workerEnv.AIRLOCK_PUBLIC_INSTANCE).toBeTruthy();
+    await handle.stop();
+    expect(stop).toHaveBeenCalled();
+  });
+
+  it('checks caller authentication before exposing a desktop worker', async () => {
+    const s = setup();
+    s.fetchImpl.mockImplementation(async () => new Response('{}'));
+    const startDesktopImpl = vi.fn();
+    await expect(runUp({ ...s, desktop: { hostname: 'agent.example.com' }, startDesktopImpl })).rejects.toThrow('unauthenticated');
+    expect(startDesktopImpl).not.toHaveBeenCalled();
+    expect(s.child.kill).toHaveBeenCalled();
+  });
   it('publishes by default and passes the same launch identity to worker and connector', async () => {
     const s = setup();
     const handle = await runUp(s);
