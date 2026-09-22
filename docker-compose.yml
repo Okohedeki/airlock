@@ -17,6 +17,7 @@ services:
       - "127.0.0.1:3000:3000"
     environment:
       AIRLOCK_LOG_LEVEL: ${AIRLOCK_LOG_LEVEL:-INFO}
+      AIRLOCK_OPERATOR_TOKEN: ${AIRLOCK_OPERATOR_TOKEN:-}
       # Secret for the live-demo's signed webhook trigger (epic 11).
       HOOK_SECRET: ${HOOK_SECRET:-topsecret}
       # Passthrough for non-stub workers that call a real model endpoint:
@@ -76,6 +77,8 @@ services:
       context: .
       dockerfile: Dockerfile
     profiles: ["epic03"]
+    environment:
+      AIRLOCK_OPERATOR_TOKEN: ${AIRLOCK_OPERATOR_TOKEN:-}
     depends_on: [mock-model]
     ports:
       - "127.0.0.1:3001:3000"
