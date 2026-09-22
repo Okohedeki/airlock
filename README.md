@@ -30,16 +30,16 @@
 
 ---
 
-Airlock runs agents on Windows, macOS, and Linux and publishes them through an
-operator-owned Caddy relay. Another computer calls the public HTTPS URL with an
+Airlock runs agents on your computer and publishes them through a native Caddy
+gateway on that same desktop. Another computer calls the public HTTPS URL with an
 API key. The model can run locally or remotely. Airlock adds access controls,
 durable jobs, remote approvals, and execution records around the agent.
 
-Cloudflare publishing has been removed. The current open-source tunnel transport
-is frp. Native Windows connector validation is blocked by Defender on the test
-machine; OpenSSH is the proposed replacement. OS service installers and automatic
-relay enrollment are not shipped yet. See [Caddy relay setup](docs/caddy-relay.md)
-for the implemented path, prerequisites, and validation status.
+Cloudflare publishing has been removed. The desktop gateway needs no tunnel
+connector or separate server. See [desktop gateway setup](docs/desktop-gateway.md)
+for domain/router requirements and validation status. The older explicit relay
+path remains available separately; background-service installers and pairing
+other agent computers to a gateway are not shipped yet.
 
 ## Publish a native worker
 
@@ -56,14 +56,15 @@ Airlock generates separate management and caller credentials and saves them unde
 your user home, outside your project. You do not enter tokens to start or manage
 an agent. API integrations still authenticate; access protection is not removed.
 
-Public links require a relay server, domain, and a configured connection profile;
-Airlock does not provision that infrastructure yet. Connection settings accept
-the profile from [relay setup](docs/caddy-relay.md). **Try on this computer first**
-is an explicitly local preview. The Python runtime and the selected framework's
+Choose **Host a gateway**, save your domain, and prepare this desktop. Airlock
+installs Caddy and generates its configuration. **Check connection** explains the
+DNS and router forwarding needed to reach your home computer. No relay profile
+is required. **Try on this computer first** is an explicitly local preview.
+The Python runtime and the selected framework's
 dependencies must be installed in the Python environment you use.
 
 Use `airlock up --python python` to choose Python, `--no-open` to print the launcher
-link, or `--headless` for direct terminal startup. Existing advanced flags and
+link, or `--headless` to start directly using the saved desktop address. Existing advanced flags and
 `--no-tunnel` retain direct startup behavior. No Docker or WSL is required for
 the native worker path.
 
@@ -74,8 +75,8 @@ airlock is one runtime with two operator surfaces on top of it:
 | Piece | Language / packaging | What it is |
 | --- | --- | --- |
 | **Worker runtime** | **Python**, native process or optional Docker image | Runs the agent and serves its authenticated API and operator console. |
-| **CLI** (`@airlockhq/cli`) | **TypeScript / Node.js** | Starts the worker and connector, verifies public reachability, and manages their lifetime. |
-| **Relay** | **Caddy + native connector** | Provides public HTTPS while compute remains on your machine. |
+| **CLI** (`@airlockhq/cli`) | **TypeScript / Node.js** | Prepares the desktop gateway, starts the worker and Caddy, and checks the HTTPS address. |
+| **Desktop gateway** | **Caddy, native executable** | Provides public HTTPS on the same computer as the agent. |
 
 One `worker.yaml` declares each worker. Older fleet dashboards and cloud deployment
 recipes remain legacy surfaces outside the native public-agent redesign.
