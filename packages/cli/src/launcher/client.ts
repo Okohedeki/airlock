@@ -31,7 +31,7 @@ function render(){
   $('status').dataset.state=snapshot.status;
   $('statusText').textContent=working?'Starting your agent…':running?(snapshot.active.local?'Running on this computer':'Online · Public link ready'):'Not started';
   $('linkTitle').textContent=running?(snapshot.active.local?'Your local preview.':'Your agent is online.'):'A link of its own.';
-  $('linkDescription').textContent=running?(snapshot.active.local?'Only available on this computer. Connect your relay to use it from other devices.':'Copy this address for your apps and other devices. Access is protected.'):'When your agent is online, its address appears here. Ready for your apps and other devices.';
+  $('linkDescription').textContent=running?(snapshot.active.local?'Only available on this computer. Set up your desktop gateway to use it from other devices.':'Copy this address for your apps and other devices. Access is protected.'):'When your agent is online, its address appears here. Ready for your apps and other devices.';
   $('url').hidden=!running;$('actions').hidden=!running;
   if(running)$('url').textContent=snapshot.active.url;
   $('stop').disabled=busy;
@@ -97,7 +97,7 @@ if(desktopSetup()){
       title.textContent=(check.status==='ok'?'✓ ':check.status==='action'?'Next: ':'')+check.name;
       detail.textContent=check.detail;item.append(title,detail);return item;
     }));
-    $('gatewayMessage').textContent='Local checks complete. Internet access is checked when you start the agent.';
+    $('gatewayMessage').textContent='Local checks complete. Start will check your HTTPS address.';
   });
   refreshGateway().catch(e=>$('gatewayMessage').textContent=e.message);
 }
