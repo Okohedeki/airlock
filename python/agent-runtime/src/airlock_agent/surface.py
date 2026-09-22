@@ -16,6 +16,7 @@ import math
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Callable, Optional
 
 from fastapi import FastAPI, Request
@@ -26,6 +27,7 @@ from .adapter import AgentRunResult
 from .concurrency import BoundedGate, QueueFull
 from .engine.events import StepEvent
 from .io import InputRejected, ModelCallError
+from .jobs import job_worker
 from .operator_auth import install_operator_auth
 from .wellknown import mount_wellknown, read_contract_metadata
 
@@ -141,10 +143,20 @@ def create_app(
 ) -> FastAPI:
     """`runner` exposes `run(messages, *, tenant, session, run_id, on_step) -> AgentRunResult`.
     A legacy `.run(messages)` object is adapted transparently."""
-    app = FastAPI(title=name)
+    store = getattr(runner, "store", None)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        with job_worker(store, max_concurrency) as executor:
+            app.state.job_executor = executor
+            try:
+                yield
+            finally:
+                app.state.job_executor = None
+
+    app = FastAPI(title=name, lifespan=lifespan)
     install_operator_auth(app)
     metadata = read_contract_metadata(dist_dir)
-    store = getattr(runner, "store", None)
 
     class _UnknownVariant(Exception):
         pass
