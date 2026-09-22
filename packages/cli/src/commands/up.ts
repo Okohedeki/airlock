@@ -270,6 +270,7 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
     const run = buildDockerRun({
       image: image!,
       port,
+      publishHost: '127.0.0.1',
       name: containerName,
       stateDir,
       mountDir,
@@ -318,7 +319,7 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
     }
     console.log(`  callers POST to:  ${tunnel.url}/v1/chat/completions`);
   } else {
-    console.log(`\n✓ agent live on 0.0.0.0:${port} (no tunnel)`);
+    console.log(`\n✓ worker ready on port ${port} (no tunnel)`);
     console.log(`  local:        http://localhost:${port}/v1/chat/completions`);
   }
   console.log('  press Ctrl-C to stop');
