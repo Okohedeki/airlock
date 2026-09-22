@@ -24,6 +24,7 @@ from typing import Any, Callable, Protocol
 from ..adapter import AgentRunResult, Binding, ControlMode, Dispatch
 from .events import ControlSignal, ControlSource, StepEvent, StepStatus, StepType
 from .planner import Action, Finish, ModelCall, Planner, ToolCall
+from .replay import replay_step
 
 
 @dataclass
@@ -61,6 +62,8 @@ class RunContext:
     on_step: Callable[[StepEvent], None] | None = None  # epic 05
     snapshot: Callable[[int, list[StepEvent]], None] | None = None  # epic 04
     replay: dict[int, dict] | None = None  # epic 04 resume/fork: idx -> recorded {tool, output}
+    continuation: list[dict] | None = None
+    continuation_gate: Callable[[ToolCall], ControlSignal] | None = None
     prices: dict[str, float] | None = None  # epic 05: binding name -> USD per 1k tokens
 
     def emit(self, ev: StepEvent) -> None:
@@ -164,6 +167,8 @@ def _call_tool(tool: Callable[..., Any], args: dict[str, Any]) -> Any:
 
 def run_loop(binding: Binding, messages: list[dict[str, Any]], ctx: RunContext) -> AgentRunResult:
     binding = as_binding(binding)
+    if ctx.continuation is not None and binding.control_mode != ControlMode.OWN:
+        raise ValueError("approval continuation requires an owned execution loop")
     if binding.control_mode == ControlMode.OWN:
         return _run_own(binding, messages, ctx)
     return _run_wrapped(binding, messages, ctx)
@@ -203,8 +208,30 @@ def _run_own(binding: Binding, messages: list[dict[str, Any]], ctx: RunContext) 
     total_tokens = pt = ct = 0
     idx = 0
 
+    if ctx.continuation is not None:
+        prefix = ctx.continuation
+        if (not prefix or ctx.continuation_gate is None
+                or any(s.get("index") != i for i, s in enumerate(prefix))
+                or any(s.get("status") != "ok" or s.get("type") not in ("model", "tool_result")
+                       for s in prefix[:-1])
+                or prefix[-1].get("type") != "tool_call" or prefix[-1].get("status") != "blocked"
+                or not (prefix[-1].get("stop_reason") or prefix[-1].get("error") or "").startswith("AWAIT")):
+            raise ValueError("continuation requires a complete trace ending at an approval hold")
+
     while idx < ctx.max_steps:
         action: Action = planner.next_action(history)
+        if ctx.continuation is not None and idx < len(ctx.continuation):
+            recorded = replay_step(action, ctx.continuation[idx], messages)
+            if recorded is not None:
+                history.append(recorded)
+                ctx.emit(recorded)
+                total_tokens += recorded.tokens
+                pt += recorded.prompt_tokens
+                ct += recorded.completion_tokens
+                if ctx.snapshot:
+                    ctx.snapshot(idx, history)
+                idx += 1
+                continue
 
         if isinstance(action, ModelCall):
             t0 = time.monotonic()
@@ -238,7 +265,8 @@ def _run_own(binding: Binding, messages: list[dict[str, Any]], ctx: RunContext) 
                 idx += 1
                 continue
             # Guard the pending tool call BEFORE dispatch (epic 02 — WRAP-ok seam).
-            sig: ControlSignal = ctx.control_source.gate(action)
+            at_boundary = ctx.continuation is not None and idx == len(ctx.continuation) - 1
+            sig = ctx.continuation_gate(action) if at_boundary else ctx.control_source.gate(action)
             if sig.action == "kill":
                 ev = StepEvent(index=idx, type=StepType.TOOL_CALL, tool=action.name,
                                input=action.args, status=StepStatus.KILLED, error=sig.reason)
@@ -266,6 +294,7 @@ def _run_own(binding: Binding, messages: list[dict[str, Any]], ctx: RunContext) 
                 except Exception as exc:  # surfaces as a step failure → epic-03 fallback
                     result, status, err = None, StepStatus.ERROR, str(exc)
             ev = StepEvent(index=idx, type=StepType.TOOL_RESULT, tool=action.name, input=args,
+                           requested_input=action.args,
                            output=result, status=status, error=err,
                            duration_ms=(time.monotonic() - t0) * 1000)
 
