@@ -379,15 +379,11 @@ async function main() {
 
   program
     .command('up')
-    .description('Run a worker locally; public access is optional')
+    .description('Publish a native worker through your Caddy relay')
     .option('-p, --port <port>', 'port the agent listens on', '3000')
     .option('--python <bin>', 'python executable for `-m airlock_agent` (respects an active venv)')
-    .option('--tunnel', 'explicitly open an optional Cloudflare tunnel')
-    .option('--no-tunnel', 'keep the worker local (the default)')
-    .option(
-      '--durable',
-      'use a stable named tunnel on YOUR Cloudflare account (needs AIRLOCK_CF_TUNNEL_TOKEN + [tunnel].hostname; see docs/durable-hosting.md)',
-    )
+    .option('--no-tunnel', 'local development only; do not publish')
+    .option('--relay <path>', 'relay profile (default: .airlock/relay.json)')
     .option('--max-concurrency <n>', 'max agent runs in flight before callers queue')
     .option('--max-queue <n>', 'max callers waiting beyond the running set before 429')
     .option('--queue-timeout <s>', 'seconds a caller waits in the queue before 429')
@@ -395,34 +391,26 @@ async function main() {
       '--no-build-per-call',
       'reuse one shared agent object instead of rebuilding per request',
     )
-    .option('--cf-protocol <proto>', 'cloudflared edge protocol: quic | http2 | auto')
-    .option('--cf-region <region>', 'pin the cloudflared connector to a Cloudflare region (e.g. us)')
-    .option('--cf-metrics <addr>', "expose cloudflared's metrics server on host:port")
     .option('--docker', 'run the Worker in Docker (reproducible; needs `airlock build` first)')
     .option('--image <ref>', 'image to run with --docker (default: the image from `airlock build`)')
     .option('--mount', 'dev: mount the project into the base image instead of a built image')
     .option('--env-file <path>', 'pass an env file to the container (--docker)')
     .option('--profile <name>', 'run a worker.yaml variant/profile (e.g. internal | external)')
-    .option('--hostname <host>', 'durable-tunnel hostname (with --durable + AIRLOCK_CF_TUNNEL_TOKEN)')
     .action(
       async (opts: {
         port: string;
         python?: string;
         tunnel?: boolean;
-        durable?: boolean;
+        relay?: string;
         maxConcurrency?: string;
         maxQueue?: string;
         queueTimeout?: string;
         buildPerCall: boolean;
-        cfProtocol?: 'quic' | 'http2' | 'auto';
-        cfRegion?: string;
-        cfMetrics?: string;
         docker?: boolean;
         image?: string;
         mount?: boolean;
         envFile?: string;
         profile?: string;
-        hostname?: string;
       }) => {
         const port = Number.parseInt(opts.port, 10);
         if (!Number.isFinite(port) || port <= 0) {
@@ -443,22 +431,18 @@ async function main() {
             cwd: process.cwd(),
             port,
             python: opts.python,
-            noTunnel: opts.tunnel === undefined ? !opts.durable : !opts.tunnel,
-            durable: opts.durable,
+            noTunnel: opts.tunnel === false,
+            relay: opts.relay,
             maxConcurrency: numOpt(opts.maxConcurrency, '--max-concurrency'),
             maxQueue: numOpt(opts.maxQueue, '--max-queue'),
             queueTimeout: numOpt(opts.queueTimeout, '--queue-timeout'),
             // commander sets buildPerCall=false only when --no-build-per-call is passed
             buildPerCall: opts.buildPerCall === false ? false : undefined,
-            cfProtocol: opts.cfProtocol,
-            cfRegion: opts.cfRegion,
-            cfMetrics: opts.cfMetrics,
             docker: opts.docker,
             image: opts.image,
             mount: opts.mount,
             envFile: opts.envFile,
             profile: opts.profile,
-            hostname: opts.hostname,
           });
           const shutdown = async () => {
             await handle.stop();
