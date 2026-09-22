@@ -47,6 +47,7 @@ tools/llama.cpp/
 # runtime state (per-project SQLite store)
 **/.airlock/state.db
 **/.airlock/*.db
+**/.airlock/*.db.jobs.lock
 python/agent-runtime/.venv312/
 
 # harness live-test virtualenvs (Plan: prove all harnesses)
