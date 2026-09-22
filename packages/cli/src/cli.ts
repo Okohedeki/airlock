@@ -458,28 +458,6 @@ async function main() {
       },
     );
 
-  const tunnel = program.command('tunnel').description('Manage durable Cloudflare tunnels');
-  tunnel
-    .command('provision')
-    .description('Auto-create a durable tunnel + DNS via the Cloudflare API (needs CF_API_TOKEN)')
-    .requiredOption('--hostname <host>', 'public hostname to route, e.g. agent.yourdomain.com')
-    .option('-p, --port <port>', 'local worker port to route to', '3000')
-    .option('--account <id>', 'Cloudflare account id (else auto-detected; set to drop the /accounts call)')
-    .option('--zone <id>', 'Cloudflare zone id (set it to drop the Zone:Read permission)')
-    .option('--name <name>', 'tunnel name (else airlock-<sub>)')
-    .action(async (opts: { hostname: string; port: string; account?: string; zone?: string; name?: string }) => {
-      try {
-        const { runTunnelProvision } = await import('./commands/tunnel-provision.js');
-        await runTunnelProvision({
-          cwd: process.cwd(), hostname: opts.hostname,
-          port: Number.parseInt(opts.port, 10), account: opts.account, zone: opts.zone, name: opts.name,
-        });
-      } catch (err) {
-        console.error(`error: ${(err as Error).message}`);
-        process.exit(1);
-      }
-    });
-
   program
     .command('dev')
     .description('Open a public Tunnel to your local Agent via cloudflared')
