@@ -379,10 +379,11 @@ async function main() {
 
   program
     .command('up')
-    .description('Self-host: run your config-bound agent here + front it with a public URL')
+    .description('Run a worker locally; public access is optional')
     .option('-p, --port <port>', 'port the agent listens on', '3000')
     .option('--python <bin>', 'python executable for `-m airlock_agent` (respects an active venv)')
-    .option('--no-tunnel', 'run the agent locally without opening a public tunnel')
+    .option('--tunnel', 'explicitly open an optional Cloudflare tunnel')
+    .option('--no-tunnel', 'keep the worker local (the default)')
     .option(
       '--durable',
       'use a stable named tunnel on YOUR Cloudflare account (needs AIRLOCK_CF_TUNNEL_TOKEN + [tunnel].hostname; see docs/durable-hosting.md)',
@@ -407,7 +408,7 @@ async function main() {
       async (opts: {
         port: string;
         python?: string;
-        tunnel: boolean;
+        tunnel?: boolean;
         durable?: boolean;
         maxConcurrency?: string;
         maxQueue?: string;
@@ -442,7 +443,7 @@ async function main() {
             cwd: process.cwd(),
             port,
             python: opts.python,
-            noTunnel: !opts.tunnel,
+            noTunnel: opts.tunnel === undefined ? !opts.durable : !opts.tunnel,
             durable: opts.durable,
             maxConcurrency: numOpt(opts.maxConcurrency, '--max-concurrency'),
             maxQueue: numOpt(opts.maxQueue, '--max-queue'),
