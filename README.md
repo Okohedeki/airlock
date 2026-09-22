@@ -3,8 +3,8 @@
 <p align="center"><strong>Run agent work with approvals and a clear execution record.</strong></p>
 
 <p align="center">
-  Point it at a LangGraph, smolagents, CrewAI, OpenAI Agents, or Claude agent;<br/>
-  get an OpenAI-compatible URL, and control every step, tool call, and dollar from inside the loop.
+  Run a worker on your machine, review consequential actions,<br/>
+  and inspect its execution record through one local console.
 </p>
 
 <p align="center">
@@ -30,9 +30,10 @@
 
 ---
 
-Point airlock at an agent you built in **LangGraph, smolagents, CrewAI, the OpenAI Agents SDK, or the Claude Agent SDK**, declare it in one `worker.yaml`, and get back an OpenAI-compatible URL anyone can call. It runs self-hosted, and the model stays yours.
-
-The difference is where airlock sits. Most gateways sit in front of an agent and proxy its traffic. airlock runs the loop itself, one step at a time, so you can act on any step while the run is still happening.
+Airlock owns an agent's execution loop so an operator can inspect tool actions,
+approve consequential work, and understand failures. Configure tools and a model
+in `worker.yaml`, run locally, and use the OpenAI-compatible API or worker console.
+Public access is optional and does not require Cloudflare.
 
 ## Architecture
 
@@ -48,12 +49,12 @@ So "Docker *and* an npm package" isn't a contradiction: the **worker runs as a D
 
 ## Run it — Docker Compose
 
-The fastest path, with only Docker installed. `docker compose up --build` builds the Python runtime and Node dashboard inside the images and starts both:
+The fastest path, with only Docker installed. `docker compose up --build worker` builds and starts the worker. Copy `.env.example`
+to `.env` and set a long random `AIRLOCK_OPERATOR_TOKEN` to enable console administration:
 
 ```bash
-docker compose up --build
+docker compose up --build worker
 #   worker    → http://localhost:3000   (/healthz, /console, /v1/chat/completions, /metrics)
-#   dashboard → http://localhost:8787   (optional; GitHub login needs the OAuth env vars)
 ```
 
 The worker bundles the `live-demo` stub, so it runs with no config. Any OpenAI client can call it:
@@ -68,10 +69,12 @@ curl -s http://localhost:3000/v1/chat/completions \
 To run **your** worker, mount its directory over `/app/worker` (or uncomment the volume in `docker-compose.yml`):
 
 ```bash
-docker run -p 3000:3000 -v "$PWD/my-worker:/app/worker" airlock-worker:local
+docker run -p 127.0.0.1:3000:3000 --env-file .env -v "$PWD/my-worker:/app/worker" airlock-worker:local
 ```
 
-State persists in named volumes (`worker-state`, `dashboard-data`). Set `OPENAI_API_KEY` and `OPENAI_API_BASE` for workers that call a real model.
+Open `http://localhost:3000/console` and enter your operator token. Caller API keys
+remain configured separately in `worker.yaml`. An empty operator token disables
+administration. State persists in the `worker-state` volume. Set `OPENAI_API_KEY` and `OPENAI_API_BASE` for workers that call a real model.
 
 ## Focus of the redesign
 
@@ -98,30 +101,34 @@ See [the redesign contract](./docs/redesign.md) for scope and acceptance criteri
 
 ## Operate it with the CLI
 
-The CLI (`@airlockhq/cli`, npm) is the operator/dev tool on top of the runtime — scaffold a worker, run it locally behind a public URL, open the control plane, or ship a fleet:
+From a worker directory, start locally with the CLI or Python runtime:
 
 ```bash
-npm i -g @airlockhq/cli
-
-airlock init my-agent --detect   # detect harness + entrypoint
-airlock migrate                  # scaffold worker.yaml
-export OPENAI_API_BASE=http://localhost:8080/v1   # your model (local gguf or remote)
-airlock up                       # run locally + public Cloudflare URL + /console
-#   ✓ live at https://<name>.trycloudflare.com
-
-airlock control                  # operate the whole fleet from one dashboard
-#   ▸ http://localhost:8788
+airlock up --python python        # local worker; no public tunnel
+# console: http://localhost:3000/console
 ```
 
-Ship to production:
+Native Windows source-checkout setup (PowerShell, Python 3.9+):
 
-```bash
-airlock build                          # reproducible Docker image
-airlock deploy --replicas 3 --canary   # multi-container fleet + canary slice
-airlock promote | rollback             # canary → 100%, or instant revert
+```powershell
+python -m pip install -e ./python/agent-runtime
+$env:AIRLOCK_OPERATOR_TOKEN = python -c "import secrets; print(secrets.token_urlsafe(32))"
+Set-Location ./examples/live-demo
+python -m airlock_agent
 ```
 
-For a stable URL on your own domain: `airlock tunnel provision`, then `airlock up --durable --hostname agent.example.com` ([durable hosting](./docs/durable-hosting.md)). Full command reference: [`docs/cli.md`](./docs/cli.md).
+Keep the generated token available to paste into the local console. Native tools
+are trusted code: strong Windows sandboxing is not implemented. Container execution
+is a separate deployment option, not a guarantee of per-tool isolation.
+
+For an explicitly requested legacy tunnel use `airlock up --tunnel`, or
+`airlock up --durable --hostname agent.example.com` with your own connector token.
+Direct HTTPS hosting can use a separately configured reverse proxy; automated
+Windows service installation and HTTPS setup are not implemented yet. Do not
+forward the console or operator routes through a public proxy.
+
+Full command reference: [`docs/cli.md`](./docs/cli.md). The fleet `control`, `deploy`,
+and rollout commands remain legacy functionality outside the focused redesign.
 
 ## Harnesses
 
