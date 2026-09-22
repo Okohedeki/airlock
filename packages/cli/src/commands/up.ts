@@ -5,8 +5,8 @@
  * tunnel that exposes it — never the compute, never the model (which may be
  * local or a remote OPENAI_API_BASE).
  *
- * By default the public URL is an ephemeral *.trycloudflare.com quick tunnel
- * (no account needed). Pass `--durable` to instead run a stable named tunnel on
+ * Runs locally by default. Explicitly request a tunnel for a public URL.
+ * Pass `--durable` to run a stable named tunnel on
  * the publisher's OWN Cloudflare account (bring-your-own connector token +
  * hostname; see startNamedTunnel and docs/durable-hosting.md). airlock holds no
  * Cloudflare keys either way.
@@ -224,6 +224,7 @@ async function waitForHealth(
  */
 export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
   const cwd = opts.cwd ?? process.cwd();
+  const noTunnel = opts.noTunnel ?? !opts.durable;
   // worker.yaml-only projects have no .airlock/config.toml — tolerate its absence
   // and fall back to a minimal config (the runtime reads worker.yaml itself).
   let config: AirlockConfig;
@@ -240,7 +241,7 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
 
   // Validate durable-tunnel BYO credentials up front (before spawning the agent),
   // so a misconfigured `--durable` fails fast with actionable guidance.
-  const durable = opts.noTunnel ? null : resolveDurableTunnel(config, opts);
+  const durable = noTunnel ? null : resolveDurableTunnel(config, opts);
 
   const port = opts.port ?? 3000;
   let containerName: string | undefined;
@@ -304,7 +305,7 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
   }
 
   console.log(`  console:      http://localhost:${port}/console`);
-  if (!opts.noTunnel) {
+  if (!noTunnel) {
     const tuning = resolveTunnelTuning(config, opts);
     if (durable) {
       console.log('  opening durable named tunnel on your Cloudflare account…');
