@@ -1,12 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { ZodError } from 'zod';
 import {
   type AirlockConfig,
-  CF_TUNNEL_TOKEN_ENV,
   readConfig,
-  validateTunnel,
 } from '../config-file.js';
 import { validateWorker } from '../worker-schema/validate.js';
 
@@ -109,61 +106,8 @@ export async function runDoctor(cwd: string): Promise<DoctorReport> {
     });
   }
 
-  // Durable public URL (bring-your-own Cloudflare). Spell out exactly which keys
-  // the publisher must provide — this is the headline of the durable-hosting flow.
   if (config.tunnel) {
-    try {
-      const t = validateTunnel(config);
-      if (t?.durable) {
-        const tokenSet = !!process.env[CF_TUNNEL_TOKEN_ENV];
-        if (t.provider !== 'cloudflare') {
-          findings.push({
-            level: 'error',
-            message: `tunnel.provider must be "cloudflare", got "${t.provider}"`,
-          });
-        }
-        if (!t.hostname) {
-          findings.push({
-            level: 'error',
-            message:
-              'tunnel.durable=true but tunnel.hostname is unset — set it to the Public Hostname you routed in your Cloudflare Zero Trust dashboard',
-          });
-        }
-        if (!tokenSet) {
-          findings.push({
-            level: 'error',
-            message:
-              `tunnel.durable=true but ${CF_TUNNEL_TOKEN_ENV} is not set — export your own Cloudflare Tunnel connector token ` +
-              '(Zero Trust → Networks → Tunnels → your tunnel → token). airlock holds no Cloudflare keys.',
-          });
-        }
-        if (t.hostname && tokenSet) {
-          findings.push({
-            level: 'ok',
-            message: `durable tunnel ready: https://${t.hostname} via your Cloudflare account (${CF_TUNNEL_TOKEN_ENV} set)`,
-          });
-        }
-      } else {
-        findings.push({
-          level: 'ok',
-          message: 'tunnel: ephemeral quick tunnel (durable=false) — no Cloudflare account needed',
-        });
-      }
-    } catch (err) {
-      if (err instanceof ZodError) {
-        for (const issue of err.issues) {
-          findings.push({
-            level: 'error',
-            message: `tunnel.${issue.path.join('.')}: ${issue.message}`,
-          });
-        }
-      } else {
-        findings.push({
-          level: 'error',
-          message: `tunnel config invalid: ${(err as Error).message}`,
-        });
-      }
-    }
+    findings.push({ level: 'error', message: 'Legacy [tunnel] settings are no longer supported; configure .airlock/relay.json for Caddy.' });
   }
 
   if (config.agent) {
