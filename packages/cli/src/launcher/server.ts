@@ -7,13 +7,22 @@ import { agentSession } from './session.js';
 import { page } from './page.js';
 import { styles } from './design.js';
 import { client } from './client.js';
+import { loadDesktopGateway, saveDesktopGateway } from '../gateway/config.js';
+import { caddyInstalled, installCaddy } from '../gateway/caddy.js';
+import { checkDesktopGateway } from '../gateway/checks.js';
 
 /** Local-only launcher. Possession of the CLI bootstrap link authorizes this browser session. */
 export async function startLauncher(opts: {
   root: string; port?: number; workerPort?: number; python?: string; relay?: string;
 }) {
   const agents = await discoverAgents(resolve(opts.root));
-  const session = agentSession(agents, { python: opts.python, port: opts.workerPort, relay: opts.relay });
+  let gatewayError = '';
+  let desktop = await loadDesktopGateway().catch(error => { gatewayError = error.message; return undefined; });
+  let preparingGateway = false;
+  const session = agentSession(agents, {
+    python: opts.python, port: opts.workerPort, relay: opts.relay,
+    desktop: opts.relay ? undefined : desktop, desktopMode: !opts.relay,
+  });
   const capability = randomBytes(32).toString('hex');
   let origin = '';
   const server = createServer(async (req, res) => {
@@ -44,6 +53,9 @@ export async function startLauncher(opts: {
     }
     try {
       if (req.method === 'GET' && path === '/api/state') { json(200, session.state()); return; }
+      if (req.method === 'GET' && path === '/api/gateway') {
+        json(200, { hostname: desktop?.hostname ?? '', installed: await caddyInstalled(), preparing: preparingGateway, error: gatewayError }); return;
+      }
       if (req.method === 'GET' && path === '/api/console') { json(200, { url: session.consoleLink() }); return; }
       if (req.method !== 'POST') { json(405, { error: 'Method not allowed' }); return; }
       let raw = '';
@@ -52,7 +64,24 @@ export async function startLauncher(opts: {
         if (raw.length > 16384) { json(413, { error: 'Request is too large' }); return; }
       }
       const body = JSON.parse(raw || '{}');
+      if (path.startsWith('/api/gateway/')) {
+        if (preparingGateway || ['starting', 'running'].includes(session.state().status)) throw new Error('Finish setup or stop your agent before changing the gateway.');
+        preparingGateway = true;
+        try {
+          if (path === '/api/gateway/install') await installCaddy();
+          else if (path === '/api/gateway/save') {
+            if (typeof body.hostname !== 'string') throw new Error('Enter the public address you want to use.');
+            desktop = await saveDesktopGateway(body.hostname);
+            session.configureDesktop(desktop.hostname);
+            gatewayError = '';
+          } else if (path === '/api/gateway/check') {
+            json(200, { checks: await checkDesktopGateway(desktop?.hostname) }); return;
+          } else { json(404, { error: 'Not found' }); return; }
+        } finally { preparingGateway = false; }
+        json(200, { ok: true }); return;
+      }
       if (path === '/api/start') {
+        if (preparingGateway) throw new Error('Wait for gateway setup to finish, then press Start.');
         if (typeof body.id !== 'string' || typeof body.local !== 'boolean') throw new Error('Choose an agent and launch mode.');
         await session.start(body.id, body.local);
       } else if (path === '/api/stop') await session.stop();
