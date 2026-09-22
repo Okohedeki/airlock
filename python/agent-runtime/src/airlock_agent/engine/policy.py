@@ -100,13 +100,15 @@ class PolicyControlSource(ControlSource):
             if rule.get("tool") in (pending.name, "*") and match_when(rule.get("when") or {}, pending.args):
                 if (rule.get("action") or "deny") == "deny":
                     return ControlSignal(action="kill", reason=f"TOOL_DENIED:{pending.name}")
-        return self._approval(pending.name, pending.args, held.get("rule") or {})
+        return self._approval(pending.name, pending.args, held.get("rule") or {}, expected_id=approval_id)
 
-    def _approval(self, name: str, args: dict, rule: dict) -> ControlSignal:
+    def _approval(self, name: str, args: dict, rule: dict, *, expected_id: str | None = None) -> ControlSignal:
         if self.store is None:
             return ControlSignal(action="kill", reason="APPROVAL_STORAGE_REQUIRED")
         held_key = f"_held/{self.run_id}"
         held = self.store.get(held_key)
+        if expected_id is not None and (not held or held.get("approval_id") != expected_id):
+            return ControlSignal(action="kill", reason="APPROVAL_REVIEW_CHANGED")
         action = json.dumps({"tool": name, "args": args}, sort_keys=True, allow_nan=False)
         if held is None or not held.get("approval_id"):
             # Upgrade legacy holds by requiring a fresh review, never trusting an
