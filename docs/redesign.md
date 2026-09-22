@@ -47,8 +47,10 @@ the outbound worker connection. The operator controls the relay server and domai
 Airlock manages connector configuration and lifecycle. The initial deployment is
 one trusted worker per relay configuration, not a multi-tenant tunnel platform.
 Windows Services, macOS launchd, and Linux systemd are the intended service hosts.
-Cloudflare
-remains an optional adapter, not a required account or runtime dependency.
+Cloudflare publishing is removed rather than retained as a fallback. Native
+Caddy HTTPS is verified on Windows; frp execution was blocked by Defender on the
+development machine. OpenSSH is the proposed replacement transport, pending the
+operator's decision. See [relay status and setup](caddy-relay.md).
 
 ## Reliability contract
 
