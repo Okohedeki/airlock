@@ -16,7 +16,7 @@ Run via `npx -y @airlockhq/cli <command>` or a global install (`npm i -g @airloc
 | `build` | Build a reproducible Docker image for this `worker.yaml` (validates first) |
 | `doctor` | Validate the local config / `worker.yaml` and report issues |
 | `status` | Print the current project configuration (JSON) |
-| `up` | Run the worker locally and front it with a public Cloudflare URL |
+| `up` | Run a worker locally; public tunneling requires explicit opt-in |
 | `dev` | Open a public Cloudflare tunnel to an already-running local worker |
 | `control` | Open the **control plane** — operate the whole fleet from a local web UI |
 | `deploy` | Run a multi-container fleet (N replicas) behind the router; optional canary |
@@ -71,26 +71,33 @@ Print the current project configuration as JSON.
 ## Run
 
 ### `up`
-Run the worker (`python -m airlock_agent`, or `--docker`) on your hardware and front it with a public URL.
+Run the worker (`python -m airlock_agent`, or `--docker`) locally. No public tunnel is opened by default.
 
 ```
-airlock up [-p|--port PORT] [--python BIN] [--no-tunnel] [--durable] [--hostname HOST]
+airlock up [-p|--port PORT] [--python BIN] [--tunnel | --no-tunnel] [--durable] [--hostname HOST]
            [--docker] [--image REF] [--mount] [--env-file PATH] [--profile NAME]
            [--max-concurrency N] [--max-queue N] [--queue-timeout S]
            [--cf-protocol quic|http2|auto] [--cf-region REGION] [--cf-metrics HOST:PORT]
 ```
 
-- `--no-tunnel` — run locally only (`http://localhost:PORT`), no public URL.
-- `--durable` — a **stable named tunnel on your own Cloudflare account** instead of the default
-  ephemeral `*.trycloudflare.com` quick tunnel. Needs `AIRLOCK_CF_TUNNEL_TOKEN` (+ `--hostname` or a
+- `--tunnel` — explicitly open a legacy Cloudflare quick tunnel.
+- `--no-tunnel` — keep local-only operation; also overrides `--durable`.
+- `--durable` — explicitly request a **stable named tunnel on your own Cloudflare account**. Needs `AIRLOCK_CF_TUNNEL_TOKEN` (+ `--hostname` or a
   `[tunnel]` block). See **[durable hosting](./durable-hosting.md)**.
 - `--docker` / `--image` / `--mount` / `--env-file` — run the worker in a container (needs `airlock build`).
 - `--profile` — run a `worker.yaml` variant/profile (e.g. `internal` | `external`).
 - `--max-concurrency` — the **model's** real parallel capacity (`AIRLOCK_MAX_CONCURRENCY`).
 - `--cf-*` — tune the durable connector (also settable as `[tunnel]` keys).
 
-Prints `✓ live at https://<rand>.trycloudflare.com` and serves the operator console at `/console`.
-To scale beyond one box, run several replicas behind the router with `airlock deploy`.
+The worker console is at `http://localhost:PORT/console`. Set `AIRLOCK_OPERATOR_TOKEN`
+in the process environment (or `.env` when using the CLI), then enter it in the console.
+Operator HTTP routes require `X-Airlock-Operator-Token`; caller keys are independent.
+Without an operator token, administration is disabled. On native Windows, use
+`--python python` when `python3` is not installed. Native startup binds to loopback;
+`AIRLOCK_HOST` is an explicit listener override. Docker startup publishes on loopback.
+
+Fleet commands below are legacy features outside the focused single-worker redesign.
+See [the redesign contract](./redesign.md) for supported scope.
 
 ### `dev`
 ```
