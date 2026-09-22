@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import time
 import uuid
 from typing import Any, Callable
@@ -65,7 +66,7 @@ class EngineRunner:
         """Resolve the tenant for this (possibly variant-overlaid) worker's auth config.
         Variants can change auth, so auth follows the active variant (epic 10)."""
         auth = self.m.auth()
-        if not auth:
+        if not auth and not os.environ.get("AIRLOCK_MANAGED_CALLER_KEY"):
             return request.headers.get("X-Airlock-Tenant", "default")
         if self._authn is None:
             from .auth import build_authenticator
