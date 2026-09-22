@@ -4,6 +4,8 @@ const fragment=new URLSearchParams(location.hash.slice(1));
 if(fragment.has('session')){sessionStorage.setItem('airlock-session',fragment.get('session'));history.replaceState(null,'','/');}
 const session=sessionStorage.getItem('airlock-session')||'';
 let snapshot={agents:[],status:'idle',active:null},busy=false,initialized=false;
+let gateway=null,gatewayBusy=false;
+const desktopSetup=()=>$('settings').dataset.mode==='desktop';
 const error=message=>{$('error').textContent=message;$('error').hidden=!message;};
 async function api(path,body){
   const response=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:{'X-Airlock-Session':session,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
@@ -23,7 +25,7 @@ function render(){
   if(snapshot.status==='error'&&snapshot.message)error(snapshot.message);
   $('agentPath').textContent=agent?agent.location:'Add a worker.yaml project to this workspace to get started.';
   $('agent').disabled=working||running||!snapshot.agents.length;$('framework').disabled=working||running;
-  $('start').disabled=working||running||!agent;$('local').disabled=working||running||!agent;
+  $('start').disabled=working||gatewayBusy||running||!agent;$('local').disabled=working||gatewayBusy||running||!agent;
   $('start').textContent=working?'Starting…':running?'Agent running':'Start agent ↗';
   $('local').hidden=running;$('connectionNotice').hidden=!!agent?.connected||running;
   $('status').dataset.state=snapshot.status;
@@ -33,6 +35,11 @@ function render(){
   $('url').hidden=!running;$('actions').hidden=!running;
   if(running)$('url').textContent=snapshot.active.url;
   $('stop').disabled=busy;
+  if(desktopSetup()){
+    for(const id of ['save','gatewayInstall','gatewayCheck','profile'])$(id).disabled=working||gatewayBusy||running;
+    $('gatewayInstall').hidden=!!gateway?.installed;
+    $('gatewayState').textContent=gatewayBusy?'Preparing this desktop…':gateway?.installed?'Gateway software is ready.':'Airlock will install Caddy and manage it for you.';
+  }
 }
 async function refresh(){
   snapshot=await api('state');
@@ -45,6 +52,9 @@ async function refresh(){
   render();
 }
 async function launch(local){
+  if(!local&&desktopSetup()&&(!snapshot.agents.find(agent=>agent.id===$('agent').value)?.connected||!gateway?.installed)){
+    $('settings').open=true;$('profile').focus();return;
+  }
   busy=true;error('');render();
   try{await api('start',{id:$('agent').value,local});}
   catch(e){error(e.message);if(!local&&!snapshot.agents.find(agent=>agent.id===$('agent').value)?.connected)$('settings').open=true;}
@@ -56,7 +66,41 @@ $('stop').onclick=async()=>{busy=true;render();try{await api('stop',{});error(''
 $('copy').onclick=async()=>{try{await navigator.clipboard.writeText(snapshot.active.url);$('copy').textContent='Copied';setTimeout(()=>$('copy').textContent='Copy link',1600);}catch{error('Select and copy the address above.');}};
 $('manage').onclick=async()=>{try{const result=await api('console');location.href=result.url;}catch(e){error(e.message);}};
 $('setup').onclick=()=>{$('settings').open=true;$('profile').focus();};
-$('save').onclick=async()=>{try{await api('connection',{path:$('profile').value});await refresh();error('');$('settings').open=false;}catch(e){error(e.message);}};
+async function refreshGateway(){
+  gateway=await api('gateway');
+  if(!$('profile').value)$('profile').value=gateway.hostname;
+  if(gateway.error)$('gatewayMessage').textContent=gateway.error;
+  render();
+}
+async function gatewayAction(action){
+  gatewayBusy=true;render();$('gatewayMessage').textContent='';
+  try{
+    await action();await refreshGateway();await refresh();error('');
+  }catch(e){$('gatewayMessage').textContent=e.message;}
+  finally{gatewayBusy=false;render();}
+}
+$('save').onclick=()=>{
+  if(desktopSetup())return gatewayAction(async()=>{
+    await api('gateway/save',{hostname:$('profile').value});
+    $('gatewayMessage').textContent='Address saved. Prepare the gateway and check the connection before starting.';
+  });
+  return api('connection',{path:$('profile').value}).then(()=>refresh()).then(()=>{error('');$('settings').open=false;}).catch(e=>error(e.message));
+};
+if(desktopSetup()){
+  $('gatewayInstall').onclick=()=>gatewayAction(async()=>{
+    await api('gateway/install',{});$('gatewayMessage').textContent='Gateway installed. Airlock will start and stop it with your agent.';
+  });
+  $('gatewayCheck').onclick=()=>gatewayAction(async()=>{
+    const result=await api('gateway/check',{});
+    $('gatewayChecks').replaceChildren(...result.checks.map(check=>{
+      const item=document.createElement('li'),title=document.createElement('strong'),detail=document.createElement('p');
+      title.textContent=(check.status==='ok'?'✓ ':check.status==='action'?'Next: ':'')+check.name;
+      detail.textContent=check.detail;item.append(title,detail);return item;
+    }));
+    $('gatewayMessage').textContent='Local checks complete. Internet access is checked when you start the agent.';
+  });
+  refreshGateway().catch(e=>$('gatewayMessage').textContent=e.message);
+}
 refresh().catch(e=>error(e.message));
 setInterval(()=>refresh().catch(e=>error(e.message)),2500);
 `;
