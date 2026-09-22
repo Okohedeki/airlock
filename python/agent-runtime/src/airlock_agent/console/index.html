@@ -258,10 +258,10 @@ async function loadHeld(){
       <button class="btn sm no" data-run="${esc(h.run)}" data-decision="deny">✗ deny</button><button class="btn sm" data-run="${esc(h.run)}" data-decision="skip">⤼ skip</button></div></div>`).join('')
     :'<div class="empty">nothing holding — guarded tools appear here when a run pauses.</div>';
   document.querySelectorAll('#apList [data-decision]').forEach(button=>{
-    button.onclick=()=>decide(button.dataset.run,button.dataset.decision);
+    button.onclick=()=>decide(button.dataset.run,button.dataset.decision,held.find(h=>h.run===button.dataset.run)?.approval_id);
   });
 }
-window.decide=async(run,decision)=>{await request('/v1/runs/'+encodeURIComponent(run)+'/decision',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({decision})});loadHeld();refreshHeld();};
+window.decide=async(run,decision,approval_id)=>{await request('/v1/runs/'+encodeURIComponent(run)+'/decision',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({decision,approval_id})});loadHeld();refreshHeld();};
 async function refreshHeld(){try{const {held}=await j('/v1/runs/held');$('#heldBadge').textContent=held&&held.length?held.length:'';}catch(e){}}
 async function loadRuns(){
   const {runs}=await j('/v1/runs?tenant='+encodeURIComponent(TENANT));
