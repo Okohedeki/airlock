@@ -88,3 +88,51 @@ def test_invalid_job_input_never_executes(worker, body):
 def test_jobs_require_durable_storage():
     with TestClient(create_app(object())) as client:
         assert client.post("/v1/jobs", json={"messages": []}).status_code == 503
+
+
+def test_failed_initial_persistence_releases_capacity_without_execution(worker, monkeypatch):
+    app = create_app(worker)
+    headers = {"Authorization": "Bearer key-a"}
+    original = worker.store.set
+
+    def fail(*args, **kwargs):
+        raise OSError("storage unavailable")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        monkeypatch.setattr(worker.store, "set", fail)
+        assert client.post("/v1/jobs", headers=headers, json={"messages": []}).status_code == 500
+        assert worker.calls == []
+        assert app.state.run_gate.pending == 0
+        monkeypatch.setattr(worker.store, "set", original)
+        worker.finish.set()
+        assert client.post("/v1/jobs", headers=headers, json={"messages": []}).status_code == 202
+
+
+def test_failed_outcome_persistence_releases_capacity_without_retry(worker, monkeypatch):
+    app = create_app(worker)
+    original = worker.store.set
+
+    def fail_completion(key, value, *args, **kwargs):
+        if "/_jobs/" in key and value["status"] == "completed":
+            raise OSError("disk full")
+        return original(key, value, *args, **kwargs)
+
+    with TestClient(app) as client:
+        monkeypatch.setattr(worker.store, "set", fail_completion)
+        try:
+            response = client.post("/v1/jobs", json={"messages": []},
+                                   headers={"Authorization": "Bearer key-a"})
+            assert response.status_code == 202
+        finally:
+            worker.finish.set()
+        deadline = time.monotonic() + 3
+        while app.state.run_gate.pending and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert app.state.run_gate.pending == 0
+        assert len(worker.calls) == 1
+    monkeypatch.setattr(worker.store, "set", original)
+    with TestClient(create_app(worker)) as client:
+        record = client.get(response.headers["location"],
+                            headers={"Authorization": "Bearer key-a"}).json()
+        assert record["status"] == "interrupted"
+    assert len(worker.calls) == 1
