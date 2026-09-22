@@ -266,7 +266,9 @@ def _run_own(binding: Binding, messages: list[dict[str, Any]], ctx: RunContext) 
                 continue
             # Guard the pending tool call BEFORE dispatch (epic 02 — WRAP-ok seam).
             at_boundary = ctx.continuation is not None and idx == len(ctx.continuation) - 1
-            sig = ctx.continuation_gate(action) if at_boundary else ctx.control_source.gate(action)
+            sig = ctx.control_source.evaluate(history) if at_boundary else ControlSignal()
+            if sig.action == "continue":
+                sig = ctx.continuation_gate(action) if at_boundary else ctx.control_source.gate(action)
             if sig.action == "kill":
                 ev = StepEvent(index=idx, type=StepType.TOOL_CALL, tool=action.name,
                                input=action.args, status=StepStatus.KILLED, error=sig.reason)
