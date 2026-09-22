@@ -14,7 +14,7 @@ export const page = String.raw`<!doctype html>
       <label class="field-label" for="agent">Agent</label>
       <select id="agent" disabled><option>Finding your agents…</option></select>
       <p class="agent-path" id="agentPath">Looking in your current workspace.</p>
-      <p class="framework-note">Your code and models stay on this computer.</p>
+      <p class="framework-note">Your agent runs on this computer.</p>
       <button class="primary wide" id="start" disabled>Start agent <span aria-hidden="true">↗</span></button>
       <button class="quiet" id="local" disabled>Try on this computer first</button>
       <p class="error" id="error" role="alert" hidden></p>
