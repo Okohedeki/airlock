@@ -10,6 +10,7 @@ so a watcher sees each model call / tool call / result as it happens. Approval r
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import math
 import os
@@ -163,10 +164,18 @@ def create_app(
 
     def _run_call(rnr, messages, tenant, session, run_id=None):
         def call(msgs, on_step):
+            kwargs = dict(tenant=tenant, session=session, run_id=run_id, on_step=on_step)
             try:
-                return rnr.run(msgs, tenant=tenant, session=session, run_id=run_id, on_step=on_step)
-            except TypeError:  # legacy .run(messages)
-                return rnr.run(msgs)
+                signature = inspect.signature(rnr.run)
+            except (TypeError, ValueError):
+                signature = None
+            if signature is not None:
+                try:
+                    signature.bind(msgs, **kwargs)
+                except TypeError:  # Select legacy shape BEFORE any execution.
+                    signature.bind(msgs)
+                    kwargs = {}
+            return rnr.run(msgs, **kwargs)
         return call
 
     def _ensure_gate() -> BoundedGate:
