@@ -18,12 +18,10 @@ import { readRelayConfig } from '../relay-config.js';
 import { startRelay, type RelayHandle } from '../relay.js';
 import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ZodError } from 'zod';
 import { buildDockerRun } from '../exec.js';
 import { DEFAULT_BASE_IMAGE, resolveBuildPlan } from './build.js';
 import {
   type AirlockConfig,
-  CF_TUNNEL_TOKEN_ENV,
   readConfig,
   validateTunnel,
 } from '../config-file.js';
@@ -121,51 +119,6 @@ export function resolveUpPlan(config: AirlockConfig, opts: UpOptions = {}): UpPl
     port,
     env,
   };
-}
-
-/**
- * Resolve durable-tunnel settings from `--durable` / `[tunnel].durable`. Returns
- * the publisher's bring-your-own Cloudflare token + hostname, or null when durable
- * mode isn't requested (the ephemeral quick tunnel is used instead). Throws an
- * actionable error when durable is requested but the BYO credentials are missing.
- */
-export function resolveDurableTunnel(
-  config: AirlockConfig,
-  opts: UpOptions = {},
-  env: NodeJS.ProcessEnv = process.env,
-): { token: string; hostname: string } | null {
-  let tcfg: ReturnType<typeof validateTunnel>;
-  try {
-    tcfg = validateTunnel(config);
-  } catch (err) {
-    if (err instanceof ZodError) {
-      throw new Error(
-        `invalid [tunnel] config: ${err.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
-      );
-    }
-    throw err;
-  }
-
-  const durable = opts.durable ?? tcfg?.durable ?? false;
-  if (!durable) return null;
-
-  const token = env[CF_TUNNEL_TOKEN_ENV];
-  // hostname from --hostname (worker.yaml projects), else legacy [tunnel].hostname.
-  const hostname = opts.hostname ?? tcfg?.hostname;
-  const missing: string[] = [];
-  if (!token)
-    missing.push(`export ${CF_TUNNEL_TOKEN_ENV}=<your Cloudflare Tunnel connector token>`);
-  if (!hostname)
-    missing.push('pass --hostname <the hostname you routed> (or set [tunnel].hostname)');
-  if (!token || !hostname) {
-    throw new Error(
-      'durable tunnel requested but your bring-your-own Cloudflare setup is incomplete:\n' +
-        missing.map((m) => `  • ${m}`).join('\n') +
-        '\nCreate the tunnel + Public Hostname in YOUR Cloudflare Zero Trust dashboard first — ' +
-        'see docs/durable-hosting.md. airlock holds no Cloudflare keys.',
-    );
-  }
-  return { token, hostname };
 }
 
 /**
