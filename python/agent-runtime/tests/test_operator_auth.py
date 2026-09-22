@@ -69,3 +69,31 @@ def test_environment_token_is_captured_at_startup(monkeypatch):
     assert c.post("/v1/control/controls", headers={
         "X-Airlock-Operator-Token": "changed",
     }).status_code == 401
+
+
+def test_worker_rejects_caller_control_changes_without_mutating_state(monkeypatch):
+    from airlock_agent.manifest import Manifest
+    from airlock_agent.runner import EngineRunner
+    from airlock_agent.state import MemoryStore
+    from airlock_agent.surface import create_app
+
+    monkeypatch.setenv("AIRLOCK_OPERATOR_TOKEN", "operator-secret")
+    runner = EngineRunner(Manifest.from_dict({
+        "harness": "stub",
+        "auth": {"scheme": "api_key", "required": True},
+        "tenancy": {"keys": {"caller-secret": "customer"}},
+        "controls": {"max_steps": 8, "approvals": [{"tool": "send"}]},
+    }), MemoryStore())
+    c = TestClient(create_app(runner))
+    payload = {"max_steps": 99999, "approval": {"tool": "send", "on": False}}
+    for headers in ({}, {"Authorization": "Bearer caller-secret"}):
+        assert c.post("/v1/control/controls", json=payload, headers=headers).status_code == 401
+        assert c.post("/v1/runs/example/decision", json={"decision": "approve"},
+                      headers=headers).status_code == 401
+    assert runner.max_steps == 8
+    assert runner.controls["approvals"] == [{"tool": "send"}]
+    operator = {"X-Airlock-Operator-Token": "operator-secret"}
+    assert c.post("/v1/control/controls", json=payload, headers=operator).status_code == 200
+    # An operator credential is not a substitute for caller authentication either.
+    assert c.post("/v1/chat/completions", headers=operator,
+                  json={"messages": [{"role": "user", "content": "final: hi"}]}).status_code == 401
