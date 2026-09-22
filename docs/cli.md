@@ -17,11 +17,9 @@ Run via `npx -y @airlockhq/cli <command>` or a global install (`npm i -g @airloc
 | `doctor` | Validate the local config / `worker.yaml` and report issues |
 | `status` | Print the current project configuration (JSON) |
 | `up` | Run a worker locally; public tunneling requires explicit opt-in |
-| `dev` | Open a public Cloudflare tunnel to an already-running local worker |
 | `control` | Open the **control plane** — operate the whole fleet from a local web UI |
 | `deploy` | Run a multi-container fleet (N replicas) behind the router; optional canary |
 | `promote` / `rollback` | Promote a version to 100%, or instantly drop the canary |
-| `tunnel provision` | Auto-create a durable Cloudflare tunnel + DNS (needs `CF_API_TOKEN`) |
 | `login` / `logout` / `whoami` / `sync` | Optional dashboard-backend auth + project registration |
 | `delete` / `logs` / `secret` / `domain` | Legacy Target passthroughs (Cloudflare Workers) |
 
@@ -71,39 +69,31 @@ Print the current project configuration as JSON.
 ## Run
 
 ### `up`
-Run the worker (`python -m airlock_agent`, or `--docker`) locally. No public tunnel is opened by default.
+Start the native worker and publish it through your saved Caddy relay profile.
 
-```
-airlock up [-p|--port PORT] [--python BIN] [--tunnel | --no-tunnel] [--durable] [--hostname HOST]
+```sh
+airlock up [-p|--port PORT] [--python BIN] [--relay PATH] [--no-tunnel]
            [--docker] [--image REF] [--mount] [--env-file PATH] [--profile NAME]
            [--max-concurrency N] [--max-queue N] [--queue-timeout S]
-           [--cf-protocol quic|http2|auto] [--cf-region REGION] [--cf-metrics HOST:PORT]
 ```
 
-- `--tunnel` — explicitly open a legacy Cloudflare quick tunnel.
-- `--no-tunnel` — keep local-only operation; also overrides `--durable`.
-- `--durable` — explicitly request a **stable named tunnel on your own Cloudflare account**. Needs `AIRLOCK_CF_TUNNEL_TOKEN` (+ `--hostname` or a
-  `[tunnel]` block). See **[durable hosting](./durable-hosting.md)**.
-- `--docker` / `--image` / `--mount` / `--env-file` — run the worker in a container (needs `airlock build`).
-- `--profile` — run a `worker.yaml` variant/profile (e.g. `internal` | `external`).
-- `--max-concurrency` — the **model's** real parallel capacity (`AIRLOCK_MAX_CONCURRENCY`).
-- `--cf-*` — tune the durable connector (also settable as `[tunnel]` keys).
+- `--relay` selects a profile; the default is `.airlock/relay.json`.
+- `--no-tunnel` explicitly keeps the worker local for development.
+- `--docker` / `--image` / `--mount` / `--env-file` optionally run in a container.
+- `--profile` selects a worker.yaml profile. Public profiles must require caller authentication.
+- `--max-concurrency` sets model concurrency (`AIRLOCK_MAX_CONCURRENCY`).
 
-The worker console is at `http://localhost:PORT/console`. Set `AIRLOCK_OPERATOR_TOKEN`
-in the process environment (or `.env` when using the CLI), then enter it in the console.
-Operator HTTP routes require `X-Airlock-Operator-Token`; caller keys are independent.
-Without an operator token, administration is disabled. On native Windows, use
-`--python python` when `python3` is not installed. Native startup binds to loopback;
-`AIRLOCK_HOST` is an explicit listener override. Docker startup publishes on loopback.
+A verified launch prints the public API and console URL. Caller keys authorize
+agent work; `X-Airlock-Operator-Token` separately authorizes administration.
+Public startup requires `AIRLOCK_OPERATOR_TOKEN` and relay credentials. Failed
+publication stops the worker. A missing profile is an error, not a local fallback.
+On Windows, use `--python python` when `python3` is unavailable.
+The native worker always binds to loopback behind the connector.
 
-Fleet commands below are legacy features outside the focused single-worker redesign.
-See [the redesign contract](./redesign.md) for supported scope.
-
-### `dev`
-```
-airlock dev [-p|--port PORT]
-```
-Open a public Cloudflare quick tunnel to an already-running local worker on `PORT` (default `3000`).
+See [Caddy relay setup](caddy-relay.md) for infrastructure prerequisites and the
+current Windows connector testing blocker. Service installers are not shipped.
+The Cloudflare `dev`, `tunnel provision`, `--tunnel`, `--durable`, and `--cf-*`
+interfaces have been removed. Fleet commands below are legacy features.
 
 ### `control`
 Open the **control plane** — a local web app to operate the whole fleet (no file-editing required).
@@ -138,13 +128,6 @@ airlock rollback [-p|--port 8080]
 Promote the current version to 100% of traffic, or instantly drop the canary (stable wins). Stickiness
 wins over canary — a live session never flips version mid-run.
 
-### `tunnel provision`
-```
-airlock tunnel provision [-p|--port 3000] [--account ID] [--zone ID] [--name NAME]
-```
-Auto-create a durable Cloudflare tunnel + DNS via the Cloudflare API. Needs `CF_API_TOKEN`. After
-provisioning, run `airlock up --durable --hostname <host>`.
-
 ## Dashboard backend (optional)
 
 `login` / `logout` / `whoami` / `sync` authenticate this CLI to an airlock dashboard backend (GitHub
@@ -154,8 +137,8 @@ device flow) and register the project so it shows up there. `--backend` defaults
 ## Legacy Target passthroughs
 
 `delete`, `logs`, and `secret` / `domain` shell out to the Cloudflare Workers CLI (`wrangler`) for
-projects still deployed that way. The supported deploy path is now `deploy` (Docker fleet) +
-`tunnel`/`up` for exposure.
+projects still deployed that way. These historical cloud recipes are outside the native public-agent path.
+Use `up` with a Caddy relay for the supported redesign.
 
 ---
 
@@ -163,9 +146,9 @@ projects still deployed that way. The supported deploy path is now `deploy` (Doc
 
 | Var | Used by | Effect |
 |---|---|---|
+| `AIRLOCK_RELAY_TOKEN` | `up` | Secret shared with the configured frps relay |
+| `AIRLOCK_OPERATOR_TOKEN` | runtime | Separate operator authorization |
 | `AIRLOCK_PYTHON` | `up`, `control` | Python used to run `-m airlock_agent` |
-| `AIRLOCK_CF_TUNNEL_TOKEN` | `up --durable` | Bring-your-own Cloudflare named-tunnel token |
-| `CF_API_TOKEN` | `tunnel provision` | Cloudflare API token to create tunnel + DNS |
 | `AIRLOCK_MAX_CONCURRENCY` / `AIRLOCK_MAX_QUEUE` / `AIRLOCK_MAX_WAIT_S` | runtime | Run-gate admission (the model's parallel capacity; queue depth; wait budget before `429`) |
 | `OPENAI_API_BASE` / `OPENAI_API_KEY` | the model bindings | Your OpenAI-compatible endpoint + key — airlock never hosts inference |
 | `AIRLOCK_DEPLOY_BACKEND` | `login` | Default dashboard backend URL |
@@ -175,4 +158,4 @@ projects still deployed that way. The supported deploy path is now `deploy` (Doc
 - `0` — success.
 - `1` — runtime / validation error (message on stderr).
 - `2` — invalid CLI arguments.
-- `127` — a required binary (`cloudflared`, `docker`, `wrangler`) is not on PATH (message includes the install hint).
+- `127` — a required binary (`docker`, `wrangler` for legacy commands) is not on PATH (message includes the install hint).
