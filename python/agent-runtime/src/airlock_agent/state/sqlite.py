@@ -18,6 +18,7 @@ from .store import ScopedStore, StateStore, _check_tenant
 
 class SQLiteStore(StateStore):
     def __init__(self, path: str = ".airlock/state.db") -> None:
+        self.path = os.path.realpath(path) if path != ":memory:" else None
         if path != ":memory:":
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self._conn = sqlite3.connect(path, check_same_thread=False)
