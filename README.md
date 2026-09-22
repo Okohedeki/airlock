@@ -117,9 +117,11 @@ Set-Location ./examples/live-demo
 python -m airlock_agent
 ```
 
-Keep the generated token available to paste into the local console. Native tools
-are trusted code: strong Windows sandboxing is not implemented. Container execution
-is a separate deployment option, not a guarantee of per-tool isolation.
+Keep the generated token available to paste into the local console. Strong Windows
+sandboxing is not implemented: a worker with `sandbox.enabled: true` now refuses
+tool execution when the required subprocess limits are unavailable. For a trusted
+local demonstration only, explicitly set `sandbox.enabled: false` in its manifest.
+Container execution is a separate option, not a guarantee of per-tool isolation.
 
 For an explicitly requested legacy tunnel use `airlock up --tunnel`, or
 `airlock up --durable --hostname agent.example.com` with your own connector token.
