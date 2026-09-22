@@ -106,6 +106,8 @@ export interface DockerRunOptions {
   image: string;
   /** Host port mapped to the container's :3000. */
   port: number;
+  /** Optional host interface for the published port (loopback for local startup). */
+  publishHost?: string;
   name?: string;
   /** Host dir mounted at /app/worker/.airlock so the SQLite State Store persists. */
   stateDir?: string;
@@ -126,7 +128,8 @@ export function buildDockerRun(o: DockerRunOptions): CommandBuild {
   const args = ['run'];
   args.push(o.detach ? '-d' : '--rm');
   if (o.name) args.push('--name', o.name);
-  args.push('-p', `${o.port}:3000`, '-e', 'PORT=3000');
+  const publishedPort = `${o.publishHost ? `${o.publishHost}:` : ''}${o.port}:3000`;
+  args.push('-p', publishedPort, '-e', 'PORT=3000');
   if (o.stateDir) args.push('-v', `${o.stateDir}:/app/worker/.airlock`);
   if (o.mountDir) args.push('-v', `${o.mountDir}:/app/worker`, '-w', '/app/worker', '-e', 'PYTHONPATH=/app/worker');
   if (o.addHostGateway) args.push('--add-host', 'host.docker.internal:host-gateway');
