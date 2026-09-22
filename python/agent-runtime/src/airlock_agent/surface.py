@@ -25,6 +25,7 @@ from .adapter import AgentRunResult
 from .concurrency import BoundedGate, QueueFull
 from .engine.events import StepEvent
 from .io import InputRejected, ModelCallError
+from .operator_auth import install_operator_auth
 from .wellknown import mount_wellknown, read_contract_metadata
 
 HEARTBEAT_S = 12.0
@@ -140,6 +141,7 @@ def create_app(
     """`runner` exposes `run(messages, *, tenant, session, run_id, on_step) -> AgentRunResult`.
     A legacy `.run(messages)` object is adapted transparently."""
     app = FastAPI(title=name)
+    install_operator_auth(app)
     metadata = read_contract_metadata(dist_dir)
     store = getattr(runner, "store", None)
 
