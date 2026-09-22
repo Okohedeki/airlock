@@ -70,7 +70,8 @@ Print the current project configuration as JSON.
 
 ### `up`
 Open the local launcher, select an agent/framework, and press Start to publish
-through your saved Caddy relay profile. Manage agent signs in automatically.
+through the desktop's Caddy gateway. Host a gateway handles first-time setup;
+Manage agent signs in automatically. See [desktop gateway setup](desktop-gateway.md).
 
 ```sh
 airlock up [-p|--port PORT] [--python BIN] [--relay PATH] [--no-open] [--headless]
@@ -79,11 +80,11 @@ airlock up [-p|--port PORT] [--python BIN] [--relay PATH] [--no-open] [--headles
            [--max-concurrency N] [--max-queue N] [--queue-timeout S]
 ```
 
-- `--relay` selects a profile; the default is `.airlock/relay.json`.
+- `--relay` explicitly selects the older external-relay path.
 - `--no-open` prints the private launcher link without opening a browser.
 - `--headless` starts directly in the terminal; advanced runtime flags below also
-  preserve direct terminal startup. The launcher manages credentials automatically;
-  direct startup retains explicit credential configuration.
+  preserve direct terminal startup. A saved desktop gateway automatically supplies
+  its address and managed credentials in either mode.
 - `--no-tunnel` explicitly keeps the worker local for development.
 - `--docker` / `--image` / `--mount` / `--env-file` optionally run in a container.
 - `--profile` selects a worker.yaml profile. Public profiles must require caller authentication.
@@ -91,8 +92,9 @@ airlock up [-p|--port PORT] [--python BIN] [--relay PATH] [--no-open] [--headles
 
 In direct mode, a verified launch prints the public API and console URL. Caller keys authorize
 agent work; `X-Airlock-Operator-Token` separately authorizes administration.
-Direct public startup requires `AIRLOCK_OPERATOR_TOKEN` and relay credentials. Failed
-publication stops the worker. A missing profile is an error, not a local fallback.
+The older relay path requires explicit operator and connector credentials;
+desktop setup generates the worker credentials automatically. Failed publication
+stops the worker. Airlock never substitutes a local link for a failed public launch.
 On Windows, use `--python python` when `python3` is unavailable.
 The native worker always binds to loopback behind the connector.
 
