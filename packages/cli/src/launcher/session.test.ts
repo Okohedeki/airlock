@@ -15,6 +15,20 @@ function setup() {
 }
 
 describe('agent launcher lifecycle', () => {
+  it('cleans up a worker even when shutdown arrives during startup', async () => {
+    const { session, run, stop } = setup();
+    const handle = await run();
+    let ready!: (value: typeof handle) => void;
+    run.mockImplementationOnce(() => new Promise(resolve => { ready = resolve; }));
+    const starting = session.start(agent.id, true);
+    await Promise.resolve();
+    const stopping = session.stop();
+    expect(stop).not.toHaveBeenCalled();
+    ready(handle);
+    await Promise.all([starting, stopping]);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(session.state()).toMatchObject({ status: 'idle', active: null });
+  });
   it('keeps credentials out of status and supplies them to the worker automatically', async () => {
     const { session, run } = setup();
     await session.start(agent.id, true);
