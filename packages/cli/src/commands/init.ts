@@ -40,6 +40,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 ENV PORT=3000
+ENV AIRLOCK_HOST=0.0.0.0
 EXPOSE 3000
 # Config-driven: reads .airlock/config.toml [agent] and drives your harness.
 # Model is publisher-supplied — set OPENAI_API_BASE / OPENAI_API_KEY (ADR-0008).
