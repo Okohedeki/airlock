@@ -14,6 +14,7 @@ PermissionError (the surface maps it to 401).
 from __future__ import annotations
 
 import hashlib
+import os
 from typing import Any, Callable
 
 from fastapi import Request
@@ -36,6 +37,8 @@ def build_authenticator(
     scheme = (auth_cfg.get("scheme") or "api_key").lower()
     static_keys = dict((tenancy_cfg.get("keys") or auth_cfg.get("keys") or {}))
     required = bool(auth_cfg.get("required", True))
+    if os.environ.get("AIRLOCK_PUBLIC_INSTANCE") and (scheme in ("none", "open") or not required):
+        raise ValueError("public workers require caller authentication in every profile")
 
     def authenticate(request: Request) -> str:
         if scheme in ("none", "open"):
