@@ -77,6 +77,20 @@ def test_approval_without_storage_fails_closed():
     assert policy(None).gate(ToolCall("send", {})).reason == "APPROVAL_STORAGE_REQUIRED"
 
 
+def test_operator_edit_cannot_bypass_deny_rules(store):
+    control = PolicyControlSource({"approvals": [{"tool": "send"}], "tool_gates": [
+        {"tool": "send", "when": {"destination": "forbidden"}, "action": "deny"},
+    ]}, store=store, run_id="run")
+    pending = ToolCall("send", {"destination": "allowed"})
+    control.gate(pending)
+    held = store.get("_held/run")
+    store.set(held["gate_key"], {"decision": "edit", "args": {"destination": "forbidden"},
+                               "approval_id": held["approval_id"], "tool": "send",
+                               "original_args": pending.args})
+    assert control.gate_approved(pending, held["approval_id"]).reason == "TOOL_DENIED:send"
+    assert "consumed_at" not in store.get(held["gate_key"])
+
+
 def test_review_replacement_between_validation_and_consumption_is_rejected(store, monkeypatch):
     control = policy(store)
     pending = ToolCall("send", {})
