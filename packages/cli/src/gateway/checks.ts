@@ -10,10 +10,17 @@ export interface GatewayCheck { name: string; status: 'ok' | 'action' | 'info'; 
 async function routedAddress(): Promise<string | undefined> {
   return new Promise(resolve => {
     const socket = createSocket('udp4');
-    const finish = (address?: string) => { clearTimeout(timer); socket.close(); resolve(address); };
+    let finished = false;
+    const finish = (address?: string) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      try { socket.close(); } catch { /* A failed socket may already be closed. */ }
+      resolve(address);
+    };
     const timer = setTimeout(() => finish(), 1000);
     socket.once('error', () => finish());
-    socket.connect(443, '8.8.8.8', () => finish(socket.address().address));
+    socket.connect(443, '8.8.8.8', () => { if (!finished) finish(socket.address().address); });
   });
 }
 
