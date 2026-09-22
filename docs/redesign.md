@@ -1,40 +1,49 @@
-# Airlock: controlled work on your machine
+# Airlock: publish and manage a worker from your Windows machine
 
-Airlock runs a worker, asks before consequential actions, and records enough
-state to explain and recover its work. Airlock owns the execution loop; framework
+Airlock starts a native Windows service, provides a public HTTPS URL, and lets
+authorized callers invoke and manage the worker remotely. Jobs, approvals, and
+recovery support that main experience. Ollama is one possible model behind the
+worker, not the product boundary. Airlock owns the execution loop; framework
 tool extraction does not promise to preserve arbitrary framework orchestration.
 
 ## The supported product boundary
 
 One worker, one manifest, one runtime, one operator console. The core journey is:
 
-1. Run a worker locally.
-2. Submit a job and inspect progress.
-3. Review the exact action awaiting approval; approve, edit, or deny it.
+1. Start the Windows service and receive its public HTTPS URL.
+2. Call the worker externally and inspect its connection and job status remotely.
+3. Review the exact action awaiting approval remotely; approve, edit, or deny it.
 4. Recover interrupted work with an explicit account of completed side effects.
 5. Inspect the execution record and output.
 
-Background jobs and local approval notifications support this journey. Fleet
+Background jobs and approval notifications support this journey. Fleet
 orchestration, canaries, organization management, SSO, marketplaces, and advanced
 model routing are outside the first redesign milestone. Existing fleet and
 registry dashboards are legacy surfaces, not the redesigned administration path.
 
 ## Security and networking contract
 
-- Local operation is the default. Starting a worker must not create a tunnel.
-- Public access is an explicit deployment choice, independent of execution.
+- Public access is the primary service journey. First setup configures publication;
+  later service starts restore that connection and report the public URL.
+- The worker can bind to loopback behind the connector. This internal binding
+  must not be confused with a local-only product or a completed public connection.
+- Keep a local-only development mode. Report publication failures clearly rather
+  than claiming the worker is externally reachable merely because it is healthy.
 - Caller credentials authorize work; operator credentials authorize controls
   and approval decisions. Caller credentials must never imply operator access.
 - Missing operator configuration disables administration; it never grants it.
-- The operator console and administration routes belong on a private interface.
-  A public reverse proxy must allow only the intended caller routes.
+- Authenticated remote management is part of the product. The public entry point
+  must distinguish caller routes from protected management routes; exposing the
+  worker must not expose unrestricted administration.
 - Neither a tunnel nor a private network substitutes for application authorization.
 
-The intended Windows distribution is a service with a bundled runtime and a local
-console. Direct public hosting uses a domain and a Windows-native HTTPS proxy
-such as Caddy. It requires an inbound-reachable network; behind carrier-grade NAT,
-an ISP-provided public address or an optional relay is still necessary. Cloudflare
-is an optional integration, not part of the runtime contract.
+The intended Windows distribution bundles the runtime and a native connector,
+with service startup, reconnection, credentials, and URL discovery managed by
+Airlock. Normal use must not require WSL, Docker, or a separate tunnel terminal.
+A native client still needs a publicly reachable endpoint: an outbound relay
+provides the automatic-URL path behind NAT; direct HTTPS requires reachable
+ingress and a domain. The relay ownership/provider choice is pending. Cloudflare
+remains an optional adapter, not a required account or runtime dependency.
 
 ## Reliability contract
 
@@ -53,10 +62,13 @@ identities must include the actual source and pinned runtime, not just metadata.
 1. Establish private defaults and separate operator authorization, including a
    usable console authentication flow and regression coverage.
 2. Implement durable job lifecycle, approval recovery, and side-effect handling.
-3. Consolidate the console around jobs, approvals, history, and worker settings.
-4. Package and verify a native Windows service and optional direct HTTPS hosting.
+3. Deliver the native Windows service-to-public-URL path, including connector
+   supervision, stable URL recovery, caller authentication, and external checks.
+4. Consolidate remote management around connection status, jobs, approvals,
+   history, and worker settings.
 
 These are acceptance criteria for the redesign, not claims that all are shipped.
-The release scenario is a worker preparing an action, waiting for approval,
+The release scenario starts by calling the Windows worker through its public URL,
+then follows it preparing an action, waiting for remote approval,
 surviving a restart, accepting a correction, and completing with an auditable
 record and explicit duplicate-action protection.
