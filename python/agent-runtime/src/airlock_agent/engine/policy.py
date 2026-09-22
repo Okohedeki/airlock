@@ -19,7 +19,9 @@ eval): per-arg conditions {eq|ne|contains|regex|in|gt|lt}. Reusing airlock-confi
 from __future__ import annotations
 
 import re
+import json
 import time
+import uuid
 from typing import Any
 
 from .events import ControlSignal, ControlSource, StepEvent
@@ -91,28 +93,44 @@ class PolicyControlSource(ControlSource):
 
     def _approval(self, name: str, args: dict, rule: dict) -> ControlSignal:
         if self.store is None:
-            return ControlSignal(action="continue")  # no store → can't hold; fail open in dev
-        gate_key = f"_held/{self.run_id}/{name}"
-        decision = self.store.get(gate_key)
-        if decision is None:
-            # Park the run for an Operator. Engine returns BLOCKED on this pause.
+            return ControlSignal(action="kill", reason="APPROVAL_STORAGE_REQUIRED")
+        held_key = f"_held/{self.run_id}"
+        held = self.store.get(held_key)
+        action = json.dumps({"tool": name, "args": args}, sort_keys=True, allow_nan=False)
+        if held is None or not held.get("approval_id"):
+            # Upgrade legacy holds by requiring a fresh review, never trusting an
+            # unbound decision left by an older worker.
+            approval_id = uuid.uuid4().hex
             deadline = (time.time() + self.approval_window_s) if self.approval_window_s else None
-            self.store.set(
-                f"_held/{self.run_id}",
-                {"run": self.run_id, "tool": name, "args": args, "rule": rule,
-                 "deadline": deadline, "gate_key": gate_key},
-            )
+            replacement = {"run": self.run_id, "tool": name, "args": args, "rule": rule,
+                           "deadline": deadline, "approval_id": approval_id, "action": action,
+                           "gate_key": f"_held/{self.run_id}/{approval_id}"}
+            self.store.compare_and_set(held_key, held, replacement)
             return ControlSignal(action="pause", reason=f"AWAIT_APPROVAL:{name}")
-        # A decision exists — apply it, then clear the parked entry + decision so the
-        # approval queue reflects resolution and the gate won't re-fire on a re-run.
-        self.store.delete(f"_held/{self.run_id}")
-        self.store.delete(gate_key)
-        d = decision if isinstance(decision, dict) else {}
+        if held.get("action") != action:
+            return ControlSignal(action="kill", reason="APPROVAL_ACTION_CHANGED")
+        if held.get("deadline") is not None and time.time() >= held["deadline"]:
+            return ControlSignal(action="kill", reason="APPROVAL_EXPIRED")
+        gate_key = held["gate_key"]
+        d = self.store.get(gate_key)
+        if d is None:
+            return ControlSignal(action="pause", reason=f"AWAIT_APPROVAL:{name}")
+        if (d.get("approval_id") != held["approval_id"] or d.get("tool") != name
+                or json.dumps({"tool": d.get("tool"), "args": d.get("original_args")},
+                              sort_keys=True, allow_nan=False) != action):
+            return ControlSignal(action="kill", reason="APPROVAL_ACTION_CHANGED")
+        if d.get("consumed_at") is not None or not self.store.compare_and_set(
+                gate_key, d, {**d, "consumed_at": time.time()}):
+            return ControlSignal(action="kill", reason="APPROVAL_ALREADY_CONSUMED")
+        # Keep the consumed decision as an audit record. Claim it BEFORE dispatch.
+        self.store.compare_and_set(held_key, held, None)
         verdict = d.get("decision")
         if verdict == "approve":
             return ControlSignal(action="continue")
         if verdict == "edit":
-            return ControlSignal(action="override", override_args=d.get("args") or args)
+            if not isinstance(d.get("args"), dict):
+                return ControlSignal(action="kill", reason="APPROVAL_INVALID_EDIT")
+            return ControlSignal(action="override", override_args=d["args"])
         if verdict == "override":
             return ControlSignal(action="override", override_result=d.get("result"))
         if verdict == "skip":
