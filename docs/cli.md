@@ -16,7 +16,7 @@ Run via `npx -y @airlockhq/cli <command>` or a global install (`npm i -g @airloc
 | `build` | Build a reproducible Docker image for this `worker.yaml` (validates first) |
 | `doctor` | Validate the local config / `worker.yaml` and report issues |
 | `status` | Print the current project configuration (JSON) |
-| `up` | Run a worker locally; public tunneling requires explicit opt-in |
+| `up` | Publish a native worker through the saved Caddy relay profile |
 | `control` | Open the **control plane** — operate the whole fleet from a local web UI |
 | `deploy` | Run a multi-container fleet (N replicas) behind the router; optional canary |
 | `promote` / `rollback` | Promote a version to 100%, or instantly drop the canary |
