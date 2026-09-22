@@ -1,9 +1,21 @@
 import { Resolver } from 'node:dns/promises';
 import { createServer } from 'node:net';
 import { networkInterfaces } from 'node:os';
+import { createSocket } from 'node:dgram';
 import { desktopHostname } from './config.js';
 
 export interface GatewayCheck { name: string; status: 'ok' | 'action' | 'info'; detail: string }
+
+/** UDP connect selects the OS route without sending a packet or contacting a service. */
+async function routedAddress(): Promise<string | undefined> {
+  return new Promise(resolve => {
+    const socket = createSocket('udp4');
+    const finish = (address?: string) => { clearTimeout(timer); socket.close(); resolve(address); };
+    const timer = setTimeout(() => finish(), 1000);
+    socket.once('error', () => finish());
+    socket.connect(443, '8.8.8.8', () => finish(socket.address().address));
+  });
+}
 
 async function portAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -30,7 +42,8 @@ export async function checkDesktopGateway(hostname?: string): Promise<GatewayChe
   checks.push({ name: 'Desktop ports', status: available.every(Boolean) ? 'ok' : 'action', detail: available.every(Boolean)
     ? 'Ports 80 and 443 are available on this desktop.'
     : `Port ${[80, 443].filter((_, i) => !available[i]).join(' and ')} is unavailable. Another app may be using it, or your system may require permission.` });
-  const local = Object.values(networkInterfaces()).flatMap(entries => entries ?? [])
+  const preferred = await routedAddress();
+  const local = preferred ? [preferred] : Object.values(networkInterfaces()).flatMap(entries => entries ?? [])
     .filter(entry => entry.family === 'IPv4' && !entry.internal).map(entry => entry.address);
   checks.push({ name: 'Router connection', status: 'info', detail:
     `Forward TCP ports 80 and 443 to this desktop${local.length ? ` (${local.join(' or ')})` : ''} in your router. Allow Caddy through your firewall. Start will check the HTTPS connection; these local checks do not prove internet reachability.` });
