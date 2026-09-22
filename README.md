@@ -1,6 +1,6 @@
 <h1 align="center">airlock</h1>
 
-<p align="center"><strong>Run any AI agent as a controlled, self-hosted HTTP service.</strong></p>
+<p align="center"><strong>Run agent work with approvals and a clear execution record.</strong></p>
 
 <p align="center">
   Point it at a LangGraph, smolagents, CrewAI, OpenAI Agents, or Claude agent;<br/>
@@ -73,59 +73,28 @@ docker run -p 3000:3000 -v "$PWD/my-worker:/app/worker" airlock-worker:local
 
 State persists in named volumes (`worker-state`, `dashboard-data`). Set `OPENAI_API_KEY` and `OPENAI_API_BASE` for workers that call a real model.
 
-## Features
+## Focus of the redesign
 
-### 🔁 Control the loop
+Airlock is narrowing to one worker, one manifest, one runtime, and one console:
 
-Running the loop yourself is what unlocks the rest. A gateway in front of the agent can read the request and the response, and nothing in between.
+- **Prepare, then approve:** inspect a proposed tool action before allowing it.
+- **Recover interrupted work:** inspect checkpoints and resume with explicit
+  handling of side effects. Durable background jobs and restart-safe approval
+  recovery are the next milestone; exactly-once external actions are not guaranteed.
+- **Serve controlled work:** run a local HTTP API with caller authentication,
+  separate operator authorization, limits, and an execution record.
 
-- **Operate any step** — pause, retry, resume, or kill at a specific step, not the whole request.
-- **Loop guards** — cap max steps, catch runaway loops, and enforce the token and cost budget during the run, so it stops before it overshoots rather than billing you after.
-- **Mid-run approval** — hold a step for human sign-off before a sensitive tool fires (send, pay, write), inject guidance, then continue.
-- **Per-step tool gating** — allow or deny a tool call from its real arguments at the moment it runs. Inspect the `DELETE` payload, not only the route.
-- **Mid-run routing** — send a heavy reasoning step to a big model and a cheap classification step to a small one, inside one run.
-- **Mid-run fallback** — when a tool or model fails at step 3, swap to a backup and continue instead of failing the whole request.
-- **Checkpoint & resume** — snapshot state at each step, then resume a failed run from the last good step instead of re-paying for the whole thing.
-- **Replay & fork** — re-run a past run deterministically, or fork it from step N with one thing changed.
-- **Tool-result reuse** — cache an expensive tool call and reuse the result across runs, below the level of whole-response caching.
-- **Sandboxed execution** — every tool and code call runs isolated, so a hijacked tool can't reach the host.
-- **Live step streaming & per-step cost** — watch each reasoning step and tool call as it happens, with exact cost and latency on every step.
+The first foundation is implemented: local startup does not open a tunnel,
+operator routes require a separate token, and the console accepts operator and
+caller credentials independently. Native startup and Compose host ports default
+to loopback.
 
-### 🧩 Compose the worker
+Fleet orchestration, canaries, organization/SSO management, and advanced routing
+are legacy or deferred capabilities. Their existing commands are not the supported
+redesigned administration path. Native Windows service packaging, direct HTTPS
+setup, and strong Windows tool isolation remain planned work.
 
-- **One `worker.yaml` manifest** — declarative and version-controlled. The worker is a file, not a pile of glue code.
-- **Built from parts** — bind the harness, tools, skills, and model in config; toggle skills on and off.
-- **Variants & profiles** — ship the same worker in several configurations from one manifest.
-- **Canary + instant rollback** — roll a new version out to a slice of traffic, then promote or revert in one command.
-
-### 🚀 Deploy & expose
-
-- **One command to ship** — `airlock build` produces a reproducible Docker image; `airlock deploy --replicas N` runs a multi-container fleet behind the router.
-- **Internal or external, same worker** — flip an internal service to a public URL with identical controls and no rewrite.
-- **Multi-tenant** — authenticate each caller, isolate state per tenant, and track usage from the same worker.
-- **Triggers** — fire on a signed webhook, not only on a direct call.
-- **Agentic sharding** — route across many worker variants behind one endpoint by capability, cost, or latency.
-
-### 📐 Shape the contract
-
-- **Controlled input** — validate inbound requests and reject junk or injection before the loop spends a token.
-- **Controlled output** — enforce a schema, format, and redaction contract on every call so downstream code can trust the shape.
-
-### 🎛️ Operate & govern from the UI
-
-`airlock control` opens a **fleet control plane** at `http://localhost:8788` — operate every worker from one dashboard, no file-editing required. (This is distinct from the compose `dashboard` on :8787, which is the GitHub-login call ledger / project registry.)
-
-- **Fleet dashboard** — every `worker.yaml` in your workspace with live status, model, skills, runs, errors, and cost; **start and stop** workers in place.
-- **Models** — view each worker's model bindings and **set them up** (model, endpoint, API-key env var) or switch the default.
-- **Skills on/off** — toggle any skill; the change is written to `worker.yaml` (running or stopped) and applied **live** to a running worker.
-- **Runs & approvals** — a fleet-wide run explorer with step timelines, and a governance queue to **approve, deny, or hold** tool calls.
-- **Detect** — point it at a project and it identifies the harness + entrypoint.
-- **Governance** — RBAC roles, environments with change-control, an append-only **audit log**, and per-tenant **cost & usage**.
-
-### 📊 Observe
-
-- **Live step stream** over SSE, **per-step `cost_usd`**, and Prometheus **`/metrics`**.
-- **Operator Console** at `/console` on every running worker — overview, live runs, traces, approvals, and controls.
+See [the redesign contract](./docs/redesign.md) for scope and acceptance criteria.
 
 ## Operate it with the CLI
 
@@ -156,7 +125,7 @@ For a stable URL on your own domain: `airlock tunnel provision`, then `airlock u
 
 ## Harnesses
 
-All five run as **OWN** bindings: airlock extracts the framework's tools and prompt and drives the loop itself, so every harness gets full step-control. `airlock init --detect` picks the harness and entrypoint from your dependencies, with no adapter to write.
+These integrations extract tools and, where supported, prompts into Airlock's own loop. They do not preserve arbitrary framework graphs, handoffs, or orchestration. `airlock init --detect` picks the harness and entrypoint from your dependencies, with no adapter to write.
 
 `langgraph` · `smolagents` · `crewai` · `openai-agents` · `claude` — see [`examples/`](./examples/).
 
