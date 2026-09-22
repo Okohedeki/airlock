@@ -27,7 +27,7 @@ from .adapter import AgentRunResult
 from .concurrency import BoundedGate, QueueFull
 from .engine.events import StepEvent
 from .io import InputRejected, ModelCallError
-from .jobs import job_worker
+from .jobs import job_worker, submit_job
 from .operator_auth import install_operator_auth
 from .wellknown import mount_wellknown, read_contract_metadata
 
@@ -265,6 +265,50 @@ def create_app(
         if not isinstance(body, dict):
             return None, JSONResponse({"error": "request body must be a JSON object"}, status_code=400)
         return body, None
+
+    @app.post("/v1/jobs")
+    async def create_job(request: Request):
+        try:
+            rnr = _runner_for(request)
+            tenant, session = _tenant(request, rnr), _session(request)
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=401)
+        except _UnknownVariant as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        executor = getattr(app.state, "job_executor", None)
+        if executor is None or getattr(rnr, "store", store) is not store:
+            return JSONResponse({"error": "jobs require a worker owning a local SQLite store"},
+                                status_code=503)
+        try:
+            store.scoped(tenant)
+        except ValueError:
+            return JSONResponse({"error": "invalid tenant"}, status_code=400)
+        body, err = await _read_json_object(request)
+        if err is not None:
+            return err
+        messages = body.get("messages")
+        if (set(body) - {"messages"} or not isinstance(messages, list)
+                or not all(isinstance(m, dict) for m in messages)):
+            return JSONResponse({"error": "provide only 'messages', a list of message objects"},
+                                status_code=400)
+        gate = _ensure_gate()
+        try:
+            await gate.acquire()
+        except (QueueFull, asyncio.TimeoutError):
+            return JSONResponse({"error": "worker at capacity"}, status_code=429,
+                                headers={"Retry-After": "1"})
+        job_id = uuid.uuid4().hex
+        loop = asyncio.get_running_loop()
+        try:
+            receipt = submit_job(
+                store, executor, _run_call(rnr, messages, tenant, session, job_id),
+                tenant=tenant, session=session, job_id=job_id, messages=messages,
+                release=lambda: loop.call_soon_threadsafe(gate.release))
+        except BaseException:
+            gate.release()
+            raise
+        return JSONResponse(receipt, status_code=202,
+                            headers={"Location": receipt["url"], "Cache-Control": "no-store"})
 
     async def chat(request: Request):
         body, err = await _read_json_object(request)
