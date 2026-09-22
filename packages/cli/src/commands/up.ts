@@ -5,11 +5,8 @@
  * tunnel that exposes it — never the compute, never the model (which may be
  * local or a remote OPENAI_API_BASE).
  *
- * Runs locally by default. Explicitly request a tunnel for a public URL.
- * Pass `--durable` to run a stable named tunnel on
- * the publisher's OWN Cloudflare account (bring-your-own connector token +
- * hostname; see startNamedTunnel and docs/durable-hosting.md). airlock holds no
- * Cloudflare keys either way.
+ * Public startup uses the saved Caddy + frp relay profile.
+ * Pass --no-tunnel for explicit local development.
  */
 
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
@@ -20,17 +17,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { buildDockerRun } from '../exec.js';
 import { DEFAULT_BASE_IMAGE, resolveBuildPlan } from './build.js';
-import {
-  type AirlockConfig,
-  readConfig,
-  validateTunnel,
-} from '../config-file.js';
-import {
-  startNamedTunnel,
-  startTunnel,
-  type TunnelHandle,
-  type TunnelTuning,
-} from '../tunnel.js';
+import { type AirlockConfig, readConfig } from '../config-file.js';
 
 export interface UpOptions {
   cwd?: string;
@@ -43,8 +30,6 @@ export interface UpOptions {
   /** Saved native relay profile; defaults to .airlock/relay.json. */
   relay?: string;
   startRelayImpl?: typeof startRelay;
-  /** Use a durable named tunnel on the publisher's own Cloudflare account (vs. ephemeral quick tunnel). */
-  durable?: boolean;
   /** Max agent runs in flight at once before callers queue (AIRLOCK_MAX_CONCURRENCY). */
   maxConcurrency?: number;
   /** Max callers waiting beyond the running set before new ones get 429 (AIRLOCK_MAX_QUEUE). */
@@ -53,12 +38,6 @@ export interface UpOptions {
   queueTimeout?: number;
   /** Force per-call agent rebuild on/off (AIRLOCK_BUILD_PER_CALL); default inferred at runtime. */
   buildPerCall?: boolean;
-  /** cloudflared edge protocol (quic/http2/auto); overrides [tunnel].protocol. */
-  cfProtocol?: TunnelTuning['protocol'];
-  /** Pin the connector to a Cloudflare region; overrides [tunnel].region. */
-  cfRegion?: string;
-  /** Expose cloudflared metrics on host:port; overrides [tunnel].metrics. */
-  cfMetrics?: string;
   /** Run the Worker in Docker (reproducible) instead of host python (ADR-0012). */
   docker?: boolean;
   /** Image to run with --docker (default: the content-addressed image from `airlock build`). */
@@ -69,12 +48,8 @@ export interface UpOptions {
   envFile?: string;
   /** Variant/profile to run (sets AIRLOCK_PROFILE) — e.g. internal | external. */
   profile?: string;
-  /** Durable-tunnel hostname (bring-your-own Cloudflare) for worker.yaml projects. */
-  hostname?: string;
   /** Injectables for tests. */
   spawnImpl?: typeof spawn;
-  startTunnelImpl?: typeof startTunnel;
-  startNamedTunnelImpl?: typeof startNamedTunnel;
   fetchImpl?: typeof fetch;
 }
 
@@ -121,26 +96,6 @@ export function resolveUpPlan(config: AirlockConfig, opts: UpOptions = {}): UpPl
   };
 }
 
-/**
- * Merge connector tuning from the `[tunnel]` config block with CLI/option
- * overrides (options win). Returns undefined when nothing is set, so cloudflared
- * keeps its own defaults.
- */
-export function resolveTunnelTuning(
-  config: AirlockConfig,
-  opts: UpOptions = {},
-): TunnelTuning | undefined {
-  const tcfg = validateTunnel(config);
-  const tuning: TunnelTuning = {};
-  const protocol = opts.cfProtocol ?? tcfg?.protocol;
-  const region = opts.cfRegion ?? tcfg?.region;
-  const metrics = opts.cfMetrics ?? tcfg?.metrics;
-  if (protocol) tuning.protocol = protocol;
-  if (region) tuning.region = region;
-  if (metrics) tuning.metrics = metrics;
-  return Object.keys(tuning).length > 0 ? tuning : undefined;
-}
-
 export interface UpHandle {
   /** The public URL, if a tunnel was opened. */
   url?: string;
@@ -184,9 +139,6 @@ async function waitForHealth(
 export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
   const cwd = opts.cwd ?? process.cwd();
   const noTunnel = opts.noTunnel ?? false;
-  if (opts.durable || opts.cfProtocol || opts.cfRegion || opts.cfMetrics) {
-    throw new Error('Cloudflare publishing was removed; configure .airlock/relay.json for Caddy + frp');
-  }
   const relay = noTunnel ? null : await readRelayConfig(resolve(cwd, opts.relay ?? '.airlock/relay.json'));
   const instance = randomUUID();
   if (relay && (!process.env.AIRLOCK_OPERATOR_TOKEN || !/^[a-f0-9]{64}$/i.test(process.env.AIRLOCK_RELAY_TOKEN ?? ''))) {
