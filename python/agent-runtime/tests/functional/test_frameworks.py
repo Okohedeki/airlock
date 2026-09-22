@@ -56,7 +56,9 @@ def test_openai_agents_extract():
     assert prompt  # instructions carried through as the system prompt
 
 
-def test_crewai_extract():
+def test_crewai_extract(tmp_path, monkeypatch):
+    # CrewAI creates storage during import; keep it inside this test's directory.
+    monkeypatch.setenv("CREWAI_STORAGE_DIR", str(tmp_path / "crewai"))
     pytest.importorskip("crewai")
     import cr_agent
 
