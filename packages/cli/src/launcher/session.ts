@@ -14,6 +14,7 @@ export function agentSession(agents: AgentChoice[], opts: {
   let message = '';
   let active: { id: string; name: string; url: string; local: boolean } | null = null;
   let relay = opts.relay;
+  let startup: Promise<void> = Promise.resolve();
   const port = opts.port ?? 3030;
   const profile = (agent: AgentChoice) => resolve(agent.directory, relay ?? '.airlock/relay.json');
   return {
@@ -31,6 +32,8 @@ export function agentSession(agents: AgentChoice[], opts: {
       if (!agent) throw new Error('Choose an agent from this workspace.');
       if (!local && !existsSync(profile(agent))) throw new Error('Connect your relay once to create public links. Open Connection settings to continue.');
       status = 'starting'; message = '';
+      let finished!: () => void;
+      startup = new Promise<void>(resolve => { finished = resolve; });
       try {
         access = await (opts.accessImpl ?? managedAccess)(agent.directory);
         handle = await (opts.runImpl ?? runUp)({
@@ -48,10 +51,10 @@ export function agentSession(agents: AgentChoice[], opts: {
       } catch (error) {
         status = 'error'; message = (error as Error).message; access = undefined;
         throw error;
-      }
+      } finally { finished(); }
     },
     stop: async () => {
-      if (status === 'starting') throw new Error('Wait for startup to finish before stopping.');
+      await startup;
       const current = handle;
       handle = undefined; active = null; status = 'idle'; message = ''; access = undefined;
       await current?.stop();
