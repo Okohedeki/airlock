@@ -1,8 +1,13 @@
 # Durable hosting — a stable URL on **your own** account
 
-`airlock up` gives you a public URL out of the box with **zero accounts**: an ephemeral
-`*.trycloudflare.com` quick tunnel. That URL is great for a demo but **changes every run**, so it's
-not something a Caller can depend on.
+`airlock up` now stays local by default. This page describes the optional legacy
+Cloudflare integration: `airlock up --tunnel` explicitly opens an ephemeral
+`*.trycloudflare.com` URL, which changes each run. The focused redesign also supports
+running behind your own separately configured HTTPS proxy; no tunnel is required.
+
+Configure caller authentication before public exposure. Operator endpoints require
+a separate `AIRLOCK_OPERATOR_TOKEN`; keep the console and operator routes private.
+See [the redesign contract](./redesign.md) for the native Windows hosting direction.
 
 For a **durable, stable URL** you bring your **own** cloud account. airlock holds no keys and operates
 no infrastructure on your behalf — it only runs the connector against credentials you provide. Two
