@@ -554,6 +554,8 @@ def create_app(
         if verdict == "edit" and not isinstance(body.get("args"), dict):
             return JSONResponse({"error": "edit requires an args object"}, status_code=400)
         scoped = store.scoped(tenant)
+        if _is_job_run(tenant, run_id) and not body.get("approval_id"):
+            return JSONResponse({"error": "job decisions require the current approval_id"}, status_code=400)
         held_entry = scoped.get(f"_held/{run_id}")
         if not held_entry:
             return JSONResponse({"error": "no such held run"}, status_code=404)
