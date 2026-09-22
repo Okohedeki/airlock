@@ -1,6 +1,11 @@
 """Durable jobs for one worker owning a local SQLite store."""
 
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+
+from .state.ownership import exclusive_owner
+from .state.sqlite import SQLiteStore
 
 
 def recover_jobs(store) -> int:
@@ -49,3 +54,20 @@ def execute_job(store, job: dict, call) -> None:
                    error="Execution failed; review recorded effects before retrying.")
     job["updated_at"] = time.time()
     store.scoped(job["tenant"]).set(f"_jobs/{job['job_id']}", job)
+
+
+@contextmanager
+def job_worker(store, max_concurrency: int):
+    """Own recovery and drain threads before releasing storage on shutdown.
+
+    An in-memory store cannot fulfill the durability contract: leave jobs
+    unavailable while allowing the existing synchronous chat API to operate.
+    """
+    if not isinstance(store, SQLiteStore) or store.path is None:
+        yield None
+        return
+    with exclusive_owner(store.path + ".jobs.lock"):
+        recover_jobs(store)
+        with ThreadPoolExecutor(max_workers=max(1, max_concurrency),
+                                thread_name_prefix="airlock-job") as executor:
+            yield executor
