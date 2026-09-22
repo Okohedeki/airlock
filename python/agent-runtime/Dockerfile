@@ -6,6 +6,7 @@
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
+    AIRLOCK_HOST=0.0.0.0 \
     PIP_NO_CACHE_DIR=1 \
     PORT=3000
 
