@@ -327,6 +327,11 @@ def create_app(
             return JSONResponse({"error": "invalid tenant"}, status_code=400)
         if record is None:
             return JSONResponse({"error": "job not found"}, status_code=404)
+        if record.get("status") == "awaiting_approval":
+            pending = store.scoped(tenant).get(f"_held/{job_id}")
+            if pending:
+                record = {**record, "approval": {key: pending.get(key) for key in
+                                                ("approval_id", "tool", "args", "deadline")}}
         return JSONResponse(record, headers={"Cache-Control": "no-store"})
 
     @app.post("/v1/jobs/{job_id}/continue")
