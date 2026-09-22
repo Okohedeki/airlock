@@ -75,3 +75,50 @@ def test_parallel_consumers_cannot_both_execute(store):
 
 def test_approval_without_storage_fails_closed():
     assert policy(None).gate(ToolCall("send", {})).reason == "APPROVAL_STORAGE_REQUIRED"
+
+
+def test_review_replacement_between_validation_and_consumption_is_rejected(store, monkeypatch):
+    control = policy(store)
+    pending = ToolCall("send", {})
+    control.gate(pending)
+    held = store.get("_held/run")
+    approve(store, held)
+    original_get = store.get
+    reads = []
+
+    def replace_on_second_read(key):
+        if key == "_held/run":
+            reads.append(True)
+            if len(reads) == 2:
+                store.set(key, {**held, "approval_id": "replacement"})
+        return original_get(key)
+
+    monkeypatch.setattr(store, "get", replace_on_second_read)
+    assert control.gate_approved(pending, held["approval_id"]).reason == "APPROVAL_REVIEW_CHANGED"
+    assert "consumed_at" not in store.get(held["gate_key"])
+
+
+def test_wrapped_tools_cannot_bypass_pause_or_null_skip():
+    from airlock_agent.adapter import AgentRunResult, ControlMode
+    from airlock_agent.engine.loop import RunContext, run_loop
+
+    calls = []
+    store = MemoryStore().scoped("a")
+
+    class Wrapped:
+        control_mode = ControlMode.WRAP
+
+        def tools(self):
+            return {"send": lambda **args: calls.append(args)}
+
+        def run_wrapped(self, messages, dispatch):
+            dispatch("send", {})
+            return AgentRunResult(content="done")
+
+    with pytest.raises(RuntimeError, match="AWAIT_APPROVAL"):
+        run_loop(Wrapped(), [], RunContext(control_source=policy(store)))
+    held = store.get("_held/run")
+    store.set(held["gate_key"], {"decision": "skip", "result": None,
+                               "approval_id": held["approval_id"], "tool": "send", "original_args": {}})
+    assert run_loop(Wrapped(), [], RunContext(control_source=policy(store))).content == "done"
+    assert calls == []
