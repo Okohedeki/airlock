@@ -34,14 +34,24 @@ export const page = String.raw`<!doctype html>
     </div>
   </section>
   <div class="notice" id="connectionNotice" hidden>
-    <p><strong>Connect once. Launch whenever.</strong><br>Public links need a connection to your relay server.</p>
-    <button class="secondary" id="setup">Set up connection</button>
+    <p><strong>This desktop can be your gateway.</strong><br>Set it up once, then start your agents here.</p>
+    <button class="secondary" id="setup">Host a gateway</button>
   </div>
-  <details id="settings"><summary>Connection settings</summary>
-    <div class="settings"><p>Use the connection profile from your relay setup. This is saved for the launcher session. Your agent credentials are handled by Airlock.</p>
-      <label class="field-label" for="profile">Connection profile</label>
-      <div class="row"><input id="profile" placeholder="Path to relay.json" autocomplete="off"><button class="secondary" id="save">Use connection</button></div>
-      <p id="connectionHelp">A relay server and domain are required for public links. Automatic server setup is not available yet.</p>
+  <details id="settings" data-mode="desktop"><summary>Desktop gateway setup</summary>
+    <div class="settings">
+      <h2>Your computer. Your public address.</h2>
+      <p>Airlock runs the gateway on this desktop and handles HTTPS for you. Keep this computer awake while your agent is available.</p>
+      <label class="field-label" for="profile">Public address</label>
+      <div class="row"><input id="profile" placeholder="agents.yourdomain.com" autocomplete="off" spellcheck="false" aria-describedby="addressHelp"><button class="secondary" id="save">Save address</button></div>
+      <p id="addressHelp">Use a domain or subdomain you own. Airlock remembers it for future launches.</p>
+      <p id="gatewayState" role="status">Checking this desktop…</p>
+      <div class="actions"><button class="primary" id="gatewayInstall">Prepare this desktop</button><button class="secondary" id="gatewayCheck">Check connection</button></div>
+      <p id="gatewayMessage" role="status" aria-live="polite"></p>
+      <ul id="gatewayChecks" class="gateway-checks" aria-live="polite"></ul>
+      <details><summary>What does my home network need?</summary>
+        <p>Point your domain's DNS record to your home public IP. In your router, forward TCP ports 80 and 443 to this desktop, and allow Caddy through your firewall. Check connection shows this desktop's local addresses.</p>
+        <p>If your internet provider uses shared addressing (CGNAT), ask for a public IP. Airlock cannot make an unreachable home connection public by itself.</p>
+      </details>
     </div>
   </details>
   <div class="footer"><span>Runs here. Reaches anywhere.</span><span>Open source. Your infrastructure.</span></div>
