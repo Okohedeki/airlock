@@ -12,7 +12,6 @@ import { spawnSync } from 'node:child_process';
 import { type Server } from 'node:http';
 
 import { buildDockerRun } from '../exec.js';
-import { type TunnelHandle, startTunnel } from '../tunnel.js';
 import { Registry } from '../router/index.js';
 import { startRouterServer } from '../router/server.js';
 import { resolveBuildPlan, runBuild, slug } from './build.js';
@@ -61,6 +60,7 @@ function runContainer(image: string, name: string, port: number, stateDir: strin
 }
 
 export async function runDeploy(opts: DeployOptions = {}): Promise<DeployHandle> {
+  if (opts.expose) throw new Error('Fleet publishing was removed; use airlock up with a Caddy relay');
   const cwd = opts.cwd ?? process.cwd();
   const fetchFn = opts.fetchImpl ?? fetch;
   const replicas = Math.max(1, opts.replicas ?? 2);
@@ -112,18 +112,10 @@ export async function runDeploy(opts: DeployOptions = {}): Promise<DeployHandle>
   console.log(`  callers POST to:  http://localhost:${routerPort}/v1/chat/completions`);
   console.log(`  control:          http://localhost:${routerPort}/_control/status`);
 
-  let tunnel: TunnelHandle | undefined;
-  if (opts.expose) {
-    tunnel = await startTunnel(routerPort);
-    console.log(`\n✓ exposed at  ${tunnel.url}`);
-  }
-
   return {
-    url: tunnel?.url,
     routerPort,
     registry: reg,
     stop: async () => {
-      tunnel?.stop();
       await new Promise<void>((r) => server.close(() => r()));
       for (const n of names) spawnSync('docker', ['rm', '-f', n], { stdio: 'ignore' });
     },
