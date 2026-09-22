@@ -2,6 +2,7 @@
 
 import logging
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
@@ -105,3 +106,47 @@ def job_worker(store, max_concurrency: int):
         with ThreadPoolExecutor(max_workers=max(1, max_concurrency),
                                 thread_name_prefix="airlock-job") as executor:
             yield executor
+
+
+def continue_job(store, executor, runner, job: dict, review_id: str, release):
+    """Claim one held job, preserving its prior run while recording a new attempt."""
+    if job.get("status") != "awaiting_approval":
+        raise ValueError("only a job awaiting approval can continue")
+    scoped = store.scoped(job["tenant"])
+    held = scoped.get(f"_held/{job['job_id']}")
+    if not held or held.get("approval_id") != review_id:
+        raise ValueError("approval changed; refresh before continuing")
+    if held.get("deadline") is not None and time.time() >= held["deadline"]:
+        raise ValueError("approval expired")
+    decision = scoped.get(held["gate_key"])
+    if not decision or decision.get("consumed_at") is not None:
+        raise ValueError("record an operator decision before continuing")
+    run_id = f"{job['job_id']}-c-{uuid.uuid4().hex}"
+    attempt = {**job, "run_id": run_id, "status": "running", "updated_at": time.time(),
+               "previous_run_ids": [*(job.get("previous_run_ids") or []), job["run_id"]]}
+    for key in ("result", "error", "error_type", "stop_reason"):
+        attempt.pop(key, None)
+    if not scoped.compare_and_set(f"_jobs/{job['job_id']}", job, attempt):
+        raise ValueError("job already changed or is being continued")
+
+    def call(messages, on_step):
+        return runner.continue_run(job["run_id"], new_run_id=run_id, tenant=job["tenant"],
+                                   approval_run_id=job["job_id"], review_id=review_id, on_step=on_step)
+
+    try:
+        future = executor.submit(execute_job, store, attempt, call)
+    except Exception:
+        scoped.set(f"_jobs/{job['job_id']}", {**attempt, "status": "failed",
+                                           "error": "Worker could not schedule continuation."})
+        raise
+
+    def finished(future):
+        try:
+            if future.exception() is not None:
+                logging.getLogger(__name__).error("Job %s could not persist continuation outcome", job["job_id"])
+        finally:
+            release()
+
+    future.add_done_callback(finished)
+    return {"job_id": job["job_id"], "run_id": run_id, "status": "accepted",
+            "url": f"/v1/jobs/{job['job_id']}"}
