@@ -26,6 +26,7 @@ def install_operator_auth(app: FastAPI, token: str | None = None) -> None:
             path in ("/metrics", "/v1/manifest", "/v1/control", "/v1/runs/held")
             or path.startswith("/v1/control/")
             or (path.startswith("/v1/runs/") and path.endswith("/decision"))
+            or (path.startswith("/v1/jobs/") and path.endswith("/continue"))
         )
         if protected:
             if not expected:
