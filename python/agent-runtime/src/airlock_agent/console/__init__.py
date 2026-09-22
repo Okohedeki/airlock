@@ -21,7 +21,7 @@ _INDEX = os.path.join(os.path.dirname(__file__), "index.html")
 
 
 def mount_console(app: FastAPI) -> None:
-    with open(_INDEX) as f:
+    with open(_INDEX, encoding="utf-8") as f:
         html = f.read()
 
     @app.get("/console")
