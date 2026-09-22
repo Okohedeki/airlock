@@ -375,6 +375,20 @@ class EngineRunner:
                     out[i] = {"tool": s.get("tool"), "output": s.get("output")}
         return out
 
+    def continue_run(self, run_id: str, *, new_run_id: str, tenant: str,
+                     approval_run_id: str, review_id: str, on_step=None) -> AgentRunResult:
+        """Continue a held owned run using its recorded model and tool history."""
+        if control_mode(self.harness).value != "own":
+            raise ValueError("approval continuation requires an owned execution loop")
+        entry = self._load_run(run_id, tenant)
+        held = self.store.scoped(tenant).get(f"_held/{approval_run_id}")
+        if not held or held.get("approval_id") != review_id:
+            raise ValueError("approval changed; review the current action")
+        return self.run(entry.get("messages") or [], tenant=tenant,
+                        session=entry.get("session", "default"), run_id=new_run_id,
+                        on_step=on_step, continuation=entry.get("steps") or [],
+                        approval_id=approval_run_id, review_id=review_id)
+
     def resume(self, run_id: str, *, tenant: str = "default", session: str | None = None,
                on_step: Callable[[StepEvent], None] | None = None) -> AgentRunResult:
         """Re-run from the recorded run, re-feeding every recorded tool result so a
