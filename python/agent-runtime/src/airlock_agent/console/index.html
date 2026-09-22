@@ -92,6 +92,17 @@
 </div>
 
 <div class="wrap">
+  <form id="accessForm" class="card" style="margin-bottom:18px">
+    <div class="ch"><h3>Operator access</h3></div>
+    <p class="mut">Enter the operator token configured on this worker. Add a caller key to run jobs and inspect that caller's history. Credentials stay in this page's memory until you lock or reload it.</p>
+    <div style="display:flex;flex-wrap:wrap;align-items:end;gap:12px">
+      <label>Operator token<br><input class="txt" id="operatorToken" type="password" autocomplete="off" required></label>
+      <label>Caller API key (if required)<br><input class="txt" id="callerKey" type="password" autocomplete="off"></label>
+      <button class="btn p" type="submit">Unlock console</button>
+      <button class="btn" type="button" id="lockConsole">Lock</button>
+    </div>
+    <p id="accessStatus" role="status" aria-live="polite">Locked. Configure AIRLOCK_OPERATOR_TOKEN on the worker to enable administration.</p>
+  </form>
   <section id="overview" class="view on">
     <h1 id="ovTitle">Worker</h1>
     <div class="tiles" id="ovTiles"></div>
@@ -139,7 +150,30 @@
 <script>
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-const j=async(u,o)=>(await fetch(u,o)).json();
+let credentials={};
+async function request(u,o={}){
+  const r=await fetch(u,{...o,headers:{...credentials,...(o.headers||{})}});
+  if(!r.ok){
+    const body=await r.json().catch(()=>({}));
+    const error=body.error||`Request failed (${r.status})`;
+    $('#accessStatus').textContent=error;
+    throw new Error(error);
+  }
+  return r;
+}
+const j=async(u,o)=>(await request(u,o)).json();
+$('#accessForm').onsubmit=async e=>{
+  e.preventDefault();
+  credentials={'X-Airlock-Operator-Token':$('#operatorToken').value};
+  if($('#callerKey').value)credentials.Authorization='Bearer '+$('#callerKey').value;
+  try{
+    await j('/v1/control');
+    $('#operatorToken').value='';$('#callerKey').value='';
+    $('#accessStatus').textContent='Unlocked for this page. Caller credentials remain separate from operator access.';
+    loadOverview();refreshHeld();
+  }catch(e){credentials={};}
+};
+$('#lockConsole').onclick=()=>location.reload();
 let TENANT='default';
 document.querySelectorAll('.nav .tabs button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('.nav .tabs button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
@@ -174,7 +208,7 @@ $('#pgRun').onclick=async()=>{
   TENANT=$('#pgTenant').value||'default';
   $('#pgTracePanel').style.display='';$('#pgSteps').innerHTML='';$('#pgFinal').innerHTML='';$('#pgStatus').textContent='running…';$('#pgRun').disabled=true;
   try{
-    const resp=await fetch('/v1/chat/completions',{method:'POST',headers:{'content-type':'application/json','X-Airlock-Tenant':TENANT},
+    const resp=await request('/v1/chat/completions',{method:'POST',headers:{'content-type':'application/json','X-Airlock-Tenant':TENANT},
       body:JSON.stringify({messages:[{role:'user',content:$('#pgMsg').value}],stream:true,stream_steps:true})});
     const rd=resp.body.getReader();const dec=new TextDecoder();let buf='';
     while(true){const {value,done}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
@@ -188,7 +222,7 @@ function frame(f){let ev=null,data=null;for(const ln of f.split('\n')){if(ln.sta
   else if(o.choices){const d=o.choices[0].delta||{};if(d.content)$('#pgFinal').innerHTML=`<div class="final-out">${esc(d.content)}</div>`;if(o.usage)$('#pgStatus').textContent=`done · ${o.usage.total_tokens} tokens`;}}
 // controls
 function ctlSaved(){const t=$('#ctlSavedTag');t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1200);}
-async function ctlPost(u,b){const r=await fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});
+async function ctlPost(u,b){const r=await request(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});
   if(!r.ok){const e=await r.json().catch(()=>({}));alert('failed: '+(e.error||r.status));}else ctlSaved();await loadControls();}
 window.ctlSkill=(id,el)=>ctlPost('/v1/control/skills/'+encodeURIComponent(id),{enabled:el.checked});
 window.ctlRoute=el=>ctlPost('/v1/control/routing',{default:el.value});
@@ -224,7 +258,7 @@ async function loadHeld(){
       <button class="btn sm no" onclick="decide('${esc(h.run)}','deny')">✗ deny</button><button class="btn sm" onclick="decide('${esc(h.run)}','skip')">⤼ skip</button></div></div>`).join('')
     :'<div class="empty">nothing holding — guarded tools appear here when a run pauses.</div>';
 }
-window.decide=async(run,decision)=>{await fetch('/v1/runs/'+encodeURIComponent(run)+'/decision',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({decision})});loadHeld();refreshHeld();};
+window.decide=async(run,decision)=>{await request('/v1/runs/'+encodeURIComponent(run)+'/decision',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({decision})});loadHeld();refreshHeld();};
 async function refreshHeld(){try{const {held}=await j('/v1/runs/held');$('#heldBadge').textContent=held&&held.length?held.length:'';}catch(e){}}
 async function loadRuns(){
   const {runs}=await j('/v1/runs?tenant='+encodeURIComponent(TENANT));
