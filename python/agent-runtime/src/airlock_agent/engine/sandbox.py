@@ -71,8 +71,12 @@ def run_sandboxed(tool: Callable, args: dict, limits: dict) -> Any:
     _check_io(args, lim["max_io_bytes"])  # reject oversize / non-serializable args
     try:
         ctx = mp.get_context("fork")  # fork: closures need no pickling
-    except ValueError:  # platform without fork
-        return _check_io(tool(**args), lim["max_io_bytes"])
+    except ValueError as exc:  # platform without fork
+        raise SandboxViolation(
+            "sandbox unavailable: this platform cannot enforce subprocess wall_s/CPU/memory "
+            "limits; refusing tool execution. Use a supported runtime, or explicitly disable "
+            "sandboxing only for trusted tools."
+        ) from exc
     parent, child = ctx.Pipe()
     proc = ctx.Process(target=_child, args=(child, tool, args, lim))
     proc.start()
