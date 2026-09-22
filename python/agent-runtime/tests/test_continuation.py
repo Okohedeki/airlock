@@ -52,6 +52,18 @@ def test_continuation_reuses_models_and_tools_before_approved_boundary():
     assert len(effects) == 2
 
 
+def test_lowered_budget_stops_before_consuming_the_approval():
+    runner, store, effects, _ = setup_run('say: choose\ntool: send {}\nfinal: done')
+    review = decide(store)
+    held = store.get("default/_held/original")
+    runner.controls["budget"] = {"tokens": 1}
+    result = runner.continue_run("original", new_run_id="limited", tenant="default",
+                                 approval_run_id="original", review_id=review)
+    assert result.steps[-1]["stop_reason"] == "BUDGET_TOKENS"
+    assert effects == []
+    assert "consumed_at" not in store.get("default/" + held["gate_key"])
+
+
 def test_empty_edit_and_second_approval_replay_original_proposals():
     runner, store, effects, _ = setup_run(
         'tool: bump {}\ntool: send {"text":"original"}\ntool: send {"text":"again"}\nfinal: done')
