@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
@@ -359,7 +360,9 @@ async function main() {
 
   program
     .command('up')
-    .description('Publish a native worker through your Caddy relay')
+    .description('Open Airlock to choose an agent, start it, and get its link')
+    .option('--headless', 'run directly in the terminal without opening the launcher')
+    .option('--no-open', 'print the launcher link without opening a browser')
     .option('-p, --port <port>', 'port the agent listens on', '3000')
     .option('--python <bin>', 'python executable for `-m airlock_agent` (respects an active venv)')
     .option('--no-tunnel', 'local development only; do not publish')
@@ -378,6 +381,8 @@ async function main() {
     .option('--profile <name>', 'run a worker.yaml variant/profile (e.g. internal | external)')
     .action(
       async (opts: {
+        headless?: boolean;
+        open: boolean;
         port: string;
         python?: string;
         tunnel?: boolean;
@@ -407,6 +412,27 @@ async function main() {
           return n;
         };
         try {
+          // Existing advanced invocations retain their terminal behavior.
+          const direct = opts.headless || opts.tunnel === false || opts.docker || opts.image || opts.mount ||
+            opts.envFile || opts.profile || opts.maxConcurrency || opts.maxQueue || opts.queueTimeout || opts.buildPerCall === false;
+          if (!direct) {
+            const { startLauncher } = await import('./launcher/server.js');
+            const launcher = await startLauncher({
+              root: process.cwd(), workerPort: port, python: opts.python,
+              relay: opts.relay ? resolve(opts.relay) : undefined,
+            });
+            console.log(`\nAirlock is ready → ${launcher.url}\nChoose an agent and press Start.\n`);
+            if (opts.open) {
+              const opener = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+              const browser = spawn(opener, [launcher.url], { detached: true, stdio: 'ignore', windowsHide: true });
+              browser.on('error', () => console.log('Open the link above in your browser.'));
+              browser.unref();
+            }
+            const shutdown = async () => { await launcher.close(); process.exit(0); };
+            process.on('SIGINT', shutdown);
+            process.on('SIGTERM', shutdown);
+            return;
+          }
           const handle = await runUp({
             cwd: process.cwd(),
             port,
