@@ -20,6 +20,7 @@ class StateStore(Protocol):
     def get(self, key: str) -> Any | None: ...
     def set(self, key: str, value: Any, ttl_s: float | None = None) -> None: ...
     def delete(self, key: str) -> None: ...
+    def compare_and_set(self, key: str, expected: Any, value: Any) -> bool: ...
     def list_prefix(self, prefix: str) -> Iterator[str]: ...
     def snapshot(self, key: str, value: Any) -> None: ...  # append-friendly set
 
@@ -46,6 +47,9 @@ class ScopedStore:
 
     def delete(self, rest: str) -> None:
         self._b.delete(self._key(rest))
+
+    def compare_and_set(self, rest: str, expected: Any, value: Any) -> bool:
+        return self._b.compare_and_set(self._key(rest), expected, value)
 
     def list_prefix(self, rest: str = "") -> Iterator[str]:
         plen = len(self.tenant) + 1
