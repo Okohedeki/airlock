@@ -1,22 +1,32 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { basename, dirname, join, resolve } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAuth, readAuth } from '../auth-store.js';
 import { runLogin } from './login.js';
 import { NotLoggedInError, runWhoami } from './whoami.js';
 
-let oldHome: string | undefined;
+let authTestHome: string;
+
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, homedir: () => {
+    if (!authTestHome) throw new Error('test home is not initialized');
+    return authTestHome;
+  } };
+});
 
 beforeEach(async () => {
-  // Redirect HOME to a temp dir so we don't touch the user's real ~/.airlock
-  oldHome = process.env.HOME;
-  process.env.HOME = await mkdtemp(join(tmpdir(), 'airlock-cli-auth-'));
+  // Mock the OS lookup on every platform; never change the real user profile.
+  authTestHome = await mkdtemp(join(tmpdir(), 'airlock-cli-auth-'));
 });
 
 afterEach(async () => {
-  if (process.env.HOME) await rm(process.env.HOME, { recursive: true, force: true });
-  process.env.HOME = oldHome;
+  const target = resolve(authTestHome);
+  if (dirname(target) !== resolve(tmpdir()) || !basename(target).startsWith('airlock-cli-auth-')) {
+    throw new Error('refusing to remove a directory outside the test temporary root');
+  }
+  await rm(target, { recursive: true, force: true });
 });
 
 function fakeFetchSequence(responses: Array<{ status?: number; body: unknown }>): typeof fetch {
@@ -58,7 +68,7 @@ describe('runLogin', () => {
     expect(stored?.backend).toBe('http://test');
 
     // Permissions: 0600 on the auth file
-    const path = `${process.env.HOME}/.airlock/auth.json`;
+    const path = join(authTestHome, '.airlock', 'auth.json');
     const raw = await readFile(path, 'utf8');
     expect(JSON.parse(raw).token).toBe('real-token');
   });
