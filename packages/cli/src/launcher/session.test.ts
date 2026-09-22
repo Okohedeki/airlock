@@ -15,6 +15,28 @@ function setup() {
 }
 
 describe('agent launcher lifecycle', () => {
+  it('uses a configured desktop gateway without looking for a relay profile', async () => {
+    const { run } = setup();
+    const session = agentSession([agent], {
+      desktopMode: true, desktop: { hostname: 'agents.example.com' },
+      runImpl: run as unknown as typeof runUp, accessImpl: async () => access,
+    });
+    expect(session.state().agents[0].connected).toBe(true);
+    await session.start(agent.id, false);
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      noTunnel: false, desktop: { hostname: 'agents.example.com' }, access,
+    }));
+    expect(() => session.configureDesktop('other.example.com')).toThrow('Stop the agent');
+    await session.stop();
+  });
+  it('guides an unconfigured desktop to setup without asking for a file', async () => {
+    const { run } = setup();
+    const session = agentSession([agent], { desktopMode: true, runImpl: run as unknown as typeof runUp });
+    await expect(session.start(agent.id, false)).rejects.toThrow('Set up this desktop gateway');
+    expect(run).not.toHaveBeenCalled();
+    session.configureDesktop('agents.example.com');
+    expect(session.state().agents[0].connected).toBe(true);
+  });
   it('cleans up a worker even when shutdown arrives during startup', async () => {
     const { session, run, stop } = setup();
     const handle = await run();
