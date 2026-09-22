@@ -216,6 +216,10 @@ def create_app(
     def _session(request: Request) -> str:
         return request.headers.get("X-Airlock-Session", "default")
 
+    def _is_job_run(tenant, run_id):
+        return (store is not None and isinstance(run_id, str)
+                and store.scoped(tenant).get(f"_jobs/{run_id.split('-c-', 1)[0]}") is not None)
+
     def _authed_tenant(request: Request):
         """Resolve the AUTHENTICATED tenant for the run read/replay APIs — never a
         client-supplied `?tenant=` (which let any caller read or resume ANOTHER tenant's
@@ -392,6 +396,8 @@ def create_app(
         except _UnknownVariant as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         run_id = body.get("run_id") or request.headers.get("X-Airlock-Run")
+        if _is_job_run(tenant, run_id):
+            return JSONResponse({"error": "job runs must use the job continuation API"}, status_code=409)
         gate = _ensure_gate()
         try:
             await gate.acquire()
@@ -573,6 +579,8 @@ def create_app(
         tenant, err = _authed_tenant(request)
         if err is not None:
             return err
+        if _is_job_run(tenant, run_id):
+            return JSONResponse({"error": "job runs must use the job continuation API"}, status_code=409)
         gate = _ensure_gate()
         await gate.acquire()
         try:
@@ -599,6 +607,8 @@ def create_app(
         tenant, err = _authed_tenant(request)
         if err is not None:
             return err
+        if _is_job_run(tenant, run_id):
+            return JSONResponse({"error": "job runs cannot use legacy fork"}, status_code=409)
         gate = _ensure_gate()
         await gate.acquire()
         try:
