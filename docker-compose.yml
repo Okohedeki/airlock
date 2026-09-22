@@ -14,7 +14,7 @@ services:
       dockerfile: Dockerfile
     image: airlock-worker:local
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       AIRLOCK_LOG_LEVEL: ${AIRLOCK_LOG_LEVEL:-INFO}
       # Secret for the live-demo's signed webhook trigger (epic 11).
@@ -35,7 +35,7 @@ services:
       dockerfile: packages/server/Dockerfile
     image: airlock-dashboard:local
     ports:
-      - "8787:8787"
+      - "127.0.0.1:8787:8787"
     environment:
       DB_PATH: /data/airlock.db
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8787}
@@ -78,7 +78,7 @@ services:
     profiles: ["epic03"]
     depends_on: [mock-model]
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     entrypoint:
       - sh
       - -c
