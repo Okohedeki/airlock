@@ -43,17 +43,29 @@ for the implemented path, prerequisites, and validation status.
 
 ## Publish a native worker
 
-Configure your relay profile and credentials once, then run from the worker project:
+Run from your agent project or a workspace containing agent projects:
 
 ```sh
-airlock up --python python
-# Verifies and prints https://your-agent.example.com
-# Remote console: https://your-agent.example.com/console
+airlock up
+# Opens the launcher: choose a framework and agent, then press Start.
 ```
 
-Public access is the default. A relay server and domain are required; this command
-does not create infrastructure. Use `airlock up --no-tunnel` for local development.
-No Docker or WSL is required for the native worker path.
+The launcher discovers `worker.yaml` projects, starts and stops the selected
+agent, and shows its address. **Manage agent** opens the console already signed in.
+Airlock generates separate management and caller credentials and saves them under
+your user home, outside your project. You do not enter tokens to start or manage
+an agent. API integrations still authenticate; access protection is not removed.
+
+Public links require a relay server, domain, and a configured connection profile;
+Airlock does not provision that infrastructure yet. Connection settings accept
+the profile from [relay setup](docs/caddy-relay.md). **Try on this computer first**
+is an explicitly local preview. The Python runtime and the selected framework's
+dependencies must be installed in the Python environment you use.
+
+Use `airlock up --python python` to choose Python, `--no-open` to print the launcher
+link, or `--headless` for direct terminal startup. Existing advanced flags and
+`--no-tunnel` retain direct startup behavior. No Docker or WSL is required for
+the native worker path.
 
 ## Architecture
 
