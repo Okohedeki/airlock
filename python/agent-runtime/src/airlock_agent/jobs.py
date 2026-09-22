@@ -1,5 +1,6 @@
 """Durable jobs for one worker owning a local SQLite store."""
 
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -54,6 +55,39 @@ def execute_job(store, job: dict, call) -> None:
                    error="Execution failed; review recorded effects before retrying.")
     job["updated_at"] = time.time()
     store.scoped(job["tenant"]).set(f"_jobs/{job['job_id']}", job)
+
+
+def submit_job(store, executor, call, *, tenant, session, job_id, messages, release):
+    """Persist before scheduling; take ownership of an already acquired run slot.
+
+    The caller releases its slot if this function raises. After success, the
+    future releases it even if the client disconnects or persistence fails.
+    """
+    now = time.time()
+    job = {"job_id": job_id, "run_id": job_id, "tenant": tenant, "session": session,
+           "messages": messages, "status": "running", "created_at": now, "updated_at": now}
+    scoped = store.scoped(tenant)
+    scoped.set(f"_jobs/{job_id}", job)
+    try:
+        future = executor.submit(execute_job, store, job, call)
+    except Exception:
+        job.update(status="failed", error="Worker could not schedule execution.")
+        scoped.set(f"_jobs/{job_id}", job)
+        raise
+
+    def finished(future):
+        try:
+            error = future.exception()
+            if error is not None:
+                logging.getLogger(__name__).error(
+                    "Job %s could not record its outcome (%s); review before retrying",
+                    job_id, type(error).__name__)
+        finally:
+            release()
+
+    future.add_done_callback(finished)
+    return {"job_id": job_id, "run_id": job_id, "status": "accepted",
+            "url": f"/v1/jobs/{job_id}"}
 
 
 @contextmanager
