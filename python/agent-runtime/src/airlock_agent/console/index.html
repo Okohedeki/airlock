@@ -162,16 +162,20 @@ async function request(u,o={}){
   return r;
 }
 const j=async(u,o)=>(await request(u,o)).json();
-$('#accessForm').onsubmit=async e=>{
-  e.preventDefault();
-  credentials={'X-Airlock-Operator-Token':$('#operatorToken').value};
-  if($('#callerKey').value)credentials.Authorization='Bearer '+$('#callerKey').value;
+async function unlock(operator,caller){
+  credentials={'X-Airlock-Operator-Token':operator};
+  if(caller)credentials.Authorization='Bearer '+caller;
   try{
     await j('/v1/control');
     $('#operatorToken').value='';$('#callerKey').value='';
+    $('#accessForm').hidden=true;
     $('#accessStatus').textContent='Unlocked for this page. Caller credentials remain separate from operator access.';
     loadOverview();refreshHeld();
   }catch(e){credentials={};}
+}
+$('#accessForm').onsubmit=async e=>{
+  e.preventDefault();
+  await unlock($('#operatorToken').value,$('#callerKey').value);
 };
 $('#lockConsole').onclick=()=>location.reload();
 let TENANT='default';
@@ -275,7 +279,12 @@ async function showRun(id){
     <div class="stream">${(r.steps||[]).map(stepCard).join('')}</div>${r.content?`<div class="final-out">${esc(r.content)}</div>`:''}</div>`;
 }
 $('#apRefresh').onclick=loadHeld;$('#rnRefresh').onclick=loadRuns;
-loadOverview();setInterval(refreshHeld,5000);
+const handoff=new URLSearchParams(location.hash.slice(1));
+if(handoff.has('operator')){
+  history.replaceState(null,'',location.pathname);
+  unlock(handoff.get('operator'),handoff.get('caller'));
+}else{loadOverview();}
+setInterval(()=>{if(Object.keys(credentials).length)refreshHeld();},5000);
 </script>
 </body>
 </html>
