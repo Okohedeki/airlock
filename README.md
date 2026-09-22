@@ -82,8 +82,8 @@ Airlock is narrowing to one worker, one manifest, one runtime, and one console:
 
 - **Prepare, then approve:** inspect a proposed tool action before allowing it.
 - **Recover interrupted work:** durable jobs continue after a client disconnect
-  and report interrupted execution after a restart. Safe approval continuation
-  remains planned; exactly-once external actions are not guaranteed.
+  and report interrupted execution after a restart. Held jobs can continue after
+  review using recorded history; exactly-once external actions are not guaranteed.
 - **Serve controlled work:** run a local HTTP API with caller authentication,
   separate operator authorization, limits, and an execution record.
 
@@ -95,7 +95,11 @@ to loopback.
 The [durable job API](./docs/jobs.md) now accepts work through `POST /v1/jobs`
 and exposes persisted status through `GET /v1/jobs/{job_id}`. It requires local
 SQLite storage and one owning worker process. Interrupted jobs are preserved for
-review without automatic replay; the console still uses the existing run API.
+review without automatic replay. For approval holds, record the exact review ID
+and use `POST /v1/jobs/{job_id}/continue`; prior results are reused and changed
+actions stop for review. Each decision is consumed once and each continuation
+gets a new run ID. The console records review IDs, but job continuation currently
+uses the API while the console redesign remains in progress.
 
 Fleet orchestration, canaries, organization/SSO management, and advanced routing
 are legacy or deferred capabilities. Their existing commands are not the supported
