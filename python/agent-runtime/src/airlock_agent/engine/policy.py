@@ -91,6 +91,17 @@ class PolicyControlSource(ControlSource):
 
         return ControlSignal(action="continue")
 
+    def gate_approved(self, pending: ToolCall, approval_id: str) -> ControlSignal:
+        """Continue exactly this review even if live approval rules were disabled."""
+        held = self.store.get(f"_held/{self.run_id}") if self.store is not None else None
+        if not held or not approval_id or held.get("approval_id") != approval_id:
+            return ControlSignal(action="kill", reason="APPROVAL_REVIEW_CHANGED")
+        for rule in self.tool_gates:
+            if rule.get("tool") in (pending.name, "*") and match_when(rule.get("when") or {}, pending.args):
+                if (rule.get("action") or "deny") == "deny":
+                    return ControlSignal(action="kill", reason=f"TOOL_DENIED:{pending.name}")
+        return self._approval(pending.name, pending.args, held.get("rule") or {})
+
     def _approval(self, name: str, args: dict, rule: dict) -> ControlSignal:
         if self.store is None:
             return ControlSignal(action="kill", reason="APPROVAL_STORAGE_REQUIRED")
