@@ -244,7 +244,7 @@ def _run_own(binding: Binding, messages: list[dict[str, Any]], ctx: RunContext) 
                                input=action.args, status=StepStatus.KILLED, error=sig.reason)
                 history.append(ev)
                 ctx.emit(ev)
-                return _finish(history, "", total_tokens, pt, ct, StepStatus.KILLED)
+                return _finish(history, "", total_tokens, pt, ct, StepStatus.KILLED, reason=sig.reason)
             if sig.action == "pause":
                 ev = StepEvent(index=idx, type=StepType.TOOL_CALL, tool=action.name,
                                input=action.args, status=StepStatus.BLOCKED, error=sig.reason)
@@ -252,10 +252,10 @@ def _run_own(binding: Binding, messages: list[dict[str, Any]], ctx: RunContext) 
                 ctx.emit(ev)
                 if ctx.snapshot:
                     ctx.snapshot(idx, history)
-                return _finish(history, "", total_tokens, pt, ct, StepStatus.BLOCKED)
-            args = sig.override_args if (sig.action == "override" and sig.override_args) else action.args
+                return _finish(history, "", total_tokens, pt, ct, StepStatus.BLOCKED, reason=sig.reason)
+            args = sig.override_args if (sig.action == "override" and sig.override_args is not None) else action.args
             t0 = time.monotonic()
-            if sig.action == "override" and not sig.override_args:
+            if sig.action == "override" and sig.override_args is None:
                 # override / skip: inject the operator's result (which may legitimately
                 # be None for `skip`) and do NOT run the tool. `edit` carries
                 # override_args instead and falls through to a real dispatch below.
