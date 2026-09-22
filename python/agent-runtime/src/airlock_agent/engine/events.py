@@ -43,6 +43,7 @@ class StepEvent:
     tool: str | None = None  # tool name when type is TOOL_*
     model: str | None = None  # binding name when type is MODEL (epic 03)
     error: str | None = None
+    requested_input: Any = None  # original proposal when an operator edits tool args
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -59,6 +60,7 @@ class StepEvent:
             "tool": self.tool,
             "model": self.model,
             "error": self.error,
+            **({"requested_input": self.requested_input} if self.requested_input is not None else {}),
         }
 
 
