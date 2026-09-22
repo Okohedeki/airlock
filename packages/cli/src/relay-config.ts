@@ -30,3 +30,29 @@ export async function readRelayConfig(path: string): Promise<RelayConfig> {
   }
   return config;
 }
+
+/** frp expands this environment reference itself; never write the token to disk. */
+export function renderFrpcConfig(config: RelayConfig, localPort: number): string {
+  if (!Number.isInteger(localPort) || localPort < 1 || localPort > 65535) {
+    throw new Error('invalid worker port');
+  }
+  return JSON.stringify({
+    serverAddr: config.serverAddr,
+    serverPort: config.serverPort,
+    loginFailExit: false,
+    auth: {
+      method: 'token',
+      token: '{{ .Envs.AIRLOCK_RELAY_TOKEN }}',
+      additionalScopes: ['HeartBeats', 'NewWorkConns'],
+    },
+    transport: { tls: {
+      enable: true,
+      trustedCaFile: config.caFile,
+      serverName: config.serverAddr,
+    } },
+    proxies: [{
+      name: 'airlock', type: 'tcp', localIP: '127.0.0.1',
+      localPort, remotePort: config.remotePort,
+    }],
+  }, null, 2);
+}
