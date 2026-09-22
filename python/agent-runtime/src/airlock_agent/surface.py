@@ -247,9 +247,15 @@ def create_app(
             "contract": metadata,
         }
 
+    # Non-secret launch identity lets the publisher verify the entire relay route.
+    public_instance = os.environ.get("AIRLOCK_PUBLIC_INSTANCE")
+
     @app.get("/healthz")
-    def healthz() -> dict[str, bool]:
-        return {"ok": True}
+    def healthz():
+        body = {"ok": True}
+        if public_instance:
+            body["instance"] = public_instance
+        return JSONResponse(body, headers={"Cache-Control": "no-store"})
 
     @app.get("/metrics")
     def metrics(request: Request):
