@@ -20,6 +20,7 @@ function choices(){
 function render(){
   const agent=snapshot.agents.find(agent=>agent.id===$('agent').value);
   const working=busy||snapshot.status==='starting',running=!!snapshot.active;
+  if(snapshot.status==='error'&&snapshot.message)error(snapshot.message);
   $('agentPath').textContent=agent?agent.location:'Add a worker.yaml project to this workspace to get started.';
   $('agent').disabled=working||running||!snapshot.agents.length;$('framework').disabled=working||running;
   $('start').disabled=working||running||!agent;$('local').disabled=working||running||!agent;
@@ -39,6 +40,7 @@ async function refresh(){
     const labels={'stub':'Demo agent','own':'Airlock','langgraph':'LangGraph','smolagents':'Smolagents','crewai':'CrewAI','openai-agents':'OpenAI Agents','claude':'Claude'};
     for(const framework of [...new Set(snapshot.agents.map(agent=>agent.harness))])$('framework').append(new Option(labels[framework]||framework,framework));
     initialized=true;choices();
+    if(snapshot.active)$('agent').value=snapshot.active.id;
   }
   render();
 }
