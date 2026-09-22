@@ -65,7 +65,10 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    uvicorn.run(build_app(), host="0.0.0.0", port=int(os.environ.get("PORT", "3000")))
+    uvicorn.run(
+        build_app(), host=os.environ.get("AIRLOCK_HOST", "127.0.0.1"),
+        port=int(os.environ.get("PORT", "3000")), proxy_headers=False,
+    )
 
 
 if __name__ == "__main__":
