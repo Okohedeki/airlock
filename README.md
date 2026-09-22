@@ -81,9 +81,9 @@ administration. State persists in the `worker-state` volume. Set `OPENAI_API_KEY
 Airlock is narrowing to one worker, one manifest, one runtime, and one console:
 
 - **Prepare, then approve:** inspect a proposed tool action before allowing it.
-- **Recover interrupted work:** inspect checkpoints and resume with explicit
-  handling of side effects. Durable background jobs and restart-safe approval
-  recovery are the next milestone; exactly-once external actions are not guaranteed.
+- **Recover interrupted work:** durable jobs continue after a client disconnect
+  and report interrupted execution after a restart. Safe approval continuation
+  remains planned; exactly-once external actions are not guaranteed.
 - **Serve controlled work:** run a local HTTP API with caller authentication,
   separate operator authorization, limits, and an execution record.
 
@@ -91,6 +91,11 @@ The first foundation is implemented: local startup does not open a tunnel,
 operator routes require a separate token, and the console accepts operator and
 caller credentials independently. Native startup and Compose host ports default
 to loopback.
+
+The [durable job API](./docs/jobs.md) now accepts work through `POST /v1/jobs`
+and exposes persisted status through `GET /v1/jobs/{job_id}`. It requires local
+SQLite storage and one owning worker process. Interrupted jobs are preserved for
+review without automatic replay; the console still uses the existing run API.
 
 Fleet orchestration, canaries, organization/SSO management, and advanced routing
 are legacy or deferred capabilities. Their existing commands are not the supported
