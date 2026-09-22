@@ -433,8 +433,13 @@ async function main() {
             process.on('SIGTERM', shutdown);
             return;
           }
+          const { loadDesktopGateway } = await import('./gateway/config.js');
+          const { managedAccess } = await import('./managed-access.js');
+          const desktop = opts.tunnel !== false && !opts.relay ? await loadDesktopGateway() : undefined;
           const handle = await runUp({
             cwd: process.cwd(),
+            desktop,
+            access: desktop ? await managedAccess(process.cwd()) : undefined,
             port,
             python: opts.python,
             noTunnel: opts.tunnel === false,
