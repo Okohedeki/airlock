@@ -21,7 +21,6 @@
   },
   "dependencies": {
     "ajv": "^8.20.0",
-    "cloudflared": "^0.7.1",
     "commander": "^14.0.0",
     "smol-toml": "^1.3.0",
     "yaml": "^2.9.0",
