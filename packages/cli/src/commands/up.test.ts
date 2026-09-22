@@ -1,11 +1,43 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { ChildProcess, spawn } from 'node:child_process';
 import type { AirlockConfig } from '../config-file.js';
-import { resolveDurableTunnel, resolveTunnelTuning, resolveUpPlan } from './up.js';
+import { resolveDurableTunnel, resolveTunnelTuning, resolveUpPlan, runUp } from './up.js';
 
 const base: AirlockConfig = {
   project: { name: 'a', target: 'fly', mode: 'self-hosted', schemaVersion: 1 },
   agent: { harness: 'smolagents', entrypoint: 'pkg.agent:build_agent' },
 };
+
+describe('startup exposure', () => {
+  it.each([undefined, true, false])('requires an explicit tunnel request (noTunnel=%s)', async (noTunnel) => {
+    const cwd = mkdtempSync(join(tmpdir(), 'airlock-exposure-'));
+    writeFileSync(join(cwd, 'worker.yaml'), 'harness: stub\n');
+    const child = new EventEmitter() as ChildProcess;
+    Object.defineProperty(child, 'exitCode', { value: null });
+    child.kill = vi.fn(() => { child.emit('exit', 0); return true; });
+    const tunnel = vi.fn(async () => ({ url: 'https://example.invalid', stop: vi.fn() }));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const handle = await runUp({
+        cwd, noTunnel,
+        spawnImpl: (() => child) as typeof spawn,
+        fetchImpl: vi.fn(async () => ({ ok: true })) as unknown as typeof fetch,
+        startTunnelImpl: tunnel,
+      });
+      expect(tunnel).toHaveBeenCalledTimes(noTunnel === false ? 1 : 0);
+      expect(handle.url).toBe(noTunnel === false ? 'https://example.invalid' : undefined);
+      await handle.stop();
+      expect(child.kill).toHaveBeenCalledOnce();
+    } finally {
+      log.mockRestore();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('resolveUpPlan', () => {
   it('throws when there is neither a worker.yaml nor an [agent] block', () => {
