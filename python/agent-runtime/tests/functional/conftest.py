@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +15,12 @@ from airlock_agent.state import MemoryStore
 from airlock_agent.surface import create_app
 
 from mock_model import serve
+
+
+@pytest.fixture(autouse=True)
+def operator_credentials(monkeypatch):
+    """Existing console scenarios exercise an explicitly authenticated operator."""
+    monkeypatch.setenv("AIRLOCK_OPERATOR_TOKEN", "functional-test-operator")
 
 
 @pytest.fixture(scope="session")
@@ -41,7 +48,9 @@ def make_client(cfg: dict, store=None) -> TestClient:
     app = create_app(runner, name=cfg.get("worker", {}).get("name", "test"),
                      max_concurrency=4, max_queue=20, authenticate=authenticate)
     app.state._airlock_store = store  # let tests reach the store
-    return TestClient(app)
+    return TestClient(app, headers={
+        "X-Airlock-Operator-Token": os.environ["AIRLOCK_OPERATOR_TOKEN"],
+    })
 
 
 @pytest.fixture
