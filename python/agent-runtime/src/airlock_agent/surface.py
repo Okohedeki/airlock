@@ -27,7 +27,7 @@ from .adapter import AgentRunResult
 from .concurrency import BoundedGate, QueueFull
 from .engine.events import StepEvent
 from .io import InputRejected, ModelCallError
-from .jobs import job_worker, submit_job
+from .jobs import continue_job, job_worker, submit_job
 from .operator_auth import install_operator_auth
 from .wellknown import mount_wellknown, read_contract_metadata
 
@@ -328,6 +328,45 @@ def create_app(
         if record is None:
             return JSONResponse({"error": "job not found"}, status_code=404)
         return JSONResponse(record, headers={"Cache-Control": "no-store"})
+
+    @app.post("/v1/jobs/{job_id}/continue")
+    async def continue_held_job(job_id: str, request: Request):
+        tenant, err = _authed_tenant(request)
+        if err is not None:
+            return err
+        rnr = _runner_for(request)
+        executor = getattr(app.state, "job_executor", None)
+        if executor is None or not hasattr(rnr, "continue_run") or rnr.store is not store:
+            return JSONResponse({"error": "durable continuation unavailable"}, status_code=503)
+        body, err = await _read_json_object(request)
+        if err is not None:
+            return err
+        if set(body) != {"approval_id"} or not isinstance(body["approval_id"], str) or not body["approval_id"]:
+            return JSONResponse({"error": "provide the current approval_id"}, status_code=400)
+        try:
+            job = store.scoped(tenant).get(f"_jobs/{job_id}")
+        except ValueError:
+            return JSONResponse({"error": "invalid tenant"}, status_code=400)
+        if job is None:
+            return JSONResponse({"error": "job not found"}, status_code=404)
+        gate = _ensure_gate()
+        try:
+            await gate.acquire()
+        except (QueueFull, asyncio.TimeoutError):
+            return JSONResponse({"error": "worker at capacity"}, status_code=429,
+                                headers={"Retry-After": "1"})
+        loop = asyncio.get_running_loop()
+        try:
+            receipt = continue_job(store, executor, rnr, job, body["approval_id"],
+                                   lambda: loop.call_soon_threadsafe(gate.release))
+        except ValueError as exc:
+            gate.release()
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        except BaseException:
+            gate.release()
+            raise
+        return JSONResponse(receipt, status_code=202,
+                            headers={"Location": receipt["url"], "Cache-Control": "no-store"})
 
     async def chat(request: Request):
         body, err = await _read_json_object(request)
