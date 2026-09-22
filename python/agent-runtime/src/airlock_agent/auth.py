@@ -37,6 +37,11 @@ def build_authenticator(
     scheme = (auth_cfg.get("scheme") or "api_key").lower()
     static_keys = dict((tenancy_cfg.get("keys") or auth_cfg.get("keys") or {}))
     required = bool(auth_cfg.get("required", True))
+    managed_key = os.environ.get("AIRLOCK_MANAGED_CALLER_KEY")
+    if managed_key:
+        # The native launcher provisions owner access; no key entry is needed in its UI.
+        scheme, required = "api_key", True
+        static_keys[managed_key] = "default"
     if os.environ.get("AIRLOCK_PUBLIC_INSTANCE") and (scheme in ("none", "open") or not required):
         raise ValueError("public workers require caller authentication in every profile")
 
