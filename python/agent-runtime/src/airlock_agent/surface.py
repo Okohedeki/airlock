@@ -235,7 +235,9 @@ def create_app(
             concurrency["live"] = gate.stats()
         return {
             "name": name, "shape": "openai",
-            "endpoints": ["POST /v1/chat/completions", "POST /skills/{id}", "GET /v1/runs/held"],
+            "endpoints": ["POST /v1/chat/completions", "POST /skills/{id}", "GET /v1/runs/held",
+                          "POST /v1/jobs", "GET /v1/jobs/{job_id}"],
+            "durable_jobs": getattr(app.state, "job_executor", None) is not None,
             "concurrency": concurrency,
             "discovery": "/.well-known/airlock-config.yaml" if metadata is not None else None,
             "contract": metadata,
