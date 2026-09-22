@@ -310,6 +310,23 @@ def create_app(
         return JSONResponse(receipt, status_code=202,
                             headers={"Location": receipt["url"], "Cache-Control": "no-store"})
 
+    @app.get("/v1/jobs/{job_id}")
+    def get_job(job_id: str, request: Request):
+        tenant, err = _authed_tenant(request)
+        if err is not None:
+            return err
+        if getattr(app.state, "job_executor", None) is None:
+            return JSONResponse({"error": "durable jobs unavailable"}, status_code=503)
+        if len(job_id) != 32 or any(c not in "0123456789abcdef" for c in job_id):
+            return JSONResponse({"error": "job not found"}, status_code=404)
+        try:
+            record = store.scoped(tenant).get(f"_jobs/{job_id}")
+        except ValueError:
+            return JSONResponse({"error": "invalid tenant"}, status_code=400)
+        if record is None:
+            return JSONResponse({"error": "job not found"}, status_code=404)
+        return JSONResponse(record, headers={"Cache-Control": "no-store"})
+
     async def chat(request: Request):
         body, err = await _read_json_object(request)
         if err is not None:
