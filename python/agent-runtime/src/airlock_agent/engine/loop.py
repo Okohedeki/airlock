@@ -318,13 +318,14 @@ def _run_wrapped(binding: Binding, messages: list[dict[str, Any]], ctx: RunConte
         i = counter["i"]
         counter["i"] += 1
         sig = ctx.control_source.gate(ToolCall(name=name, args=args))
-        if sig.action == "kill":
+        if sig.action in ("kill", "pause"):
             ev = StepEvent(index=i, type=StepType.TOOL_CALL, tool=name, input=args,
-                           status=StepStatus.KILLED, error=sig.reason)
+                           status=StepStatus.BLOCKED if sig.action == "pause" else StepStatus.KILLED,
+                           error=sig.reason)
             ctx.emit(ev)
             raise RuntimeError(f"tool '{name}' blocked: {sig.reason}")
-        use_args = sig.override_args if (sig.action == "override" and sig.override_args) else args
-        if sig.action == "override" and sig.override_result is not None:
+        use_args = sig.override_args if (sig.action == "override" and sig.override_args is not None) else args
+        if sig.action == "override" and sig.override_args is None:
             ev = StepEvent(index=i, type=StepType.TOOL_RESULT, tool=name, input=use_args,
                            output=sig.override_result, status=StepStatus.OK)
             ctx.emit(ev)
