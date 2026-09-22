@@ -28,7 +28,6 @@ import {
   TargetBinaryMissingError,
 } from './exec.js';
 import { AGENT_HARNESSES, type AgentHarness } from './templates/fly-agent.js';
-import { startTunnel } from './tunnel.js';
 
 async function readPackageVersion(): Promise<string> {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -53,25 +52,6 @@ async function runWithConfig(
       return 127;
     }
     throw err;
-  }
-}
-
-async function runDev(port: number): Promise<number> {
-  try {
-    const tunnel = await startTunnel(port);
-    console.log(`✓ public tunnel  →  ${tunnel.url}`);
-    console.log(`  forwarding to  http://localhost:${port}`);
-    console.log('  press Ctrl-C to close');
-    await new Promise<void>((resolve) => {
-      process.on('SIGINT', () => {
-        tunnel.stop();
-        resolve();
-      });
-    });
-    return 0;
-  } catch (err) {
-    console.error(`error: tunnel failed — ${(err as Error).message}`);
-    return 1;
   }
 }
 
@@ -457,19 +437,6 @@ async function main() {
         }
       },
     );
-
-  program
-    .command('dev')
-    .description('Open a public Tunnel to your local Agent via cloudflared')
-    .option('-p, --port <port>', 'local port the Agent is listening on', '3000')
-    .action(async (opts: { port: string }) => {
-      const port = Number.parseInt(opts.port, 10);
-      if (!Number.isFinite(port) || port <= 0) {
-        console.error(`error: invalid --port "${opts.port}"`);
-        process.exit(2);
-      }
-      process.exit(await runDev(port));
-    });
 
   program
     .command('control')
