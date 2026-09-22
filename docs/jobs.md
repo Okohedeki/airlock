@@ -66,7 +66,41 @@ Graceful shutdown waits for running job threads; forcefully stopping the process
 leaves their records for interruption recovery. A hanging tool can delay graceful
 shutdown, so tool deadlines remain necessary.
 
-Approval holds remain recorded across restarts. This first API slice does not
-provide job resume, cancel, or retry endpoints, nor a job-aware console. Existing
-run decision/replay APIs are separate; they do not update the original job's
-outcome. Safe continuation tied to exact approved arguments is a following step.
+## Continue a reviewed approval
+
+A job in `awaiting_approval` includes an `approval` object with `approval_id`,
+`tool`, `args`, and an optional `deadline`. These survive a worker restart.
+
+1. Inspect that exact proposal. Record a decision with
+   `POST /v1/runs/<job_id>/decision`, providing
+   `{"decision":"approve","approval_id":"<review-id>"}`. Other choices are
+   `deny`, `skip`, `override` (with `result`), and `edit` (with an `args` object).
+   An empty edit object is valid. Job decisions require the displayed review ID;
+   stale, expired, or already-decided approvals are rejected.
+2. Call `POST /v1/jobs/<job_id>/continue` with
+   `{"approval_id":"<review-id>"}`. Both calls require the tenant's caller key
+   and `X-Airlock-Operator-Token`. Continuation returns `202` and uses the same
+   job URL; poll it for the new outcome.
+
+Each continuation atomically claims the job and receives a new `run_id`.
+`previous_run_ids` preserves the earlier attempts for inspection. The decision
+route always uses the stable **job ID**, including for a later approval hold.
+Consumed decisions retain their original arguments, verdict, and timestamps.
+
+The owned loop reuses recorded model outputs and completed tool results before
+the held action. It checks every proposed action against that trace, rejects
+changed arguments or action ordering, and consumes the specific approval once
+before dispatch. Edited calls retain both the original and applied arguments.
+Current deny rules and accumulated budgets still apply at the approval boundary.
+Token totals include the recorded prefix; replay does not call those models again.
+
+Keep trusted worker code and configuration stable across continuation: this is
+action/argument validation, not a cryptographic identity check of tool code.
+Wrapped loops, incomplete or failed traces, and interrupted jobs cannot use this
+continuation path. A crash after approval consumption still requires manual
+reconciliation; uncertain effects are never automatically retried.
+
+Legacy chat, resume, and fork endpoints cannot reuse job run IDs. Non-job runs
+retain their legacy APIs and do not gain the durable continuation guarantees.
+The existing console sends review IDs when recording decisions; a consolidated
+job console, cancellation, and submission/retry idempotency remain future work.
