@@ -263,6 +263,8 @@ class EngineRunner:
         on_step: Callable[[StepEvent], None] | None = None,
         replay: dict[int, dict] | None = None,
         approval_id: str | None = None,
+        continuation: list[dict] | None = None,
+        review_id: str | None = None,
     ) -> AgentRunResult:
         # Input guard (epic 13) — before any model call.
         shaping.guard_input(messages, self.io_cfg.get("input_guards"))
@@ -318,6 +320,8 @@ class EngineRunner:
             on_step=step_sink,
             snapshot=snapshot,
             replay=replay,
+            continuation=continuation,
+            continuation_gate=lambda pending: ctx.control_source.gate_approved(pending, review_id),
             prices=self._prices(),
         )
         result = run_loop(binding, messages, ctx)
