@@ -490,6 +490,9 @@ def create_app(
     async def decide(request: Request, run_id: str):
         if store is None:
             return JSONResponse({"error": "no state store"}, status_code=400)
+        tenant, err = _authed_tenant(request)
+        if err is not None:
+            return err
         body, err = await _read_json_object(request)
         if err is not None:
             return err
@@ -498,13 +501,23 @@ def create_app(
             return JSONResponse(
                 {"error": "'decision' must be one of approve/deny/edit/override/skip"},
                 status_code=400)
-        scoped = store.scoped(_tenant(request))
+        if verdict == "edit" and not isinstance(body.get("args"), dict):
+            return JSONResponse({"error": "edit requires an args object"}, status_code=400)
+        scoped = store.scoped(tenant)
         held_entry = scoped.get(f"_held/{run_id}")
         if not held_entry:
             return JSONResponse({"error": "no such held run"}, status_code=404)
         gate_key = held_entry.get("gate_key") or f"_held/{run_id}/{held_entry.get('tool')}"
-        scoped.set(gate_key, {"decision": verdict, "args": body.get("args"),
-                              "result": body.get("result")})
+        if body.get("approval_id") is not None and body["approval_id"] != held_entry.get("approval_id"):
+            return JSONResponse({"error": "approval changed; refresh before deciding"}, status_code=409)
+        if held_entry.get("deadline") is not None and time.time() >= held_entry["deadline"]:
+            return JSONResponse({"error": "approval expired"}, status_code=409)
+        decision = {"decision": verdict, "args": body.get("args"), "result": body.get("result"),
+                    "approval_id": held_entry.get("approval_id"),
+                    "tool": held_entry["tool"], "original_args": held_entry["args"],
+                    "decided_at": time.time()}
+        if not scoped.compare_and_set(gate_key, None, decision):
+            return JSONResponse({"error": "approval already decided"}, status_code=409)
         return JSONResponse({"ok": True, "run": run_id, "decision": verdict})
 
     app.add_api_route("/v1/runs/{run_id}/decision", decide, methods=["POST"])
