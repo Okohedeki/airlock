@@ -32,6 +32,17 @@ class MemoryStore(StateStore):
         with self._lock:
             self._d[key] = (value, time.time() + ttl_s if ttl_s else None)
 
+    def compare_and_set(self, key: str, expected: Any, value: Any) -> bool:
+        """Match SQLite's atomic transition contract for ephemeral workers."""
+        with self._lock:
+            if self.get(key) != expected:
+                return False
+            if value is None:
+                self.delete(key)
+            else:
+                self.set(key, value)
+            return True
+
     def delete(self, key: str) -> None:
         with self._lock:
             self._d.pop(key, None)
