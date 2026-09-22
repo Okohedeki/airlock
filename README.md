@@ -1,10 +1,10 @@
 <h1 align="center">airlock</h1>
 
-<p align="center"><strong>Run agent work with approvals and a clear execution record.</strong></p>
+<p align="center"><strong>Run agents on your computer. Call and manage them from anywhere.</strong></p>
 
 <p align="center">
-  Run a worker on your machine, review consequential actions,<br/>
-  and inspect its execution record through one local console.
+  Publish a worker through your own HTTPS relay,<br/>
+  with authenticated calls, remote approvals, and an execution record.
 </p>
 
 <p align="center">
@@ -23,17 +23,37 @@
 </p>
 
 <p align="center">
-  <a href="#run-it--docker-compose">Run it</a> ·
+  <a href="#publish-a-native-worker">Run it</a> ·
   <a href="./examples/">Examples</a> ·
   <a href="./docs/cli.md">CLI</a>
 </p>
 
 ---
 
-Airlock owns an agent's execution loop so an operator can inspect tool actions,
-approve consequential work, and understand failures. Configure tools and a model
-in `worker.yaml`, run locally, and use the OpenAI-compatible API or worker console.
-Public access is optional and does not require Cloudflare.
+Airlock runs agents on Windows, macOS, and Linux and publishes them through an
+operator-owned Caddy relay. Another computer calls the public HTTPS URL with an
+API key. The model can run locally or remotely. Airlock adds access controls,
+durable jobs, remote approvals, and execution records around the agent.
+
+Cloudflare publishing has been removed. The current open-source tunnel transport
+is frp. Native Windows connector validation is blocked by Defender on the test
+machine; OpenSSH is the proposed replacement. OS service installers and automatic
+relay enrollment are not shipped yet. See [Caddy relay setup](docs/caddy-relay.md)
+for the implemented path, prerequisites, and validation status.
+
+## Publish a native worker
+
+Configure your relay profile and credentials once, then run from the worker project:
+
+```sh
+airlock up --python python
+# Verifies and prints https://your-agent.example.com
+# Remote console: https://your-agent.example.com/console
+```
+
+Public access is the default. A relay server and domain are required; this command
+does not create infrastructure. Use `airlock up --no-tunnel` for local development.
+No Docker or WSL is required for the native worker path.
 
 ## Architecture
 
@@ -41,13 +61,14 @@ airlock is one runtime with two operator surfaces on top of it:
 
 | Piece | Language / packaging | What it is |
 | --- | --- | --- |
-| **Worker runtime** | **Python**, shipped as a **Docker image** (`airlock-worker`) | Runs the agent loop and serves the OpenAI-compatible API, `/console`, and `/metrics`. This is the thing that actually runs your agent. |
-| **CLI** (`@airlockhq/cli`) | **TypeScript**, published to **npm** | The operator/dev tool: scaffold, validate, build the image, run locally + tunnel, deploy a fleet, open the control plane. |
-| **Dashboards** | **TypeScript** (Node) | The `airlock control` plane (fleet operations) and the optional compose `dashboard` (call ledger). |
+| **Worker runtime** | **Python**, native process or optional Docker image | Runs the agent and serves its authenticated API and operator console. |
+| **CLI** (`@airlockhq/cli`) | **TypeScript / Node.js** | Starts the worker and connector, verifies public reachability, and manages their lifetime. |
+| **Relay** | **Caddy + native connector** | Provides public HTTPS while compute remains on your machine. |
 
-So "Docker *and* an npm package" isn't a contradiction: the **worker runs as a Docker image**, and the **CLI on npm operates it**. One `worker.yaml` declares each worker.
+One `worker.yaml` declares each worker. Older fleet dashboards and cloud deployment
+recipes remain legacy surfaces outside the native public-agent redesign.
 
-## Run it — Docker Compose
+## Local demo — Docker Compose
 
 The fastest path, with only Docker installed. `docker compose up --build worker` builds and starts the worker. Copy `.env.example`
 to `.env` and set a long random `AIRLOCK_OPERATOR_TOKEN` to enable console administration:
@@ -157,7 +178,7 @@ airlock never hosts inference. Point it at a local gguf/vLLM or a remote `OPENAI
 | --- | --- |
 | [CLI reference](./docs/cli.md) | Every command and flag. |
 | [Harness showcase](./docs/showcase.md) | One real containerized worker per framework, all green. |
-| [Durable hosting](./docs/durable-hosting.md) | A stable URL on your own Cloudflare account. |
+| [Native Caddy relay](./docs/caddy-relay.md) | Publish and call agents through your own HTTPS relay. |
 | [`airlock-config`](https://github.com/Okohedeki/airlock-config) | Optional buyer-facing descriptor served at `/.well-known`. |
 
 ## License
