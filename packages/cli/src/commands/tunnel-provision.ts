@@ -11,8 +11,6 @@
  * optional --account / CF_ACCOUNT_ID, optional --name.
  */
 
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 
 const API = 'https://api.cloudflare.com/client/v4';
 
@@ -127,51 +125,4 @@ export async function provisionTunnel(opts: ProvisionOptions): Promise<Provision
   }
 
   return { tunnelId, token: connectorToken, hostname: opts.hostname, accountId, zoneId: zone.id, cname };
-}
-
-/** Write/replace AIRLOCK_CF_TUNNEL_TOKEN in `.env` (creating it if absent). */
-export function writeTokenToEnv(cwd: string, token: string): string {
-  const path = resolve(cwd, '.env');
-  const line = `AIRLOCK_CF_TUNNEL_TOKEN=${token}`;
-  if (!existsSync(path)) {
-    writeFileSync(path, line + '\n');
-    return path;
-  }
-  const lines = readFileSync(path, 'utf8').split('\n');
-  const i = lines.findIndex((l) => l.trim().startsWith('AIRLOCK_CF_TUNNEL_TOKEN='));
-  if (i >= 0) {
-    lines[i] = line;
-    writeFileSync(path, lines.join('\n'));
-  } else {
-    appendFileSync(path, (lines.at(-1) === '' ? '' : '\n') + line + '\n');
-  }
-  return path;
-}
-
-export async function runTunnelProvision(opts: {
-  cwd?: string;
-  hostname: string;
-  port?: number;
-  account?: string;
-  zone?: string;
-  name?: string;
-}): Promise<void> {
-  const cwd = opts.cwd ?? process.cwd();
-  const apiToken = process.env.CF_API_TOKEN || process.env.AIRLOCK_CF_API_TOKEN;
-  if (!apiToken) {
-    throw new Error(
-      'set CF_API_TOKEN in .env — a Cloudflare API token with Account→Cloudflare Tunnel:Edit ' +
-        'and Zone→DNS:Edit. Create it at dash.cloudflare.com → My Profile → API Tokens.',
-    );
-  }
-  console.log(`airlock tunnel provision  →  ${opts.hostname} (port ${opts.port ?? 3000})…`);
-  const r = await provisionTunnel({
-    apiToken, hostname: opts.hostname, port: opts.port ?? 3000,
-    accountId: opts.account ?? process.env.CF_ACCOUNT_ID,
-    zoneId: opts.zone ?? process.env.CF_ZONE_ID, name: opts.name,
-  });
-  const envPath = writeTokenToEnv(cwd, r.token);
-  console.log(`✓ tunnel ${r.tunnelId} created/updated; DNS ${r.hostname} → ${r.cname}`);
-  console.log(`✓ wrote AIRLOCK_CF_TUNNEL_TOKEN to ${envPath}`);
-  console.log(`\n  now run:  airlock up --docker --durable --hostname ${r.hostname}`);
 }
