@@ -13,6 +13,9 @@
  */
 
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { readRelayConfig } from '../relay-config.js';
+import { startRelay, type RelayHandle } from '../relay.js';
 import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ZodError } from 'zod';
@@ -39,6 +42,9 @@ export interface UpOptions {
   python?: string;
   /** Run the agent locally but don't open a public tunnel. */
   noTunnel?: boolean;
+  /** Saved native relay profile; defaults to .airlock/relay.json. */
+  relay?: string;
+  startRelayImpl?: typeof startRelay;
   /** Use a durable named tunnel on the publisher's own Cloudflare account (vs. ephemeral quick tunnel). */
   durable?: boolean;
   /** Max agent runs in flight at once before callers queue (AIRLOCK_MAX_CONCURRENCY). */
@@ -224,7 +230,15 @@ async function waitForHealth(
  */
 export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
   const cwd = opts.cwd ?? process.cwd();
-  const noTunnel = opts.noTunnel ?? !opts.durable;
+  const noTunnel = opts.noTunnel ?? false;
+  if (opts.durable || opts.cfProtocol || opts.cfRegion || opts.cfMetrics) {
+    throw new Error('Cloudflare publishing was removed; configure .airlock/relay.json for Caddy + frp');
+  }
+  const relay = noTunnel ? null : await readRelayConfig(resolve(cwd, opts.relay ?? '.airlock/relay.json'));
+  const instance = randomUUID();
+  if (relay && (!process.env.AIRLOCK_OPERATOR_TOKEN || !/^[a-f0-9]{64}$/i.test(process.env.AIRLOCK_RELAY_TOKEN ?? ''))) {
+    throw new Error('public startup requires AIRLOCK_OPERATOR_TOKEN and a 64-character hex AIRLOCK_RELAY_TOKEN');
+  }
   // worker.yaml-only projects have no .airlock/config.toml — tolerate its absence
   // and fall back to a minimal config (the runtime reads worker.yaml itself).
   let config: AirlockConfig;
@@ -235,13 +249,7 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
     config = { project: { name: 'worker' } } as AirlockConfig;
   }
   const spawnFn = opts.spawnImpl ?? spawn;
-  const startTunnelFn = opts.startTunnelImpl ?? startTunnel;
-  const startNamedTunnelFn = opts.startNamedTunnelImpl ?? startNamedTunnel;
   const fetchFn = opts.fetchImpl ?? fetch;
-
-  // Validate durable-tunnel BYO credentials up front (before spawning the agent),
-  // so a misconfigured `--durable` fails fast with actionable guidance.
-  const durable = noTunnel ? null : resolveDurableTunnel(config, opts);
 
   const port = opts.port ?? 3000;
   let containerName: string | undefined;
@@ -266,6 +274,7 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
     // share the default config name, so the name alone isn't unique).
     containerName = `airlock-${slug(config.project?.name ?? 'worker')}-${port}`;
     const dockerEnv = forwardedEnv();
+    if (relay) dockerEnv.AIRLOCK_PUBLIC_INSTANCE = instance;
     if (opts.profile) dockerEnv.AIRLOCK_PROFILE = opts.profile;
     const run = buildDockerRun({
       image: image!,
@@ -290,33 +299,36 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
     console.log(`airlock up  →  starting agent: ${plan.python} -m airlock_agent (:${plan.port})`);
   }
 
-  const child = spawnFn(binary, args, { cwd, stdio: 'inherit', env: spawnEnv });
+  if (relay) spawnEnv.AIRLOCK_PUBLIC_INSTANCE = instance;
+  if (!opts.docker) spawnEnv.AIRLOCK_HOST = '127.0.0.1';
+  const child = spawnFn(binary, args, { cwd, stdio: 'inherit', env: spawnEnv, windowsHide: true });
 
-  const done = new Promise<number>((resolve) => {
+  const workerDone = new Promise<number>((resolve) => {
     child.on('exit', (code) => resolve(code ?? 0));
+    child.on('error', () => resolve(1));
   });
 
-  let tunnel: TunnelHandle | undefined;
+  let tunnel: RelayHandle | undefined;
   try {
     await waitForHealth(port, fetchFn, child, 120_000);
+    if (relay) {
+      const authCheck = await fetchFn(`http://127.0.0.1:${port}/v1/jobs/airlock-auth-probe`, {
+        redirect: 'error', signal: AbortSignal.timeout(3000),
+      });
+      if (authCheck.status !== 401) throw new Error('public worker must reject unauthenticated job access with 401');
+      console.log('  connecting to your Caddy relay…');
+      tunnel = await (opts.startRelayImpl ?? startRelay)(port, { config: relay, instance });
+    }
   } catch (err) {
+    tunnel?.stop();
     child.kill();
     if (containerName) spawnSync('docker', ['stop', containerName]);
     throw err;
   }
 
-  console.log(`  console:      http://localhost:${port}/console`);
-  if (!noTunnel) {
-    const tuning = resolveTunnelTuning(config, opts);
-    if (durable) {
-      console.log('  opening durable named tunnel on your Cloudflare account…');
-      tunnel = await startNamedTunnelFn(port, { ...durable, tuning });
-      console.log(`\n✓ live (durable) at  ${tunnel.url}`);
-    } else {
-      console.log('  opening public tunnel…');
-      tunnel = await startTunnelFn(port, { tuning });
-      console.log(`\n✓ live at  ${tunnel.url}`);
-    }
+  if (tunnel) {
+    console.log(`\n✓ public worker verified at  ${tunnel.url}`);
+    console.log(`  console:      ${tunnel.url}/console`);
     console.log(`  callers POST to:  ${tunnel.url}/v1/chat/completions`);
   } else {
     console.log(`\n✓ worker ready on port ${port} (no tunnel)`);
@@ -324,13 +336,22 @@ export async function runUp(opts: UpOptions = {}): Promise<UpHandle> {
   }
   console.log('  press Ctrl-C to stop');
 
+  const done = tunnel ? Promise.race([
+    workerDone.then((code) => { tunnel!.stop(); return code; }),
+    tunnel.done.then(() => {
+      child.kill();
+      if (containerName) spawnSync('docker', ['stop', containerName]);
+      return 1; // Losing the connector must never look like a successful service exit.
+    }),
+  ]) : workerDone;
+
   return {
     url: tunnel?.url,
     stop: async () => {
       tunnel?.stop();
       child.kill();
       if (containerName) spawnSync('docker', ['stop', containerName]);
-      await done;
+      await workerDone;
     },
     done,
   };
