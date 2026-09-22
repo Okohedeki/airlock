@@ -65,7 +65,7 @@ def test_runtime_boots_from_worker_yaml_and_serves(tmp_path, mock_model):
     _write_worker(str(tmp_path), mock_model)
     port = _free_port()
     here = os.path.dirname(os.path.abspath(__file__))  # holds tools.py (referenced by worker.yaml)
-    env = {**os.environ, "PORT": str(port), "PYTHONPATH": os.pathsep.join([here, ROOT])}
+    env = {**os.environ, "PORT": str(port), "PYTHONPATH": os.pathsep.join([here, os.path.join(ROOT, "src")])}
     proc = subprocess.Popen(
         [sys.executable, "-m", "airlock_agent"],
         cwd=str(tmp_path), env=env,
@@ -86,6 +86,11 @@ def test_runtime_boots_from_worker_yaml_and_serves(tmp_path, mock_model):
             except Exception:
                 time.sleep(0.3)
         assert ok, "runtime did not become healthy"
+
+        assert httpx.get(base + "/v1/control", timeout=5).status_code == 401
+        assert httpx.get(base + "/v1/control", timeout=5, headers={
+            "X-Airlock-Operator-Token": env["AIRLOCK_OPERATOR_TOKEN"],
+        }).status_code == 200
 
         # real tool loop over HTTP
         r = httpx.post(base + "/v1/chat/completions", timeout=30, json={
