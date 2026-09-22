@@ -69,23 +69,29 @@ Print the current project configuration as JSON.
 ## Run
 
 ### `up`
-Start the native worker and publish it through your saved Caddy relay profile.
+Open the local launcher, select an agent/framework, and press Start to publish
+through your saved Caddy relay profile. Manage agent signs in automatically.
 
 ```sh
-airlock up [-p|--port PORT] [--python BIN] [--relay PATH] [--no-tunnel]
+airlock up [-p|--port PORT] [--python BIN] [--relay PATH] [--no-open] [--headless]
+           [--no-tunnel]
            [--docker] [--image REF] [--mount] [--env-file PATH] [--profile NAME]
            [--max-concurrency N] [--max-queue N] [--queue-timeout S]
 ```
 
 - `--relay` selects a profile; the default is `.airlock/relay.json`.
+- `--no-open` prints the private launcher link without opening a browser.
+- `--headless` starts directly in the terminal; advanced runtime flags below also
+  preserve direct terminal startup. The launcher manages credentials automatically;
+  direct startup retains explicit credential configuration.
 - `--no-tunnel` explicitly keeps the worker local for development.
 - `--docker` / `--image` / `--mount` / `--env-file` optionally run in a container.
 - `--profile` selects a worker.yaml profile. Public profiles must require caller authentication.
 - `--max-concurrency` sets model concurrency (`AIRLOCK_MAX_CONCURRENCY`).
 
-A verified launch prints the public API and console URL. Caller keys authorize
+In direct mode, a verified launch prints the public API and console URL. Caller keys authorize
 agent work; `X-Airlock-Operator-Token` separately authorizes administration.
-Public startup requires `AIRLOCK_OPERATOR_TOKEN` and relay credentials. Failed
+Direct public startup requires `AIRLOCK_OPERATOR_TOKEN` and relay credentials. Failed
 publication stops the worker. A missing profile is an error, not a local fallback.
 On Windows, use `--python python` when `python3` is unavailable.
 The native worker always binds to loopback behind the connector.
