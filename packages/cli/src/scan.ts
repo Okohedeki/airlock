@@ -47,7 +47,7 @@ async function pyFiles(dir: string, root: string, acc: string[], depth = 0): Pro
 
 /** Path → importable module name: strip `src/`, drop `.py`, `/` → `.`, drop trailing `.__init__`. */
 function moduleName(file: string, root: string): string {
-  let rel = relative(root, file).replace(/\.py$/, '');
+  let rel = relative(root, file).replace(/\\/g, '/').replace(/\.py$/, '');
   rel = rel.replace(/^src\//, '');
   let mod = rel.split('/').join('.');
   if (mod.endsWith('.__init__')) mod = mod.slice(0, -'.__init__'.length);
