@@ -26,8 +26,9 @@ describe('local launcher boundary', () => {
     expect(await res.text()).not.toContain(headers['X-Airlock-Session']);
   });
   it('requires a valid session for discovery and every mutation', async () => {
-    for (const path of ['state', 'console', 'start', 'stop', 'connection']) {
+    for (const path of ['state', 'console', 'start', 'stop', 'connection', 'gateway', 'gateway/install', 'gateway/save', 'gateway/check']) {
       expect((await fetch(`${origin}/api/${path}`)).status).toBe(401);
+      expect((await fetch(`${origin}/api/${path}`, { method: 'POST', body: '{}' })).status).toBe(401);
     }
     for (const token of ['a'.repeat(64), 'é'.repeat(64), '']) {
       expect((await fetch(`${origin}/api/state`, { headers: { 'X-Airlock-Session': token } })).status).toBe(401);
@@ -52,5 +53,14 @@ describe('local launcher boundary', () => {
     expect(await (await fetch(`${origin}/api/state`, { headers })).json()).toEqual({
       status: 'idle', message: '', active: null, agents: [],
     });
+  });
+  it('rejects invalid gateway addresses before persisting or exposing anything', async () => {
+    const res = await fetch(`${origin}/api/gateway/save`, {
+      method: 'POST', headers, body: JSON.stringify({ hostname: 'localhost:443' }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('Enter a public domain');
+    const state = await (await fetch(`${origin}/api/gateway`, { headers })).json();
+    expect(state.preparing).toBe(false);
   });
 });
